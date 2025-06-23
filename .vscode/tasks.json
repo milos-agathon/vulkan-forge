@@ -1,23 +1,42 @@
 {
   "version": "2.0.0",
   "tasks": [
+    /* ----------------------------------------------------------
+       One task per shader so we see individual errors clearly
+       ----------------------------------------------------------*/
     {
-      "label": "Build shaders",
+      "label": "compile-vert",
       "type": "shell",
-      "group": "build",
-      "command": "${env:VULKAN_SDK}/Bin/glslc",
+      "command": "${env:VK_SDK_PATH}/Bin/glslc",
       "args": [
-        "-fshader-stage=vert",          // vertex
+        "-fshader-stage=vert",
         "${workspaceFolder}/cpp/shaders/shader_passthrough.vert.inc",
-        "-o", "${workspaceFolder}/assets/shader_passthrough.vert.spv",
-        "&&",
-        "${env:VULKAN_SDK}/Bin/glslc",  // fragment
+        "-o",
+        "${workspaceFolder}/assets/shader_passthrough.vert.spv"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "compile-frag",
+      "type": "shell",
+      "command": "${env:VK_SDK_PATH}/Bin/glslc",
+      "args": [
         "-fshader-stage=frag",
         "${workspaceFolder}/cpp/shaders/shader_color.frag.inc",
-        "-o", "${workspaceFolder}/assets/shader_color.frag.spv"
+        "-o",
+        "${workspaceFolder}/assets/shader_color.frag.spv"
       ],
-      "presentation": { "reveal": "always" },
       "problemMatcher": []
+    },
+
+    /* ----------------------------------------------------------
+       Master build task that runs both in sequence
+       ----------------------------------------------------------*/
+    {
+      "label":      "build-shaders",
+      "dependsOn":  [ "compile-vert", "compile-frag" ],
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": true }
     }
   ]
 }

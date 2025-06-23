@@ -1,0 +1,13 @@
+#version 450 core                           // ★ REQUIRED ★
+
+layout(location = 0) in  vec2 vUV;          // from VS
+layout(location = 0) out vec4 outColor;
+
+// solid colour OR sample a texture — pick one:
+const vec3 SOLID = vec3(1.0, 0.0, 0.0);     // red
+
+void main()
+{
+    outColor = vec4(SOLID, 1.0);
+    // or: outColor = texture(sampler2D(tex, sampler), vUV);
+}
