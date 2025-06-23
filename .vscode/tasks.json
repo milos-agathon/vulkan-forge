@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build shaders",
+      "type": "shell",
+      "group": "build",
+      "command": "${env:VULKAN_SDK}/Bin/glslc",
+      "args": [
+        "-fshader-stage=vert",          // vertex
+        "${workspaceFolder}/cpp/shaders/shader_passthrough.vert.inc",
+        "-o", "${workspaceFolder}/assets/shader_passthrough.vert.spv",
+        "&&",
+        "${env:VULKAN_SDK}/Bin/glslc",  // fragment
+        "-fshader-stage=frag",
+        "${workspaceFolder}/cpp/shaders/shader_color.frag.inc",
+        "-o", "${workspaceFolder}/assets/shader_color.frag.spv"
+      ],
+      "presentation": { "reveal": "always" },
+      "problemMatcher": []
+    }
+  ]
+}
