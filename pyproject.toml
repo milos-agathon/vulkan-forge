@@ -1,0 +1,17 @@
+[build-system]
+requires = ["scikit-build-core", "pybind11", "wheel", "setuptools"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "vulkan-forge"
+version = "0.1.0"
+description = "Vulkan-accelerated height-field renderer for Matplotlib"
+authors = [{name="Your Name", email="you@example.com"}]
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.21", "matplotlib>=3.5"]
+
+[tool.scikit-build]
+cmake.minimum-version = "3.24"
+cmake.source-dir = "cpp"
+install.components = ["vulkan_forge_native"]
+wheel.packages = ["python"]
