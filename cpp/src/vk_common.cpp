@@ -1,179 +1,206 @@
+/* cpp/src/vk_common.cpp — global Vulkan helpers & utilities
+ * -------------------------------------------------------- */
 #include "vf/vk_common.hpp"
+
+#include <vector>
+#include <cstring>
 #include <stdexcept>
-#include <cstring>      // std::memcpy
-#include <array>
-#include <iostream>
 
-#define VK_CHECK(call)                                           \
-    do {                                                         \
-        VkResult _res = call;                                    \
-        if (_res != VK_SUCCESS)                                  \
-            throw std::runtime_error("Vulkan error " #call);     \
-    } while (0)
+#define VK_CHECK(call) \
+    do { VkResult _r = (call); if (_r != VK_SUCCESS) throw std::runtime_error("Vulkan error"); } while (0)
 
-namespace vf {
-
-static GpuContext g_ctx;
-
-/* ─────────────────────────  helpers  ───────────────────────── */
-
-static uint32_t pick_graphics_queue(VkPhysicalDevice dev)
+namespace vf
 {
-    uint32_t nQ; vkGetPhysicalDeviceQueueFamilyProperties(dev, &nQ, nullptr);
-    std::vector<VkQueueFamilyProperties> props(nQ);
-    vkGetPhysicalDeviceQueueFamilyProperties(dev, &nQ, props.data());
+/* ──────────────────────────────────────────────────────────── */
+/*                          Global state                       */
+/* ──────────────────────────────────────────────────────────── */
+GpuContext g_ctx;
 
-    for (uint32_t i = 0; i < nQ; ++i)
-        if (props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) return i;
-    throw std::runtime_error("No graphics queue");
+/* ----------------------------------------------------------- */
+/*          Lazy one-time Vulkan initialisation                */
+/* ----------------------------------------------------------- */
+static void initOnce()
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+
+    /* — Create instance — */
+    VkApplicationInfo ai{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
+    ai.apiVersion = VK_API_VERSION_1_3;
+
+    VkInstanceCreateInfo ici{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+    ici.pApplicationInfo = &ai;
+    VK_CHECK(vkCreateInstance(&ici, nullptr, &g_ctx.instance));
+
+    /* — Pick first physical device — */
+    uint32_t count = 0;
+    vkEnumeratePhysicalDevices(g_ctx.instance, &count, nullptr);
+    if (count == 0) throw std::runtime_error("No Vulkan devices found");
+
+    std::vector<VkPhysicalDevice> phys(count);
+    vkEnumeratePhysicalDevices(g_ctx.instance, &count, phys.data());
+    g_ctx.phys = phys[0];
+
+    /* — Find graphics-capable queue family — */
+    vkGetPhysicalDeviceQueueFamilyProperties(g_ctx.phys, &count, nullptr);
+    std::vector<VkQueueFamilyProperties> qprops(count);
+    vkGetPhysicalDeviceQueueFamilyProperties(g_ctx.phys, &count, qprops.data());
+    for (uint32_t i = 0; i < count; ++i)
+        if (qprops[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            g_ctx.gfxFamily = i;
+            break;
+        }
+
+    /* — Create logical device & graphics queue — */
+    float prio = 1.0f;
+    VkDeviceQueueCreateInfo qci{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
+    qci.queueFamilyIndex = g_ctx.gfxFamily;
+    qci.queueCount       = 1;
+    qci.pQueuePriorities = &prio;
+
+    VkDeviceCreateInfo dci{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+    dci.queueCreateInfoCount = 1;
+    dci.pQueueCreateInfos    = &qci;
+    VK_CHECK(vkCreateDevice(g_ctx.phys, &dci, nullptr, &g_ctx.device));
+
+    vkGetDeviceQueue(g_ctx.device, g_ctx.gfxFamily, 0, &g_ctx.graphicsQ);
 }
 
-static VkPhysicalDevice pick_device(VkInstance inst)
+/* Make sure initOnce() runs before main() */
+static struct _AutoInit { _AutoInit() { initOnce(); } } _auto;
+
+/* ──────────────────────────────────────────────────────────── */
+/*            One-shot command-buffer helpers                  */
+/* ──────────────────────────────────────────────────────────── */
+static VkCommandPool s_pool = VK_NULL_HANDLE;
+
+static VkCommandPool getPool()
 {
-    uint32_t nDev; VK_CHECK(vkEnumeratePhysicalDevices(inst, &nDev, nullptr));
-    if (!nDev) throw std::runtime_error("No Vulkan device found");
-    std::vector<VkPhysicalDevice> devs(nDev);
-    VK_CHECK(vkEnumeratePhysicalDevices(inst, &nDev, devs.data()));
+    if (s_pool) return s_pool;
 
-    /* choose first discrete, else first */
-    for (auto d: devs) {
-        VkPhysicalDeviceProperties p{}; vkGetPhysicalDeviceProperties(d,&p);
-        if (p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) return d;
-    }
-    return devs[0];
+    VkCommandPoolCreateInfo pci{ VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+    pci.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    pci.queueFamilyIndex = g_ctx.gfxFamily;
+    VK_CHECK(vkCreateCommandPool(g_ctx.device, &pci, nullptr, &s_pool));
+    return s_pool;
 }
-
-/* ─────────────────────────  GpuContext singleton  ───────────────────────── */
-
-GpuContext& ctx()
-{
-    static bool first = true;
-    if (!first) return g_ctx;
-    first = false;
-
-    /* 1. instance -------------------------------------------------------- */
-    const std::array<const char*,1> inst_ext = { VK_KHR_SURFACE_EXTENSION_NAME };
-    VkApplicationInfo ai { VK_STRUCTURE_TYPE_APPLICATION_INFO };
-    ai.pApplicationName = "vulkan-forge"; ai.apiVersion = VK_API_VERSION_1_3;
-
-    VkInstanceCreateInfo ci { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
-    ci.pApplicationInfo  = &ai;
-    ci.enabledExtensionCount   = uint32_t(inst_ext.size());
-    ci.ppEnabledExtensionNames = inst_ext.data();
-    VK_CHECK(vkCreateInstance(&ci,nullptr,&g_ctx.instance));
-
-    /* 2. physical + logical device -------------------------------------- */
-    g_ctx.phys = pick_device(g_ctx.instance);
-    g_ctx.queueFamily = pick_graphics_queue(g_ctx.phys);
-
-    float qprio = 1.f;
-    VkDeviceQueueCreateInfo qci { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
-    qci.queueFamilyIndex = g_ctx.queueFamily;
-    qci.queueCount = 1; qci.pQueuePriorities = &qprio;
-
-    VkPhysicalDeviceFeatures feats{};      // keep default
-    VkDeviceCreateInfo dci { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
-    dci.queueCreateInfoCount = 1; dci.pQueueCreateInfos = &qci;
-    dci.pEnabledFeatures = &feats;
-    VK_CHECK(vkCreateDevice(g_ctx.phys,&dci,nullptr,&g_ctx.device));
-
-    vkGetDeviceQueue(g_ctx.device,g_ctx.queueFamily,0,&g_ctx.queue);
-
-    /* 3. one command-pool for short-lived commands ----------------------- */
-    VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-    pci.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    pci.queueFamilyIndex=g_ctx.queueFamily;
-    VK_CHECK(vkCreateCommandPool(g_ctx.device,&pci,nullptr,&g_ctx.cmdPool));
-
-    return g_ctx;
-}
-
-/* ─────────────────────  single-time command helpers  ───────────────────── */
 
 VkCommandBuffer beginSingleTimeCmd()
 {
-    auto& gpu = ctx();
-    VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    ai.commandPool = gpu.cmdPool; ai.commandBufferCount = 1;
-    VkCommandBuffer cb; VK_CHECK(vkAllocateCommandBuffers(gpu.device,&ai,&cb));
+    VkCommandBufferAllocateInfo ai{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    ai.commandPool        = getPool();
+    ai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
 
-    VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    VkCommandBuffer cb;
+    VK_CHECK(vkAllocateCommandBuffers(g_ctx.device, &ai, &cb));
+
+    VkCommandBufferBeginInfo bi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    VK_CHECK(vkBeginCommandBuffer(cb,&bi));
+    vkBeginCommandBuffer(cb, &bi);
     return cb;
 }
 
 void endSingleTimeCmd(VkCommandBuffer cb)
 {
-    auto& gpu = ctx();
-    VK_CHECK(vkEndCommandBuffer(cb));
-    VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    si.commandBufferCount=1; si.pCommandBuffers=&cb;
-    VK_CHECK(vkQueueSubmit(gpu.queue,1,&si,VK_NULL_HANDLE));
-    VK_CHECK(vkQueueWaitIdle (gpu.queue));
-    vkFreeCommandBuffers(gpu.device,gpu.cmdPool,1,&cb);
+    vkEndCommandBuffer(cb);
+
+    VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    si.commandBufferCount = 1;
+    si.pCommandBuffers    = &cb;
+
+    VK_CHECK(vkQueueSubmit(g_ctx.graphicsQ, 1, &si, VK_NULL_HANDLE));
+    VK_CHECK(vkQueueWaitIdle(g_ctx.graphicsQ));
+
+    vkFreeCommandBuffers(g_ctx.device, getPool(), 1, &cb);
 }
 
-/* ─────────────────────  buffer helpers  ───────────────────── */
-
-static void allocBuffer(VkDeviceSize bytes, VkBufferUsageFlags usage,
-                        VkMemoryPropertyFlags memFlags,
-                        VkBuffer& buf, VkDeviceMemory& mem)
+/* ──────────────────────────────────────────────────────────── */
+/*               Memory-type chooser (exported)                */
+/* ──────────────────────────────────────────────────────────── */
+uint32_t chooseType(uint32_t bits, VkMemoryPropertyFlags props)
 {
-    auto& gpu = ctx();
-    VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    bci.size = bytes; bci.usage = usage; bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    VK_CHECK(vkCreateBuffer(gpu.device,&bci,nullptr,&buf));
+    VkPhysicalDeviceMemoryProperties mp;
+    vkGetPhysicalDeviceMemoryProperties(g_ctx.phys, &mp);
 
-    VkMemoryRequirements req; vkGetBufferMemoryRequirements(gpu.device,buf,&req);
+    for (uint32_t i = 0; i < mp.memoryTypeCount; ++i)
+        if ((bits & (1u << i)) &&
+            (mp.memoryTypes[i].propertyFlags & props) == props)
+            return i;
 
-    VkPhysicalDeviceMemoryProperties mp; vkGetPhysicalDeviceMemoryProperties(gpu.phys,&mp);
-    uint32_t type = 0;
-    for(uint32_t i=0;i<mp.memoryTypeCount;++i)
-        if ((req.memoryTypeBits&(1<<i)) && (mp.memoryTypes[i].propertyFlags&memFlags)==memFlags)
-        { type=i; break; }
-
-    VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    mai.allocationSize = req.size; mai.memoryTypeIndex = type;
-    VK_CHECK(vkAllocateMemory(gpu.device,&mai,nullptr,&mem));
-    vkBindBufferMemory(gpu.device,buf,mem,0);
+    throw std::runtime_error("No compatible memory type found");
 }
 
-VkBuffer allocHostVisible(size_t bytes, VkBufferUsageFlags usage, VkDeviceMemory& mem)
+/* ──────────────────────────────────────────────────────────── */
+/*                  Buffer helper utilities                    */
+/* ──────────────────────────────────────────────────────────── */
+static VkBuffer makeBuf(VkDeviceSize bytes,
+                        VkBufferUsageFlags usage,
+                        VkMemoryPropertyFlags props,
+                        VkDeviceMemory& memOut)
 {
+    VkBufferCreateInfo bci{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    bci.size  = bytes;
+    bci.usage = usage;
+
     VkBuffer buf;
-    allocBuffer(bytes, usage, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                buf, mem);
+    VK_CHECK(vkCreateBuffer(g_ctx.device, &bci, nullptr, &buf));
+
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(g_ctx.device, buf, &req);
+
+    VkMemoryAllocateInfo mai{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+    mai.allocationSize  = req.size;
+    mai.memoryTypeIndex = chooseType(req.memoryTypeBits, props);
+    VK_CHECK(vkAllocateMemory(g_ctx.device, &mai, nullptr, &memOut));
+
+    vkBindBufferMemory(g_ctx.device, buf, memOut, 0);
     return buf;
 }
 
-VkBuffer allocDeviceLocal(size_t bytes, VkBufferUsageFlags usage, VkDeviceMemory& mem)
+VkBuffer allocDeviceLocal(VkDeviceSize bytes,
+                          VkBufferUsageFlags usage,
+                          VkDeviceMemory& mem)
 {
-    VkBuffer buf;
-    allocBuffer(bytes, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buf, mem);
-    return buf;
+    return makeBuf(bytes,
+                   usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                   mem);
 }
 
-void uploadToBuffer(VkBuffer dst, const void* src, size_t bytes)
+VkBuffer allocHostVisible(VkDeviceSize bytes,
+                          VkBufferUsageFlags usage,
+                          VkDeviceMemory& mem)
 {
-    auto& gpu = ctx();
+    return makeBuf(bytes,
+                   usage | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   mem);
+}
+
+void uploadToBuffer(VkBuffer dst, const void* src, VkDeviceSize bytes)
+{
     VkDeviceMemory stagingMem;
     VkBuffer staging = allocHostVisible(bytes,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingMem);
+                                        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                        stagingMem);
 
-    void* map; vkMapMemory(gpu.device,stagingMem,0,bytes,0,&map);
-    std::memcpy(map,src,bytes);
-    vkUnmapMemory(gpu.device,stagingMem);
+    /* Copy user data into staging buffer */
+    void* map = nullptr;
+    vkMapMemory(g_ctx.device, stagingMem, 0, bytes, 0, &map);
+    std::memcpy(map, src, static_cast<size_t>(bytes));
+    vkUnmapMemory(g_ctx.device, stagingMem);
 
+    /* Copy from staging into device-local buffer */
     VkCommandBuffer cb = beginSingleTimeCmd();
-    VkBufferCopy copy{0,0,bytes};
-    vkCmdCopyBuffer(cb, staging,dst,1,&copy);
+    VkBufferCopy region{ 0, 0, bytes };
+    vkCmdCopyBuffer(cb, staging, dst, 1, &region);
     endSingleTimeCmd(cb);
 
-    vkDestroyBuffer(gpu.device, staging,nullptr);
-    vkFreeMemory   (gpu.device, stagingMem,nullptr);
+    vkDestroyBuffer(g_ctx.device, staging, nullptr);
+    vkFreeMemory  (g_ctx.device, stagingMem, nullptr);
 }
 
 } // namespace vf

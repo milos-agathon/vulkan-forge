@@ -1,25 +1,33 @@
 #pragma once
-#include "vk_common.hpp"
+#include "vf/vk_common.hpp"
+
+#include <glm/glm.hpp>     //  ← brings in glm::vec3 / mat4, etc.
+#include <vulkan/vulkan.h>
 #include <vector>
 
-namespace vf {
+namespace vf
+{
 
-struct HeightFieldScene {
-    /* raw data copied from Python */
-    std::vector<float> vertices;   // x,y,z,r,g,b,a   (N*7)
-    std::vector<uint32_t> indices; // 3*K
+struct HeightFieldScene
+{
+    /* public API --------------------------------------------------------- */
+    void build(const std::vector<float>& heights,
+               int nx, int ny,
+               const std::vector<float>& colours = {},
+               float zScale = 1.0f);
 
-    /* GPU buffers */
-    VkBuffer vbo{}, ibo{};
-    VkDeviceMemory vboMem{}, iboMem{};
-    uint32_t       nIdx{0};
+    ~HeightFieldScene();
 
-    /* camera */
-    glm::vec3 eye {0,0,5}, target{0,0,0};
-    float fov = 45.f;
+    /* GPU buffers -------------------------------------------------------- */
+    VkBuffer       vbo     = VK_NULL_HANDLE;
+    VkDeviceMemory vboMem  = VK_NULL_HANDLE;
+    VkBuffer       ibo     = VK_NULL_HANDLE;
+    VkDeviceMemory iboMem  = VK_NULL_HANDLE;
+    uint32_t       nIdx    = 0;
 
-    void upload();                 // CPU→GPU
-    void destroy();                // free buffers
+    /* A tiny default camera (handy for Python bindings) ------------------ */
+    glm::vec3 eye{0.0f, 0.0f, 5.0f};
+    glm::vec3 target{0.0f, 0.0f, 0.0f};
 };
 
-} // ns
+} // namespace vf

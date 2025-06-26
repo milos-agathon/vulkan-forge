@@ -1,29 +1,55 @@
-#pragma once
+// cpp/include/vf/vk_common.hpp — updated again to expose chooseType
+// -----------------------------------------------------------------
+#ifndef VF_VK_COMMON_HPP
+#define VF_VK_COMMON_HPP
+
 #include <vulkan/vulkan.h>
-#include <glm/glm.hpp>
-#include <vector>
-#include <string>
+#include <cstdint>
 
 namespace vf {
 
+// ------------------------------------------------------------------
+// Global GPU context — one per process
+// ------------------------------------------------------------------
 struct GpuContext {
-    VkInstance instance {};
-    VkPhysicalDevice phys {};
-    VkDevice device {};
-    VkQueue  queue {};
-    uint32_t queueFamily {};
-    VkCommandPool cmdPool {};
-    // RAII ctor/dtor omitted for brevity
+    VkInstance       instance   = VK_NULL_HANDLE;
+    VkPhysicalDevice phys       = VK_NULL_HANDLE;
+    VkDevice         device     = VK_NULL_HANDLE;
+    uint32_t         gfxFamily  = 0;               // graphics-capable family index
+    VkQueue          graphicsQ  = VK_NULL_HANDLE;  // graphics queue handle
 };
 
-inline GpuContext& ctx();        // singleton accessor
+// single global instance declared in vk_common.cpp
+extern GpuContext g_ctx;
+inline GpuContext& ctx() { return g_ctx; }
 
-/* Helpers */
+// ------------------------------------------------------------------
+// Helper API (implemented in cpp/src/vk_common.cpp)
+// ------------------------------------------------------------------
+
+/* Memory-type chooser */
+uint32_t chooseType(uint32_t bits, VkMemoryPropertyFlags props);
+
+/* One-shot command buffers */
 VkCommandBuffer beginSingleTimeCmd();
-void endSingleTimeCmd(VkCommandBuffer);
+void            endSingleTimeCmd(VkCommandBuffer cb);
 
-VkBuffer allocHostVisible(size_t bytes, VkBufferUsageFlags, VkDeviceMemory&);
-VkBuffer allocDeviceLocal(size_t bytes, VkBufferUsageFlags, VkDeviceMemory&);
-void    uploadToBuffer(VkBuffer dst, const void* src, size_t bytes);
+/* Buffer utilities */
+VkBuffer allocDeviceLocal(
+    VkDeviceSize       bytes,
+    VkBufferUsageFlags usage,
+    VkDeviceMemory&    outMem);
+
+VkBuffer allocHostVisible(
+    VkDeviceSize       bytes,
+    VkBufferUsageFlags usage,
+    VkDeviceMemory&    outMem);
+
+void uploadToBuffer(
+    VkBuffer     dst,
+    const void*  src,
+    VkDeviceSize bytes);
 
 } // namespace vf
+
+#endif // VF_VK_COMMON_HPP
