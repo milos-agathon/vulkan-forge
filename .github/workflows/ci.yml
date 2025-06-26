@@ -1,0 +1,75 @@
+# ------------------------------------------------------------
+# Continuous‑integration workflow for *vulkan‑forge*
+# ------------------------------------------------------------
+# • Builds the C++/Python package in editable mode
+# • Runs a tiny smoke‑test that renders a 16×16 RGBA image
+# • Matrix: Windows & Ubuntu (latest GitHub‑hosted runners)
+# ------------------------------------------------------------
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  build:
+    name: Build & smoke‑test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+        python-version: [ "3.10" ]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # 1️⃣  Grab sources
+      - uses: actions/checkout@v4
+
+      # 2️⃣  Select Python toolchain
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # 3️⃣  Platform‑specific: install a *minimal* Vulkan SDK
+      # ------------------------------------------------------
+      - name: Install Vulkan (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+              libvulkan-dev \
+              glslang-tools   # provides glslc / glslangValidator
+
+      - name: Install Vulkan (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          choco install vulkan-sdk --no-progress -y
+          # ---- expose VULKAN_SDK for FindVulkan -----
+          $sdk = Get-ChildItem "C:\VulkanSDK" | Sort-Object Name -Descending | Select-Object -First 1
+          echo "VULKAN_SDK=$($sdk.FullName)" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
+      # 4️⃣  Build project in editable mode (invokes CMake via scikit‑build‑core)
+      - name: Install package
+        run: |
+          python -m pip install -U pip
+          pip install -e .[test]    # in case extras are defined later
+
+      # 5️⃣  Smoke‑test: render a tiny 16×16 image
+      - name: Smoke‑test Python snippet
+        run: |
+          python - << 'PY'
+          import numpy as np, vulkan_forge as vf
+          ny = nx = 4
+          heights = np.zeros((ny, nx), dtype=np.float32)
+          scene = vf.HeightFieldScene()
+          scene.build(heights)
+
+          ren = vf.Renderer(width=16, height=16)
+          img = ren.render(scene)
+          assert img.shape == (16, 16, 4) and img.dtype == np.uint8
+          print("✅  Vulkan smoke‑test succeeded — image shape", img.shape)
+          PY
