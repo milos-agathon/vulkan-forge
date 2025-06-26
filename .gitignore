@@ -1,3 +1,22 @@
+# ─── Visual Studio junk ───────────────────────────────────────────
+.vs/                       # IDE workspace cache
+*.VC.db                    # IntelliSense database
+*.opendb                   # More cache
+*.vscode/                  # optional: VS Code settings
+# ─── Build artefacts ──────────────────────────────────────────────
+build/
+_deps/
+*.obj
+*.pdb
+*.exe
+*.dll
+*.lib
+*.exp
+*.ilk
+*.log
+CMakeFiles/
+cmake-build-*/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
