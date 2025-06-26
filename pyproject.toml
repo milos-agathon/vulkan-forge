@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core", "pybind11", "wheel", "setuptools"]
+requires = ["scikit-build-core", "pybind11"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -11,8 +11,6 @@ requires-python = ">=3.9"
 dependencies = ["numpy>=1.21", "matplotlib>=3.5"]
 
 [tool.scikit-build]
-cmake.version = ">=3.24"          # <- replace deprecated key
+cmake.version = ">=3.24"
 cmake.source-dir = "cpp"
-install.components = ["vulkan_forge_native"]
-wheel.packages = ["python"]
-
+wheel.packages = ["python/vulkan_forge"]

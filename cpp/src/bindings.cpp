@@ -25,7 +25,7 @@ numpyToVector(py::array_t<float, py::array::c_style | py::array::forcecast> arr)
 }
 
 /* --------------------------------------------------------------------- */
-PYBIND11_MODULE(vulkan_forge, m)
+PYBIND11_MODULE(_vulkan_forge_native, m)
 {
     m.doc() = "Minimal Vulkan height-field renderer";
 
