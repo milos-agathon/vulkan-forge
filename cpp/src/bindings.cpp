@@ -19,9 +19,9 @@ numpyToVector(py::array_t<float, py::array::c_style | py::array::forcecast> arr)
     if (bi.ndim != 2)
         throw std::runtime_error("height map must be 2-D numpy array");
 
-    size_t n = static_cast<size_t>(bi.shape[0]) * static_cast<size_t>(bi.shape[1]);
-    const float* src = static_cast<float*>(bi.ptr);
-    return std::vector<float>(src, src + n);
+    size_t n   = static_cast<size_t>(bi.shape[0]) * static_cast<size_t>(bi.shape[1]);
+    auto *src  = static_cast<float *>(bi.ptr);
+    return { src, src + n };
 }
 
 /* --------------------------------------------------------------------- */
@@ -62,32 +62,31 @@ PYBIND11_MODULE(vulkan_forge, m)
         .def_readonly("n_indices", &HeightFieldScene::nIdx);
 
     /* ----------------------------- Renderer -------------------------- */
-    py::class_<Renderer> cls(m, "Renderer");
+    py::class_<Renderer>(m, "Renderer")
+        .def(py::init<uint32_t, uint32_t>(),
+             py::arg("width"), py::arg("height"))
 
-    cls.def(py::init<uint32_t, uint32_t>(),
-            py::arg("width"), py::arg("height"))
+        .def_property_readonly("width",  &Renderer::width)
+        .def_property_readonly("height", &Renderer::height)
 
-       .def_property_readonly("width",  &Renderer::width)
-       .def_property_readonly("height", &Renderer::height)
+        .def("render",
+             [](Renderer& r, const HeightFieldScene& scn, uint32_t spp)
+             {
+                 auto img = r.render(scn, spp);
 
-       .def("render",
-            [](Renderer& r, const HeightFieldScene& scn, uint32_t spp)
-            {
-                auto img = r.render(scn, spp);
+                 /* expose as NumPy (h,w,4) uint8 without an extra copy */
+                 py::capsule free_when_done(
+                     img.data(),
+                     [](void* p){ delete[] static_cast<uint8_t*>(p); });
 
-                /* Expose as NumPy (h,w,4) uint8 without an extra copy */
-                py::capsule free_when_done(
-                    img.data(),
-                    [](void* p){ delete[] static_cast<uint8_t*>(p); });
-
-                return py::array_t<uint8_t>(
-                    { static_cast<int>(r.height()),
-                      static_cast<int>(r.width()),
-                      4 },
-                    { static_cast<int>(r.width()) * 4, 4, 1 },
-                    img.data(),
-                    free_when_done);
-            },
-            py::arg("scene"),
-            py::arg("spp") = 1);
+                 return py::array_t<uint8_t>(
+                     { static_cast<int>(r.height()),
+                       static_cast<int>(r.width()),
+                       4 },
+                     { static_cast<int>(r.width()) * 4, 4, 1 },
+                     img.data(),
+                     free_when_done);
+             },
+             py::arg("scene"),
+             py::arg("spp") = 1);
 }
