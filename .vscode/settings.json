@@ -1,1 +1,7 @@
-{ "python.defaultInterpreterPath": "%LOCALAPPDATA%/r-miniconda/python.exe" }
+{
+    "python.defaultInterpreterPath": "%LOCALAPPDATA%/r-miniconda/python.exe",
+    "files.associations": {
+        "*.rmd": "markdown",
+        "cstdint": "cpp"
+    }
+}
