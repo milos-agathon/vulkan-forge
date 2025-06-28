@@ -3,5 +3,6 @@
     "files.associations": {
         "*.rmd": "markdown",
         "cstdint": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "C:/Users/milos/vulkan-forge/cpp"
 }

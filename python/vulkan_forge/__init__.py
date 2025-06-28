@@ -1,10 +1,10 @@
 """Vulkan Forge - GPU-accelerated height field renderer"""
 
 __version__ = "2.0.0"
-__all__ = ['HeightFieldScene', 'Renderer', '__version__']
 
 import sys
 from pathlib import Path
+import numpy as np
 
 # Try to import the native module
 _native_available = False
@@ -36,7 +36,6 @@ except ImportError as e:
                 self.n_indices = 0
                 
             def build(self, heights, colors=None, zscale=1.0):
-                import numpy as np
                 if not isinstance(heights, np.ndarray) or heights.ndim != 2:
                     raise ValueError("heights must be a 2D numpy array")
                 ny, nx = heights.shape
@@ -56,7 +55,6 @@ except ImportError as e:
                 return self._height
                 
             def render(self, scene):
-                import numpy as np
                 # Return a gradient image
                 img = np.zeros((self._height, self._width, 4), dtype=np.uint8)
                 for y in range(self._height):
@@ -70,10 +68,35 @@ except ImportError as e:
                 return img
 
 
+class VulkanRenderer:
+    """High-level wrapper for Vulkan rendering"""
+    
+    def __init__(self, width=800, height=600):
+        self.width = width
+        self.height = height
+        self._renderer = Renderer(width, height)
+    
+    def render_heightfield(self, heights, colors=None, z_scale=1.0, **kwargs):
+        """Render a height field"""
+        if not isinstance(heights, np.ndarray):
+            heights = np.array(heights, dtype=np.float32)
+        
+        if heights.dtype != np.float32:
+            heights = heights.astype(np.float32)
+            
+        if heights.ndim != 2:
+            raise ValueError("Heights must be a 2D array")
+        
+        # Create and build scene
+        scene = HeightFieldScene()
+        scene.build(heights, colors, z_scale)
+        
+        # Render
+        return self._renderer.render(scene)
+
+
 def test_basic():
     """Test basic functionality"""
-    import numpy as np
-    
     print(f"\nTesting Vulkan Forge {__version__}")
     print(f"Native module available: {_native_available}")
     
@@ -97,10 +120,8 @@ def test_basic():
     return True
 
 
-# Additional helper functions for compatibility
 def axes_to_heightfield(ax, scale_z=1.0):
     """Extract height field from matplotlib axes"""
-    import numpy as np
     import matplotlib.pyplot as plt
     
     # Force render
@@ -152,6 +173,18 @@ def render_heightmap(ax, out_wh=(100, 100), spp=1, scale_z=1.0):
     
     renderer = Renderer(out_wh[0], out_wh[1])
     return renderer.render(scene)
+
+
+# Export all public components
+__all__ = [
+    'HeightFieldScene', 
+    'Renderer', 
+    'VulkanRenderer',
+    '__version__', 
+    'test_basic', 
+    'render_heightmap', 
+    'axes_to_heightfield'
+]
 
 
 # Run test if executed directly
