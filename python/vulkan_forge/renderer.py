@@ -6,6 +6,7 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 from abc import ABC, abstractmethod
+import ctypes
 import numpy as np
 import vulkan as vk
 
@@ -118,8 +119,104 @@ class VulkanRenderer(Renderer):
     
     def _create_render_pass(self, device: LogicalDevice) -> Any:
         """Create render pass for a device."""
-        # UNKNOWN: Full render pass creation requires VkAttachmentDescription setup
-        return None
+        features = getattr(self, "device_features", {})
+        if features and features.get("VK_KHR_dynamic_rendering"):
+            self._render_pass = None
+            return None
+
+        color_attachment = vk.VkAttachmentDescription2(
+            sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2,
+            pNext=None,
+            flags=0,
+            format=self.swapchain_format,
+            samples=vk.VK_SAMPLE_COUNT_1_BIT,
+            loadOp=vk.VK_ATTACHMENT_LOAD_OP_CLEAR,
+            storeOp=vk.VK_ATTACHMENT_STORE_OP_STORE,
+            stencilLoadOp=vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            stencilStoreOp=vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            initialLayout=vk.VK_IMAGE_LAYOUT_UNDEFINED,
+            finalLayout=vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        )
+
+        depth_attachment = vk.VkAttachmentDescription2(
+            sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2,
+            pNext=None,
+            flags=0,
+            format=vk.VK_FORMAT_D32_SFLOAT,
+            samples=vk.VK_SAMPLE_COUNT_1_BIT,
+            loadOp=vk.VK_ATTACHMENT_LOAD_OP_CLEAR,
+            storeOp=vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            stencilLoadOp=vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            stencilStoreOp=vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            initialLayout=vk.VK_IMAGE_LAYOUT_UNDEFINED,
+            finalLayout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        )
+
+        attachments = (vk.VkAttachmentDescription2 * 2)(
+            color_attachment,
+            depth_attachment,
+        )
+
+        color_ref = vk.VkAttachmentReference2(
+            sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2,
+            pNext=None,
+            attachment=0,
+            layout=vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            aspectMask=vk.VK_IMAGE_ASPECT_COLOR_BIT,
+        )
+
+        depth_ref = vk.VkAttachmentReference2(
+            sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2,
+            pNext=None,
+            attachment=1,
+            layout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            aspectMask=vk.VK_IMAGE_ASPECT_DEPTH_BIT,
+        )
+
+        subpass = vk.VkSubpassDescription2(
+            sType=vk.VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2,
+            pNext=None,
+            flags=0,
+            pipelineBindPoint=vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
+            viewMask=0,
+            inputAttachmentCount=0,
+            pInputAttachments=None,
+            colorAttachmentCount=1,
+            pColorAttachments=ctypes.pointer(color_ref),
+            pResolveAttachments=None,
+            pDepthStencilAttachment=ctypes.pointer(depth_ref),
+            preserveAttachmentCount=0,
+            pPreserveAttachments=None,
+        )
+
+        subpasses = (vk.VkSubpassDescription2 * 1)(subpass)
+
+        rp_info = vk.VkRenderPassCreateInfo2(
+            sType=vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2,
+            pNext=None,
+            flags=0,
+            attachmentCount=2,
+            pAttachments=attachments,
+            subpassCount=1,
+            pSubpasses=subpasses,
+            dependencyCount=0,
+            pDependencies=None,
+            correlatedViewMaskCount=0,
+            pCorrelatedViewMasks=None,
+        )
+
+        render_pass = vk.VkRenderPass(0)
+        result = vk.vkCreateRenderPass2(
+            device.device,
+            ctypes.byref(rp_info),
+            None,
+            ctypes.byref(render_pass),
+        )
+        if result != vk.VK_SUCCESS:
+            raise VulkanForgeError(f"vkCreateRenderPass2 failed: {result}")
+
+        self._render_pass = render_pass
+        return render_pass
     
     def _create_pipeline(self, device: LogicalDevice, render_pass: Any) -> Any:
         """Create graphics pipeline for a device."""
