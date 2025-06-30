@@ -276,13 +276,13 @@ class CPURenderer(Renderer):
         depth_buffer = np.full((height, width), np.inf, dtype=np.float32)
 
         logger.info(f"Rendering {len(meshes)} meshes")
-        
+
         # Transform matrices
         mvp = projection_matrix @ view_matrix
-        logger.info(f"Mesh {mesh_idx}: {len(mesh.vertices)} vertices, {np.sum(in_frustum)} in frustum")
-        
+
         # Simple rasterization for each mesh
-        for mesh_idx, (mesh, material) in enumerate(zip(meshes, materials)):
+        for mesh_idx, mesh in enumerate(meshes):
+            material = materials[mesh_idx]
             # Transform vertices
             vertices_4d = np.hstack([mesh.vertices, np.ones((len(mesh.vertices), 1))])
             transformed = vertices_4d @ mvp.data.T
@@ -297,6 +297,9 @@ class CPURenderer(Renderer):
                 (ndc[:, 0] >= -1) & (ndc[:, 0] <= 1) &
                 (ndc[:, 1] >= -1) & (ndc[:, 1] <= 1) &
                 (ndc[:, 2] >= -1) & (ndc[:, 2] <= 1)
+            )
+            logger.info(
+                f"Mesh {mesh_idx}: {len(mesh.vertices)} vertices, {np.sum(in_frustum)} in frustum"
             )
             
             # Viewport transform
