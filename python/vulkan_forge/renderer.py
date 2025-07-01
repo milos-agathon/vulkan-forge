@@ -92,6 +92,28 @@ class Renderer(ABC):
         """Clean up resources."""
         pass
 
+    def _draw_test_triangle(self, framebuffer: np.ndarray) -> None:
+        """Draw a simple RGB test triangle into the framebuffer."""
+        height, width, _ = framebuffer.shape
+        v0 = np.array([width * 0.2, height * 0.8])
+        v1 = np.array([width * 0.5, height * 0.2])
+        v2 = np.array([width * 0.8, height * 0.8])
+        area = (v1[0] - v0[0]) * (v2[1] - v0[1]) - (v1[1] - v0[1]) * (v2[0] - v0[0])
+        if abs(area) < 1e-6:
+            return
+        min_x = int(max(0, np.floor(min(v0[0], v1[0], v2[0]))))
+        max_x = int(min(width - 1, np.ceil(max(v0[0], v1[0], v2[0]))))
+        min_y = int(max(0, np.floor(min(v0[1], v1[1], v2[1]))))
+        max_y = int(min(height - 1, np.ceil(max(v0[1], v1[1], v2[1]))))
+        for y in range(min_y, max_y + 1):
+            for x in range(min_x, max_x + 1):
+                w0 = ((v1[0] - v2[0]) * (y - v2[1]) - (v1[1] - v2[1]) * (x - v2[0])) / area
+                w1 = ((v2[0] - v0[0]) * (y - v0[1]) - (v2[1] - v0[1]) * (x - v0[0])) / area
+                w2 = 1 - w0 - w1
+                if w0 >= 0 and w1 >= 0 and w2 >= 0:
+                    framebuffer[y, x, :3] = [w0, w1, w2]
+                    framebuffer[y, x, 3] = 1.0
+
 
 class VulkanRenderer(Renderer):
     """GPU-accelerated Vulkan renderer."""
@@ -154,7 +176,8 @@ class VulkanRenderer(Renderer):
             finalLayout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         )
 
-        attachments = (vk.VkAttachmentDescription2 * 2)(
+        AttachmentArray = type(color_attachment) * 2
+        attachments = AttachmentArray(
             color_attachment,
             depth_attachment,
         )
@@ -191,7 +214,8 @@ class VulkanRenderer(Renderer):
             pPreserveAttachments=None,
         )
 
-        subpasses = (vk.VkSubpassDescription2 * 1)(subpass)
+        SubpassArray = type(subpass) * 1
+        subpasses = SubpassArray(subpass)
 
         rp_info = vk.VkRenderPassCreateInfo2(
             sType=vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2,
@@ -381,10 +405,9 @@ class CPURenderer(Renderer):
                                 framebuffer[yi, xi, :3] = np.clip(color, 0, 1)
                                 framebuffer[yi, xi, 3] = material.base_color[3]
 
-        # If nothing was drawn, fill with clear color to avoid blank output
+        # If nothing was drawn, fall back to a simple test triangle
         if np.max(framebuffer) == 0:
-            framebuffer[:, :, :3] = materials[0].base_color[:3]
-            framebuffer[:, :, 3] = materials[0].base_color[3]
+            self._draw_test_triangle(framebuffer)
 
         # Convert to uint8
         return (framebuffer * 255).astype(np.uint8)
