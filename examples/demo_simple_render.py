@@ -217,6 +217,8 @@ def main():
         target=(0.0, 0.0, 0.0),  # Look at origin
         up=(0.0, 1.0, 0.0)       # Up vector
     )
+
+    print(f"Camera at: (3.0, 2.0, 3.0) looking at origin")
     
     projection_matrix = Matrix4x4.perspective(
         fov=np.pi / 4,           # 45 degrees field of view

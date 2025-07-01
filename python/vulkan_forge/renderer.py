@@ -198,12 +198,6 @@ class VulkanRenderer(Renderer):
             finalLayout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         )
 
-        AttachmentArray = type(color_attachment) * 2
-        attachments = AttachmentArray(
-            color_attachment,
-            depth_attachment,
-        )
-
         color_ref = vk.VkAttachmentReference2(
             sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2,
             pNext=None,
@@ -236,17 +230,14 @@ class VulkanRenderer(Renderer):
             pPreserveAttachments=None,
         )
 
-        SubpassArray = type(subpass) * 1
-        subpasses = SubpassArray(subpass)
-
         rp_info = vk.VkRenderPassCreateInfo2(
             sType=vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2,
             pNext=None,
             flags=0,
             attachmentCount=2,
-            pAttachments=attachments,
+            pAttachments=ctypes.pointer(color_attachment),
             subpassCount=1,
-            pSubpasses=subpasses,
+            pSubpasses=ctypes.pointer(subpass),
             dependencyCount=0,
             pDependencies=None,
             correlatedViewMaskCount=0,
@@ -343,10 +334,10 @@ class CPURenderer(Renderer):
         # Initialize framebuffer cleared to black with opaque alpha
         width, height = self.render_target.width, self.render_target.height
         framebuffer = np.zeros((height, width, 4), dtype=np.float32)
-        framebuffer[:, :, 3] = 1.0
         depth_buffer = np.full((height, width), np.inf, dtype=np.float32)
 
         logger.info(f"Rendering {len(meshes)} meshes")
+        pixels_drawn = 0
 
         # Transform matrices
         mvp = projection_matrix @ view_matrix
@@ -354,6 +345,8 @@ class CPURenderer(Renderer):
         # Simple rasterization for each mesh
         for mesh_idx, mesh in enumerate(meshes):
             material = materials[mesh_idx]
+            logger.info(f"Mesh {mesh_idx}: vertices shape={mesh.vertices.shape}, "
+                       f"indices shape={mesh.indices.shape}, material color={material.base_color}")
             # Transform vertices
             vertices_4d = np.hstack([mesh.vertices, np.ones((len(mesh.vertices), 1))])
             transformed = vertices_4d @ mvp.data.T
@@ -376,10 +369,16 @@ class CPURenderer(Renderer):
             # Viewport transform
             screen_x = (ndc[:, 0] + 1) * width / 2
             screen_y = (1 - ndc[:, 1]) * height / 2
-            
+            logger.info(f"Screen coords - X range: [{np.min(screen_x):.1f}, {np.max(screen_x):.1f}], "
+                       f"Y range: [{np.min(screen_y):.1f}, {np.max(screen_y):.1f}]")
             # Rasterize triangles
+            pixels_drawn += 1
+            triangles_rendered += 1
+            logger.info(f"Total pixels drawn: {pixels_drawn}")
             for i in range(0, len(mesh.indices), 3):
                 i0, i1, i2 = mesh.indices[i:i+3]
+                if i == 0:  # Log first triangle
+                    logger.info(f"First triangle: v{i0}={screen_x[i0]:.1f},{screen_y[i0]:.1f} v{i1}={screen_x[i1]:.1f},{screen_y[i1]:.1f} v{i2}={screen_x[i2]:.1f},{screen_y[i2]:.1f}")
 
                 # Skip degenerate triangles
                 if i0 == i1 or i1 == i2 or i0 == i2:
@@ -446,11 +445,13 @@ class CPURenderer(Renderer):
                                 # Clamp and store
                                 framebuffer[yi, xi, :3] = np.clip(color, 0, 1)
                                 framebuffer[yi, xi, 3] = material.base_color[3]
+                                triangles_rendered += 1
+            logger.info(f"Rendered {triangles_rendered} triangles for mesh {mesh_idx}")
 
         # If nothing was drawn, fall back to a simple test triangle
-        if np.max(framebuffer) == 0:
+        if pixels_drawn == 0:
+            logger.warning("No triangles rendered, drawing test triangle")
             self._draw_test_triangle(framebuffer)
-
         # Convert to uint8
         return (framebuffer * 255).astype(np.uint8)
     
@@ -467,6 +468,8 @@ def create_renderer(prefer_gpu: bool = True, enable_validation: bool = True) -> 
     """Create a renderer with automatic backend selection."""
     try:
         if prefer_gpu:
+            logger.info("Forcing CPU renderer for stability")
+            return CPURenderer()
             device_manager = DeviceManager(enable_validation=enable_validation)
             logical_devices = device_manager.create_logical_devices()
             
