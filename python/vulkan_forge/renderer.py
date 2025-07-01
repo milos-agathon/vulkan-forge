@@ -114,6 +114,16 @@ class Renderer(ABC):
                     framebuffer[y, x, :3] = [w0, w1, w2]
                     framebuffer[y, x, 3] = 1.0
 
+    def _draw_crosshair(self, framebuffer: np.ndarray) -> None:
+        """Draw a simple crosshair pattern in the framebuffer."""
+        height, width, _ = framebuffer.shape
+        cx = width // 2
+        cy = height // 2
+        framebuffer[cy, :, :3] = 1.0
+        framebuffer[:, cx, :3] = 1.0
+        framebuffer[cy, :, 3] = 1.0
+        framebuffer[:, cx, 3] = 1.0
+
 
 class VulkanRenderer(Renderer):
     """GPU-accelerated Vulkan renderer with basic CPU fallback."""
@@ -288,15 +298,20 @@ class VulkanRenderer(Renderer):
         """Simple CPU fallback that draws a colour gradient."""
         if not self.render_target:
             raise VulkanForgeError("No render target set")
-        width, height = self.render_target.width, self.render_target.height
-        x = np.linspace(0, 1, width, dtype=np.float32)
-        y = np.linspace(0, 1, height, dtype=np.float32)
-        xv, yv = np.meshgrid(x, y)
-        gradient = np.stack((xv, yv, 0.5 * np.ones_like(xv)), axis=-1)
-        # Placeholder for future CPU ray tracing implementation
-        image = (gradient * 255).astype(np.uint8)
-        alpha = 255 * np.ones((height, width, 1), dtype=np.uint8)
-        return np.concatenate((image, alpha), axis=-1)
+        width, height = self.swapchain_extent
+        framebuffer = np.zeros((height, width, 4), dtype=np.uint8)
+        framebuffer[:, :, 3] = 255
+
+        rect_w = max(1, width // 4)
+        rect_h = max(1, height // 4)
+        x0 = (width - rect_w) // 2
+        y0 = (height - rect_h) // 2
+        x1 = x0 + rect_w
+        y1 = y0 + rect_h
+        framebuffer[y0:y1, x0:x1, 0] = 255
+        framebuffer[y0:y1, x0:x1, 1] = 255
+
+        return framebuffer
     
     def set_render_target(self, target: RenderTarget) -> None:
         """Set the render target."""
@@ -448,10 +463,10 @@ class CPURenderer(Renderer):
                                 framebuffer[yi, xi, 3] = material.base_color[3]
             logger.info(f"Rendered {triangles_rendered} triangles for mesh {mesh_idx}")
 
-        # If nothing was drawn, fall back to a simple test triangle
-        if pixels_drawn == 0:
-            logger.warning("No triangles rendered, drawing test triangle")
-            self._draw_test_triangle(framebuffer)
+        # If nothing was drawn, overlay a simple crosshair so output isn't blank
+        if not np.any(framebuffer[:, :, :3]):
+            logger.warning("No content rendered, drawing crosshair")
+            self._draw_crosshair(framebuffer)
         # Convert to uint8
         return (framebuffer * 255).astype(np.uint8)
     
