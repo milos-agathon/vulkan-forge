@@ -459,9 +459,9 @@ class CPURenderer(Renderer):
                                 framebuffer[yi, xi, 3] = material.base_color[3]
             logger.info(f"Rendered {triangles_rendered} triangles for mesh {mesh_idx}")
 
-        # If nothing was drawn, overlay a simple crosshair so output isn't blank
-        if not np.any(framebuffer[:, :, :3]):
-            logger.warning("No content rendered, drawing crosshair")
+        # If no triangles produced pixels, overlay a crosshair for visibility
+        if triangles_rendered == 0:
+            logger.warning("No triangles rendered, drawing crosshair")
             self._draw_crosshair(framebuffer)
         # Convert to uint8
         return (framebuffer * 255).astype(np.uint8)
