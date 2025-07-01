@@ -114,6 +114,16 @@ class Renderer(ABC):
                     framebuffer[y, x, :3] = [w0, w1, w2]
                     framebuffer[y, x, 3] = 1.0
 
+    def _draw_crosshair(self, framebuffer: np.ndarray) -> None:
+        """Draw a simple crosshair pattern in the framebuffer."""
+        height, width, _ = framebuffer.shape
+        cx = width // 2
+        cy = height // 2
+        framebuffer[cy, :, :3] = 1.0
+        framebuffer[:, cx, :3] = 1.0
+        framebuffer[cy, :, 3] = 1.0
+        framebuffer[:, cx, 3] = 1.0
+
 
 class VulkanRenderer(Renderer):
     """GPU-accelerated Vulkan renderer with basic CPU fallback."""
@@ -453,10 +463,10 @@ class CPURenderer(Renderer):
                                 framebuffer[yi, xi, 3] = material.base_color[3]
             logger.info(f"Rendered {triangles_rendered} triangles for mesh {mesh_idx}")
 
-        # If nothing was drawn, fall back to a simple test triangle
-        if pixels_drawn == 0:
-            logger.warning("No triangles rendered, drawing test triangle")
-            self._draw_test_triangle(framebuffer)
+        # If nothing was drawn, overlay a simple crosshair so output isn't blank
+        if not np.any(framebuffer[:, :, :3]):
+            logger.warning("No content rendered, drawing crosshair")
+            self._draw_crosshair(framebuffer)
         # Convert to uint8
         return (framebuffer * 255).astype(np.uint8)
     
