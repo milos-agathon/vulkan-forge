@@ -112,7 +112,10 @@ file(WRITE "${GENERATED_DIR}/fragment_shader.inc" "
 
 # Create the Python extension module
 pybind11_add_module(_vulkan_forge_native
-    src/simple_renderer.cpp
+    src/bindings.cpp
+    src/vk_common.cpp
+    src/heightfield_scene.cpp
+    src/renderer.cpp
 )
 
 # Set include directories
