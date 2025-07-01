@@ -302,14 +302,10 @@ class VulkanRenderer(Renderer):
         framebuffer = np.zeros((height, width, 4), dtype=np.uint8)
         framebuffer[:, :, 3] = 255
 
-        rect_w = max(1, width // 4)
-        rect_h = max(1, height // 4)
-        x0 = (width - rect_w) // 2
-        y0 = (height - rect_h) // 2
-        x1 = x0 + rect_w
-        y1 = y0 + rect_h
-        framebuffer[y0:y1, x0:x1, 0] = 255
-        framebuffer[y0:y1, x0:x1, 1] = 255
+        cx = width // 2
+        cy = height // 2
+        framebuffer[cy, :, :3] = 255
+        framebuffer[:, cx, :3] = 255
 
         return framebuffer
     
