@@ -116,30 +116,52 @@ class Renderer(ABC):
 
 
 class VulkanRenderer(Renderer):
-    """GPU-accelerated Vulkan renderer."""
-    
+    """GPU-accelerated Vulkan renderer with basic CPU fallback."""
+
     def __init__(self, device_manager: DeviceManager, logical_devices: List[LogicalDevice]):
         """Initialize Vulkan renderer with device pool."""
         self.device_manager = device_manager
         self.logical_devices = logical_devices
         self.render_target: Optional[RenderTarget] = None
-        # Default swapchain format used for render pass initialization
+
+        # Swapchain format must be defined before any Vulkan resources that rely
+        # on it are created.  This avoids attribute errors if initialization
+        # fails halfway through.
         self.swapchain_format = vk.VK_FORMAT_B8G8R8A8_UNORM
+
         self.current_device_index = 0
-        
-        # Initialize pipeline for each device
+
+        # Tracks whether GPU initialization succeeded
+        self.gpu_active = False
+
+        # Initialize pipeline for each device inside a try/except so that any
+        # failure cleanly falls back to CPU rendering.
         self.pipelines: List[Any] = []
         self.render_passes: List[Any] = []
-        
-        for device in logical_devices:
-            try:
+        try:
+            for device in logical_devices:
                 render_pass = self._create_render_pass(device)
                 pipeline = self._create_pipeline(device, render_pass)
                 self.render_passes.append(render_pass)
                 self.pipelines.append(pipeline)
-            except VulkanForgeError as e:
-                logger.error(f"Failed to initialize pipeline on device: {e}")
-                raise
+            self.gpu_active = True
+        except VulkanForgeError as e:
+            logger.error(f"Failed to initialize pipeline on device: {e}")
+            self.gpu_active = False
+
+    def get_surface_extent(self) -> Tuple[int, int]:
+        """Return the current render target dimensions."""
+        if self.render_target is not None:
+            return self.render_target.width, self.render_target.height
+        return (0, 0)
+
+    def _create_swapchain(self) -> None:
+        """Placeholder swapchain creation with corrected extent calculation."""
+        width, height = self.get_surface_extent()
+        # In a full implementation this would create the VkSwapchainKHR.  We
+        # simply store the values so other parts of the renderer can use them.
+        self.swapchain_extent = (width, height)
+
     
     def _create_render_pass(self, device: LogicalDevice) -> Any:
         """Create render pass for a device."""
@@ -249,8 +271,8 @@ class VulkanRenderer(Renderer):
         # UNKNOWN: Full pipeline creation requires shader compilation
         return None
     
-    def render(self, meshes: List[Mesh], materials: List[Material], 
-               lights: List[Light], view_matrix: Matrix4x4, 
+    def render(self, meshes: List[Mesh], materials: List[Material],
+               lights: List[Light], view_matrix: Matrix4x4,
                projection_matrix: Matrix4x4) -> np.ndarray:
         """Render scene using multi-GPU load balancing."""
         if not self.render_target:
@@ -261,13 +283,35 @@ class VulkanRenderer(Renderer):
         self.current_device_index = (self.current_device_index + 1) % len(self.logical_devices)
         
         # UNKNOWN: Full GPU rendering implementation
-        
+
         # Placeholder: return black framebuffer
         return np.zeros((self.render_target.height, self.render_target.width, 4), dtype=np.uint8)
+
+    def render_frame(self, scene: Any) -> np.ndarray:
+        """Draw a frame using GPU if available, otherwise CPU fallback."""
+        if self.gpu_active:
+            return self.render(scene.meshes, scene.materials, scene.lights, scene.view_matrix, scene.projection_matrix)
+        return self.render_cpu_fallback(scene)
+
+    def render_cpu_fallback(self, scene: Any) -> np.ndarray:
+        """Simple CPU fallback that draws a colour gradient."""
+        if not self.render_target:
+            raise VulkanForgeError("No render target set")
+        width, height = self.render_target.width, self.render_target.height
+        x = np.linspace(0, 1, width, dtype=np.float32)
+        y = np.linspace(0, 1, height, dtype=np.float32)
+        xv, yv = np.meshgrid(x, y)
+        gradient = np.stack((xv, yv, 0.5 * np.ones_like(xv)), axis=-1)
+        # Placeholder for future CPU ray tracing implementation
+        image = (gradient * 255).astype(np.uint8)
+        alpha = 255 * np.ones((height, width, 1), dtype=np.uint8)
+        return np.concatenate((image, alpha), axis=-1)
     
     def set_render_target(self, target: RenderTarget) -> None:
         """Set the render target."""
         self.render_target = target
+        # Recreate swapchain when the target size changes
+        self._create_swapchain()
     
     def cleanup(self) -> None:
         """Clean up Vulkan resources."""
