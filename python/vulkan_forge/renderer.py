@@ -340,13 +340,11 @@ class CPURenderer(Renderer):
         if not self.render_target:
             raise VulkanForgeError("No render target set")
         
-        # Initialize framebuffer
+        # Initialize framebuffer cleared to black with opaque alpha
         width, height = self.render_target.width, self.render_target.height
         framebuffer = np.zeros((height, width, 4), dtype=np.float32)
+        framebuffer[:, :, 3] = 1.0
         depth_buffer = np.full((height, width), np.inf, dtype=np.float32)
-        if materials:
-            framebuffer[:, :, :3] = materials[0].base_color[:3]
-            framebuffer[:, :, 3] = materials[0].base_color[3]
 
         logger.info(f"Rendering {len(meshes)} meshes")
 
