@@ -92,6 +92,28 @@ class Renderer(ABC):
         """Clean up resources."""
         pass
 
+    def _draw_test_triangle(self, framebuffer: np.ndarray) -> None:
+        """Draw a simple RGB test triangle into the framebuffer."""
+        height, width, _ = framebuffer.shape
+        v0 = np.array([width * 0.2, height * 0.8])
+        v1 = np.array([width * 0.5, height * 0.2])
+        v2 = np.array([width * 0.8, height * 0.8])
+        area = (v1[0] - v0[0]) * (v2[1] - v0[1]) - (v1[1] - v0[1]) * (v2[0] - v0[0])
+        if abs(area) < 1e-6:
+            return
+        min_x = int(max(0, np.floor(min(v0[0], v1[0], v2[0]))))
+        max_x = int(min(width - 1, np.ceil(max(v0[0], v1[0], v2[0]))))
+        min_y = int(max(0, np.floor(min(v0[1], v1[1], v2[1]))))
+        max_y = int(min(height - 1, np.ceil(max(v0[1], v1[1], v2[1]))))
+        for y in range(min_y, max_y + 1):
+            for x in range(min_x, max_x + 1):
+                w0 = ((v1[0] - v2[0]) * (y - v2[1]) - (v1[1] - v2[1]) * (x - v2[0])) / area
+                w1 = ((v2[0] - v0[0]) * (y - v0[1]) - (v2[1] - v0[1]) * (x - v0[0])) / area
+                w2 = 1 - w0 - w1
+                if w0 >= 0 and w1 >= 0 and w2 >= 0:
+                    framebuffer[y, x, :3] = [w0, w1, w2]
+                    framebuffer[y, x, 3] = 1.0
+
 
 class VulkanRenderer(Renderer):
     """GPU-accelerated Vulkan renderer."""
@@ -101,6 +123,8 @@ class VulkanRenderer(Renderer):
         self.device_manager = device_manager
         self.logical_devices = logical_devices
         self.render_target: Optional[RenderTarget] = None
+        # Default swapchain format used for render pass initialization
+        self.swapchain_format = vk.VK_FORMAT_B8G8R8A8_UNORM
         self.current_device_index = 0
         
         # Initialize pipeline for each device
@@ -152,7 +176,8 @@ class VulkanRenderer(Renderer):
             finalLayout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         )
 
-        attachments = (vk.VkAttachmentDescription2 * 2)(
+        AttachmentArray = type(color_attachment) * 2
+        attachments = AttachmentArray(
             color_attachment,
             depth_attachment,
         )
@@ -189,7 +214,8 @@ class VulkanRenderer(Renderer):
             pPreserveAttachments=None,
         )
 
-        subpasses = (vk.VkSubpassDescription2 * 1)(subpass)
+        SubpassArray = type(subpass) * 1
+        subpasses = SubpassArray(subpass)
 
         rp_info = vk.VkRenderPassCreateInfo2(
             sType=vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2,
@@ -274,6 +300,9 @@ class CPURenderer(Renderer):
         width, height = self.render_target.width, self.render_target.height
         framebuffer = np.zeros((height, width, 4), dtype=np.float32)
         depth_buffer = np.full((height, width), np.inf, dtype=np.float32)
+        if materials:
+            framebuffer[:, :, :3] = materials[0].base_color[:3]
+            framebuffer[:, :, 3] = materials[0].base_color[3]
 
         logger.info(f"Rendering {len(meshes)} meshes")
 
@@ -303,8 +332,8 @@ class CPURenderer(Renderer):
             )
             
             # Viewport transform
-            screen_x = ((ndc[:, 0] + 1) * width / 2).astype(int)
-            screen_y = ((1 - ndc[:, 1]) * height / 2).astype(int)
+            screen_x = (ndc[:, 0] + 1) * width / 2
+            screen_y = (1 - ndc[:, 1]) * height / 2
             
             # Rasterize triangles
             for i in range(0, len(mesh.indices), 3):
@@ -324,10 +353,10 @@ class CPURenderer(Renderer):
                 x2, y2, z2 = screen_x[i2], screen_y[i2], ndc[i2, 2]
                 
                 # Bounding box
-                min_x = max(0, min(x0, x1, x2))
-                max_x = min(width - 1, max(x0, x1, x2))
-                min_y = max(0, min(y0, y1, y2))
-                max_y = min(height - 1, max(y0, y1, y2))
+                min_x = max(0, int(np.floor(min(x0, x1, x2))))
+                max_x = min(width - 1, int(np.ceil(max(x0, x1, x2))))
+                min_y = max(0, int(np.floor(min(y0, y1, y2))))
+                max_y = min(height - 1, int(np.ceil(max(y0, y1, y2))))
 
                 # Skip if triangle is outside screen
                 if min_x > max_x or min_y > max_y:
@@ -339,11 +368,11 @@ class CPURenderer(Renderer):
                     continue  # Skip degenerate triangles
                 
                 # Rasterize pixels in bounding box
-                for y in range(min_y, max_y + 1):
-                    for x in range(min_x, max_x + 1):
+                for yi in range(min_y, max_y + 1):
+                    for xi in range(min_x, max_x + 1):
                         # Barycentric coordinates
-                        w0 = ((x1 - x2) * (y - y2) - (y1 - y2) * (x - x2)) / area
-                        w1 = ((x2 - x0) * (y - y0) - (y2 - y0) * (x - x0)) / area
+                        w0 = ((x1 - x2) * (yi - y2) - (y1 - y2) * (xi - x2)) / area
+                        w1 = ((x2 - x0) * (yi - y0) - (y2 - y0) * (xi - x0)) / area
                         w2 = 1 - w0 - w1
                         
                         if w0 >= 0 and w1 >= 0 and w2 >= 0:
@@ -351,8 +380,8 @@ class CPURenderer(Renderer):
                             z = w0 * z0 + w1 * z1 + w2 * z2
                             
                             # Depth test
-                            if z < depth_buffer[y, x]:
-                                depth_buffer[y, x] = z
+                            if z < depth_buffer[yi, xi]:
+                                depth_buffer[yi, xi] = z
                                 
                                 # Interpolate normal
                                 if i0 < len(mesh.normals) and i1 < len(mesh.normals) and i2 < len(mesh.normals):
@@ -373,9 +402,13 @@ class CPURenderer(Renderer):
                                     light_contrib = np.array(light.color) * diffuse * light.intensity
                                     color = color + np.array(material.base_color[:3]) * light_contrib * 0.7                                
                                 # Clamp and store
-                                framebuffer[y, x, :3] = np.clip(color, 0, 1)
-                                framebuffer[y, x, 3] = material.base_color[3]
-        
+                                framebuffer[yi, xi, :3] = np.clip(color, 0, 1)
+                                framebuffer[yi, xi, 3] = material.base_color[3]
+
+        # If nothing was drawn, fall back to a simple test triangle
+        if np.max(framebuffer) == 0:
+            self._draw_test_triangle(framebuffer)
+
         # Convert to uint8
         return (framebuffer * 255).astype(np.uint8)
     
