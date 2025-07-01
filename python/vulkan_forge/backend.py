@@ -7,35 +7,158 @@ from typing import List, Optional, Dict, Any, Tuple
 
 try:
     import vulkan as vk
+    VULKAN_AVAILABLE = True
 except ImportError:
+    VULKAN_AVAILABLE = False
+    # Mock Vulkan constants and functions for CPU fallback
     class MockVK:
         VK_STRUCTURE_TYPE_APPLICATION_INFO = 0
         VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO = 0
         VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO = 0
         VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO = 0
         VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO = 0
+        VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2 = 1000109001
+        VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2 = 1000109002
+        VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2 = 1000109003
+        VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2 = 1000109004
+        
         VK_MAKE_VERSION = staticmethod(lambda major, minor, patch: (major << 22) | (minor << 12) | patch)
         VK_API_VERSION_1_2 = 4202496
         VK_API_VERSION_1_0 = 4194304
-        VK_KHR_SURFACE_EXTENSION_NAME = ""
-        VK_EXT_DEBUG_UTILS_EXTENSION_NAME = ""
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME = ""
+        VK_SUCCESS = 0
+        
+        VK_KHR_SURFACE_EXTENSION_NAME = "VK_KHR_surface"
+        VK_EXT_DEBUG_UTILS_EXTENSION_NAME = "VK_EXT_debug_utils"
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME = "VK_KHR_swapchain"
+        
         VK_PHYSICAL_DEVICE_TYPE_OTHER = 0
         VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU = 1
         VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU = 2
         VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU = 3
         VK_PHYSICAL_DEVICE_TYPE_CPU = 4
+        
         VK_QUEUE_GRAPHICS_BIT = 1
+        VK_SAMPLE_COUNT_1_BIT = 1
+        VK_ATTACHMENT_LOAD_OP_CLEAR = 0
+        VK_ATTACHMENT_STORE_OP_STORE = 0
+        VK_ATTACHMENT_LOAD_OP_DONT_CARE = 1
+        VK_ATTACHMENT_STORE_OP_DONT_CARE = 1
+        VK_IMAGE_LAYOUT_UNDEFINED = 0
+        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR = 1000001002
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL = 1000001000
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL = 1000001001
+        VK_FORMAT_D32_SFLOAT = 126
+        VK_FORMAT_B8G8R8A8_UNORM = 44
+        VK_IMAGE_ASPECT_COLOR_BIT = 1
+        VK_IMAGE_ASPECT_DEPTH_BIT = 2
+        VK_PIPELINE_BIND_POINT_GRAPHICS = 0
+        VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT = 2
+        
+        # Mock classes for Vulkan structures
+        class VkApplicationInfo:
+            def __init__(self, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+        
+        class VkInstanceCreateInfo:
+            def __init__(self, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+        
+        class VkDeviceQueueCreateInfo:
+            def __init__(self, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+        
+        class VkDeviceCreateInfo:
+            def __init__(self, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+        
+        class VkCommandPoolCreateInfo:
+            def __init__(self, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+        
+        class VkAttachmentDescription2:
+            def __init__(self, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+        
+        class VkAttachmentReference2:
+            def __init__(self, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+        
+        class VkSubpassDescription2:
+            def __init__(self, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+        
+        class VkRenderPassCreateInfo2:
+            def __init__(self, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+        
+        class VkRenderPass:
+            def __init__(self, handle=0):
+                self.handle = handle
         
         # Mock functions
         @staticmethod
         def vkCreateInstance(*args):
-            raise ImportError("Vulkan not available - using CPU fallback")
+            if VULKAN_AVAILABLE:
+                raise ImportError("Vulkan not available - using CPU fallback")
+            return "mock_instance"
+        
         @staticmethod
-        def vkEnumeratePhysicalDevices(*args): 
+        def vkEnumeratePhysicalDevices(*args):
             return []
         
-         # Add other constants as needed
+        @staticmethod
+        def vkGetPhysicalDeviceProperties(*args):
+            return None
+        
+        @staticmethod
+        def vkGetPhysicalDeviceFeatures(*args):
+            return None
+        
+        @staticmethod
+        def vkGetPhysicalDeviceMemoryProperties(*args):
+            return None
+        
+        @staticmethod
+        def vkGetPhysicalDeviceQueueFamilyProperties(*args):
+            return []
+        
+        @staticmethod
+        def vkCreateDevice(*args):
+            return "mock_device"
+        
+        @staticmethod
+        def vkGetDeviceQueue(*args):
+            return "mock_queue"
+        
+        @staticmethod
+        def vkCreateCommandPool(*args):
+            return "mock_command_pool"
+        
+        @staticmethod
+        def vkCreateRenderPass2(*args):
+            return MockVK.VK_SUCCESS
+        
+        @staticmethod
+        def vkDestroyCommandPool(*args):
+            pass
+        
+        @staticmethod
+        def vkDestroyDevice(*args):
+            pass
+        
+        @staticmethod
+        def vkDestroyInstance(*args):
+            pass
+    
     vk = MockVK()
 
 logger = logging.getLogger(__name__)
@@ -99,12 +222,51 @@ class DeviceManager:
         self.instance: Optional[Any] = None  # VkInstance
         self.physical_devices: List[PhysicalDeviceInfo] = []
         self.logical_devices: List[LogicalDevice] = []
-        self._create_instance()
-        self._enumerate_devices()
+        
+        if not VULKAN_AVAILABLE:
+            logger.warning("Vulkan not available, creating CPU fallback device")
+            self._create_cpu_fallback_device()
+        else:
+            try:
+                self._create_instance()
+                self._enumerate_devices()
+            except Exception as e:
+                logger.warning(f"Failed to initialize Vulkan: {e}, creating CPU fallback")
+                self._create_cpu_fallback_device()
+    
+    def _create_cpu_fallback_device(self) -> None:
+        """Create a CPU fallback device when Vulkan is not available."""
+        # Create mock properties
+        class MockProperties:
+            def __init__(self):
+                self.deviceName = "CPU Fallback Renderer"
+                self.deviceType = vk.VK_PHYSICAL_DEVICE_TYPE_CPU
+        
+        class MockFeatures:
+            pass
+        
+        class MockMemoryProperties:
+            pass
+        
+        # Create a CPU device info
+        cpu_device_info = PhysicalDeviceInfo(
+            device="cpu_device",
+            properties=MockProperties(),
+            features=MockFeatures(),
+            memory_properties=MockMemoryProperties(),
+            queue_families=[],
+            device_type=vk.VK_PHYSICAL_DEVICE_TYPE_CPU
+        )
+        
+        self.physical_devices = [cpu_device_info]
+        logger.info("Created CPU fallback device")
     
     def _create_instance(self) -> None:
         """Create Vulkan instance with validation layers if requested."""
-        # Use VK_API_VERSION_1_0 for compatibility with older vulkan bindings
+        if not VULKAN_AVAILABLE:
+            raise VulkanForgeError("Vulkan not available")
+            
+        # Use VK_API_VERSION_1_0 for compatibility
         api_version = getattr(vk, 'VK_API_VERSION_1_2', None)
         if api_version is None:
             api_version = getattr(vk, 'VK_API_VERSION_1_0', vk.VK_MAKE_VERSION(1, 0, 0))
@@ -172,6 +334,11 @@ class DeviceManager:
         if not self.physical_devices:
             raise VulkanForgeError("No physical devices found")
         
+        # If we only have CPU devices, return them directly
+        if all(d.is_cpu for d in self.physical_devices):
+            logger.info("Only CPU devices available, using CPU renderer")
+            return []
+        
         # Sort devices by preference
         sorted_devices = sorted(
             self.physical_devices,
@@ -180,6 +347,9 @@ class DeviceManager:
         )
         
         for physical_device in sorted_devices:
+            if physical_device.is_cpu:
+                continue  # Skip CPU devices for logical device creation
+                
             try:
                 logical_device = self._create_logical_device(physical_device)
                 self.logical_devices.append(logical_device)
@@ -187,13 +357,13 @@ class DeviceManager:
                 logger.warning(f"Failed to create logical device: {e}")
                 continue
         
-        if not self.logical_devices:
-            raise VulkanForgeError("Failed to create any logical devices")
-        
         return self.logical_devices
     
     def _create_logical_device(self, physical_device: PhysicalDeviceInfo) -> LogicalDevice:
         """Create a logical device from a physical device."""
+        if not VULKAN_AVAILABLE:
+            raise VulkanForgeError("Vulkan not available")
+            
         # Find graphics queue family
         graphics_queue_family = None
         for i, queue_family in enumerate(physical_device.queue_families):
@@ -254,6 +424,9 @@ class DeviceManager:
     
     def cleanup(self) -> None:
         """Clean up all Vulkan resources."""
+        if not VULKAN_AVAILABLE:
+            return
+            
         for logical_device in self.logical_devices:
             if logical_device.command_pool:
                 vk.vkDestroyCommandPool(logical_device.device, logical_device.command_pool, None)

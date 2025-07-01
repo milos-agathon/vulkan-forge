@@ -1,30 +1,15 @@
-"""Stub module for vulkan_forge native bindings."""
+# vulkan_forge/vulkan_forge_native.py
+"""Stub for the native extension module.
 
-__all__ = [
-    "VulkanRenderer",
-    "VulkanDevice",
-    "VulkanBuffer",
-    "VulkanPipeline",
-    "HeightfieldScene",
-]
+This file exists to prevent import errors when the C++ extension
+is not built. The actual native extension would be a .pyd/.so file
+that replaces this stub when properly built and installed.
+"""
 
-class VulkanRenderer:
-    """Placeholder for the native VulkanRenderer."""
-    pass
+# Placeholder for native functions that might be exposed
+def native_version():
+    """Return version of native extension."""
+    return "stub"
 
-class VulkanDevice:
-    """Placeholder for the native VulkanDevice."""
-    pass
-
-class VulkanBuffer:
-    """Placeholder for the native VulkanBuffer."""
-    pass
-
-class VulkanPipeline:
-    """Placeholder for the native VulkanPipeline."""
-    pass
-
-class HeightfieldScene:
-    """Placeholder for the native HeightfieldScene."""
-    pass
-
+# Any other native functions would go here
+# They should raise NotImplementedError or return mock values

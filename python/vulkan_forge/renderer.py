@@ -8,21 +8,27 @@ from typing import Any, Dict, List, Optional, Tuple
 from abc import ABC, abstractmethod
 import ctypes
 import numpy as np
-import vulkan as vk
 
-# Check if we're being loaded as part of a package or directly
-if __name__ == "__main__" or "vf_renderer" in __name__:
+# Import vulkan with fallback
+try:
+    import vulkan as vk
+    VULKAN_AVAILABLE = True
+except ImportError:
+    VULKAN_AVAILABLE = False
+    # Use the mock from backend
+    try:
+        from .backend import vk
+    except ImportError:
+        from backend import vk
+
+# Import local modules
+try:
+    from .backend import DeviceManager, VulkanForgeError, LogicalDevice
+    from .matrices import Matrix4x4
+except ImportError:
     from backend import DeviceManager, VulkanForgeError, LogicalDevice
     from matrices import Matrix4x4
-else:
-    try:
-        from .backend import DeviceSelector, DeviceInfo, DeviceManager, VulkanForgeError, LogicalDevice
-        from .matrices import Matrix4x4
-    except ImportError:
-        from backend import DeviceSelector, DeviceInfo, DeviceManager, VulkanForgeError, LogicalDevice
-        from matrices import Matrix4x4
 
-# from .backend import DeviceSelector, DeviceInfo
 logger = logging.getLogger(__name__)
 
 
@@ -30,11 +36,14 @@ logger = logging.getLogger(__name__)
 class Transform:
     """3D transformation matrix."""
     matrix: np.ndarray = field(default_factory=lambda: np.eye(4))    
+    
     def transform_point(self, point: Tuple[float, float, float]) -> Tuple[float, float, float]:
         """Transform a 3D point."""
         p = np.array([point[0], point[1], point[2], 1.0])
         result = self.matrix @ p
         return (result[0], result[1], result[2])
+
+
 @dataclass
 class RenderTarget:
     """Target for rendering operations."""
@@ -43,6 +52,7 @@ class RenderTarget:
     height: int
     format: str = "RGBA8"
     samples: int = 1
+
 
 @dataclass
 class Mesh:
@@ -53,6 +63,7 @@ class Mesh:
     uvs: np.ndarray       # Shape: (N, 2) for texture coordinates
     indices: np.ndarray   # Shape: (M,) for triangle indices
 
+
 @dataclass
 class Material:
     """PBR material properties."""
@@ -61,6 +72,7 @@ class Material:
     metallic: float = 0.0
     roughness: float = 0.5
     emissive: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+
 
 @dataclass
 class Light:
@@ -148,22 +160,27 @@ class VulkanRenderer(Renderer):
         # failure cleanly falls back to CPU rendering.
         self.pipelines: List[Any] = []
         self.render_passes: List[Any] = []
-        try:
-            for device in logical_devices:
-                render_pass = self._create_render_pass(device)
-                pipeline = self._create_pipeline(device, render_pass)
-                self.render_passes.append(render_pass)
-                self.pipelines.append(pipeline)
-            self.gpu_active = True
-        except VulkanForgeError as e:
-            logger.error(f"Failed to initialize pipeline on device: {e}")
-            self.gpu_active = False
+        
+        if VULKAN_AVAILABLE and logical_devices:
+            try:
+                for device in logical_devices:
+                    render_pass = self._create_render_pass(device)
+                    pipeline = self._create_pipeline(device, render_pass)
+                    self.render_passes.append(render_pass)
+                    self.pipelines.append(pipeline)
+                self.gpu_active = True
+                logger.info("GPU rendering initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize pipeline on device: {e}")
+                self.gpu_active = False
+        else:
+            logger.info("Using CPU fallback renderer")
 
     def get_surface_extent(self) -> Tuple[int, int]:
         """Return the current render target dimensions."""
         if self.render_target is not None:
             return self.render_target.width, self.render_target.height
-        return (0, 0)
+        return (800, 600)  # Default size
 
     def _create_swapchain(self) -> None:
         """Placeholder swapchain creation with corrected extent calculation."""
@@ -175,6 +192,9 @@ class VulkanRenderer(Renderer):
     
     def _create_render_pass(self, device: LogicalDevice) -> Any:
         """Create render pass for a device."""
+        if not VULKAN_AVAILABLE:
+            return None
+            
         features = getattr(self, "device_features", {})
         if features and features.get("VK_KHR_dynamic_rendering"):
             self._render_pass = None
@@ -269,7 +289,7 @@ class VulkanRenderer(Renderer):
     
     def _create_pipeline(self, device: LogicalDevice, render_pass: Any) -> Any:
         """Create graphics pipeline for a device."""
-        # UNKNOWN: Full pipeline creation requires shader compilation
+        # Placeholder: Full pipeline creation requires shader compilation
         return None
     
     def render(self, meshes: List[Mesh], materials: List[Material],
@@ -279,29 +299,30 @@ class VulkanRenderer(Renderer):
         if not self.render_target:
             raise VulkanForgeError("No render target set")
         
-        # Round-robin device selection for load balancing
-        device = self.logical_devices[self.current_device_index]
-        self.current_device_index = (self.current_device_index + 1) % len(self.logical_devices)
-        
-        # UNKNOWN: Full GPU rendering implementation
+        if self.gpu_active and self.logical_devices:
+            # Round-robin device selection for load balancing
+            device = self.logical_devices[self.current_device_index]
+            self.current_device_index = (self.current_device_index + 1) % len(self.logical_devices)
+            
+            # Placeholder: Full GPU rendering implementation
+            # Return black framebuffer for now
+            return np.zeros((self.render_target.height, self.render_target.width, 4), dtype=np.uint8)
+        else:
+            # Fall back to CPU rendering
+            return self.render_cpu_fallback(meshes, materials, lights, view_matrix, projection_matrix)
 
-        # Placeholder: return black framebuffer
-        return np.zeros((self.render_target.height, self.render_target.width, 4), dtype=np.uint8)
-
-    def render_frame(self, scene: Any) -> np.ndarray:
-        """Draw a frame using GPU if available, otherwise CPU fallback."""
-        if self.gpu_active:
-            return self.render(scene.meshes, scene.materials, scene.lights, scene.view_matrix, scene.projection_matrix)
-        return self.render_cpu_fallback(scene)
-
-    def render_cpu_fallback(self, scene: Any) -> np.ndarray:
-        """Simple CPU fallback that draws a colour gradient."""
+    def render_cpu_fallback(self, meshes: List[Mesh], materials: List[Material],
+                           lights: List[Light], view_matrix: Matrix4x4,
+                           projection_matrix: Matrix4x4) -> np.ndarray:
+        """Simple CPU fallback that draws a crosshair."""
         if not self.render_target:
             raise VulkanForgeError("No render target set")
-        width, height = self.swapchain_extent
+        
+        width, height = self.render_target.width, self.render_target.height
         framebuffer = np.zeros((height, width, 4), dtype=np.uint8)
-        framebuffer[:, :, 3] = 255
+        framebuffer[:, :, 3] = 255  # Alpha channel
 
+        # Draw crosshair for visibility
         cx = width // 2
         cy = height // 2
         framebuffer[cy, :, :3] = 255
@@ -317,13 +338,16 @@ class VulkanRenderer(Renderer):
     
     def cleanup(self) -> None:
         """Clean up Vulkan resources."""
+        if not VULKAN_AVAILABLE:
+            return
+            
         # Clean up pipelines and render passes
         for i, device in enumerate(self.logical_devices):
             if i < len(self.pipelines) and self.pipelines[i]:
-                # UNKNOWN: vkDestroyPipeline call
+                # Placeholder: vkDestroyPipeline call
                 pass
             if i < len(self.render_passes) and self.render_passes[i]:
-                # UNKNOWN: vkDestroyRenderPass call
+                # Placeholder: vkDestroyRenderPass call
                 pass
 
 
@@ -356,9 +380,13 @@ class CPURenderer(Renderer):
 
         # Simple rasterization for each mesh
         for mesh_idx, mesh in enumerate(meshes):
+            if mesh_idx >= len(materials):
+                continue
+                
             material = materials[mesh_idx]
             logger.info(f"Mesh {mesh_idx}: vertices shape={mesh.vertices.shape}, "
                        f"indices shape={mesh.indices.shape}, material color={material.base_color}")
+            
             # Transform vertices
             vertices_4d = np.hstack([mesh.vertices, np.ones((len(mesh.vertices), 1))])
             transformed = vertices_4d @ mvp.data.T
@@ -383,10 +411,12 @@ class CPURenderer(Renderer):
             screen_y = (1 - ndc[:, 1]) * height / 2
             logger.info(f"Screen coords - X range: [{np.min(screen_x):.1f}, {np.max(screen_x):.1f}], "
                        f"Y range: [{np.min(screen_y):.1f}, {np.max(screen_y):.1f}]")
+            
             # Rasterize triangles
-            pixels_drawn += 1
-            logger.info(f"Total pixels drawn: {pixels_drawn}")
             for i in range(0, len(mesh.indices), 3):
+                if i + 2 >= len(mesh.indices):
+                    break
+                    
                 i0, i1, i2 = mesh.indices[i:i+3]
                 if i == 0:  # Log first triangle
                     logger.info(f"First triangle: v{i0}={screen_x[i0]:.1f},{screen_y[i0]:.1f} v{i1}={screen_x[i1]:.1f},{screen_y[i1]:.1f} v{i2}={screen_x[i2]:.1f},{screen_y[i2]:.1f}")
@@ -437,9 +467,16 @@ class CPURenderer(Renderer):
                                 depth_buffer[yi, xi] = z
                                 
                                 # Interpolate normal
-                                if i0 < len(mesh.normals) and i1 < len(mesh.normals) and i2 < len(mesh.normals):
-                                    normal = mesh.normals[i0] * w0 + mesh.normals[i1] * w1 + mesh.normals[i2] * w2
-                                    normal = normal / (np.linalg.norm(normal) + 1e-10)
+                                if (i0 < len(mesh.normals) and i1 < len(mesh.normals) and 
+                                    i2 < len(mesh.normals)):
+                                    normal = (mesh.normals[i0] * w0 + 
+                                             mesh.normals[i1] * w1 + 
+                                             mesh.normals[i2] * w2)
+                                    normal_length = np.linalg.norm(normal)
+                                    if normal_length > 1e-10:
+                                        normal = normal / normal_length
+                                    else:
+                                        normal = np.array([0, 0, 1])
                                 else:
                                     normal = np.array([0, 0, 1])  # Default normal
                                 
@@ -448,21 +485,29 @@ class CPURenderer(Renderer):
                                 for light in lights:
                                     # Light direction should be from surface to light
                                     light_pos = np.array(light.position)
-                                    # Simple directional light approximation
-                                    light_dir = light_pos / (np.linalg.norm(light_pos) + 1e-10)
+                                    light_length = np.linalg.norm(light_pos)
+                                    if light_length > 1e-10:
+                                        light_dir = light_pos / light_length
+                                    else:
+                                        light_dir = np.array([0, 0, 1])
+                                    
                                     diffuse = max(0, np.dot(normal, light_dir))
                                     # Add light contribution
                                     light_contrib = np.array(light.color) * diffuse * light.intensity
                                     color = color + np.array(material.base_color[:3]) * light_contrib * 0.7                                
+                                
                                 # Clamp and store
                                 framebuffer[yi, xi, :3] = np.clip(color, 0, 1)
                                 framebuffer[yi, xi, 3] = material.base_color[3]
+                                pixels_drawn += 1
+                                
             logger.info(f"Rendered {triangles_rendered} triangles for mesh {mesh_idx}")
 
         # If no triangles produced pixels, overlay a crosshair for visibility
         if triangles_rendered == 0:
             logger.warning("No triangles rendered, drawing crosshair")
             self._draw_crosshair(framebuffer)
+            
         # Convert to uint8
         return (framebuffer * 255).astype(np.uint8)
     
@@ -478,9 +523,8 @@ class CPURenderer(Renderer):
 def create_renderer(prefer_gpu: bool = True, enable_validation: bool = True) -> Renderer:
     """Create a renderer with automatic backend selection."""
     try:
-        if prefer_gpu:
-            logger.info("Forcing CPU renderer for stability")
-            return CPURenderer()
+        if prefer_gpu and VULKAN_AVAILABLE:
+            logger.info("Attempting to create Vulkan renderer")
             device_manager = DeviceManager(enable_validation=enable_validation)
             logical_devices = device_manager.create_logical_devices()
             
@@ -492,7 +536,9 @@ def create_renderer(prefer_gpu: bool = True, enable_validation: bool = True) -> 
             else:
                 logger.warning("No GPU devices found, falling back to CPU renderer")
                 device_manager.cleanup()
-    except VulkanForgeError as e:
+        else:
+            logger.info("GPU rendering disabled or Vulkan not available, using CPU renderer")
+    except Exception as e:
         logger.warning(f"Failed to initialize Vulkan: {e}, falling back to CPU renderer")
     
     return CPURenderer()
