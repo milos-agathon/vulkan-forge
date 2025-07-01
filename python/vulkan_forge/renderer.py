@@ -288,15 +288,20 @@ class VulkanRenderer(Renderer):
         """Simple CPU fallback that draws a colour gradient."""
         if not self.render_target:
             raise VulkanForgeError("No render target set")
-        width, height = self.render_target.width, self.render_target.height
-        x = np.linspace(0, 1, width, dtype=np.float32)
-        y = np.linspace(0, 1, height, dtype=np.float32)
-        xv, yv = np.meshgrid(x, y)
-        gradient = np.stack((xv, yv, 0.5 * np.ones_like(xv)), axis=-1)
-        # Placeholder for future CPU ray tracing implementation
-        image = (gradient * 255).astype(np.uint8)
-        alpha = 255 * np.ones((height, width, 1), dtype=np.uint8)
-        return np.concatenate((image, alpha), axis=-1)
+        width, height = self.swapchain_extent
+        framebuffer = np.zeros((height, width, 4), dtype=np.uint8)
+        framebuffer[:, :, 3] = 255
+
+        rect_w = max(1, width // 4)
+        rect_h = max(1, height // 4)
+        x0 = (width - rect_w) // 2
+        y0 = (height - rect_h) // 2
+        x1 = x0 + rect_w
+        y1 = y0 + rect_h
+        framebuffer[y0:y1, x0:x1, 0] = 255
+        framebuffer[y0:y1, x0:x1, 1] = 255
+
+        return framebuffer
     
     def set_render_target(self, target: RenderTarget) -> None:
         """Set the render target."""
