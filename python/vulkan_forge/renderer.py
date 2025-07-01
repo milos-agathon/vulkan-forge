@@ -338,6 +338,7 @@ class CPURenderer(Renderer):
 
         logger.info(f"Rendering {len(meshes)} meshes")
         pixels_drawn = 0
+        triangles_rendered = 0
 
         # Transform matrices
         mvp = projection_matrix @ view_matrix
@@ -373,7 +374,6 @@ class CPURenderer(Renderer):
                        f"Y range: [{np.min(screen_y):.1f}, {np.max(screen_y):.1f}]")
             # Rasterize triangles
             pixels_drawn += 1
-            triangles_rendered += 1
             logger.info(f"Total pixels drawn: {pixels_drawn}")
             for i in range(0, len(mesh.indices), 3):
                 i0, i1, i2 = mesh.indices[i:i+3]
@@ -407,7 +407,8 @@ class CPURenderer(Renderer):
                 area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
                 if abs(area) < 1e-6:
                     continue  # Skip degenerate triangles
-                
+
+                triangles_rendered += 1
                 # Rasterize pixels in bounding box
                 for yi in range(min_y, max_y + 1):
                     for xi in range(min_x, max_x + 1):
@@ -445,7 +446,6 @@ class CPURenderer(Renderer):
                                 # Clamp and store
                                 framebuffer[yi, xi, :3] = np.clip(color, 0, 1)
                                 framebuffer[yi, xi, 3] = material.base_color[3]
-                                triangles_rendered += 1
             logger.info(f"Rendered {triangles_rendered} triangles for mesh {mesh_idx}")
 
         # If nothing was drawn, fall back to a simple test triangle
