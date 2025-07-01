@@ -6,10 +6,10 @@ find_package(Vulkan      REQUIRED)
 find_package(glm         CONFIG REQUIRED)
 
 add_library(vulkan_forge_native MODULE
-    src/bindings.cpp
-    src/vk_common.cpp
-    src/heightfield_scene.cpp
-    src/renderer.cpp
+    ../src/bindings.cpp
+    ../src/vk_common.cpp
+    ../src/heightfield_scene.cpp
+    ../src/renderer.cpp
 )
 
 target_include_directories(vulkan_forge_native PRIVATE include)
