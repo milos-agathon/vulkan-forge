@@ -153,6 +153,11 @@ $env:VK_ICD_FILENAMES = "C:\Windows\System32\amd-vulkan64.json"  # For AMD
 Full reference documentation is at [https://milos-agathon.github.io/vulkan-forge/](https://milos-agathon.github.io/vulkan-forge/)
 Browse function help pages with `?vk_list_backends`, `?vk_mesh_heightmap`, etc.
 
+## Memory allocator
+
+GPU buffers are now backed by AMD's [VulkanMemoryAllocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator).
+This greatly simplifies memory management and improves performance on discrete GPUs.
+
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for workflow and coding standards.
