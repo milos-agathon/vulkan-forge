@@ -34,82 +34,98 @@
 * **R Interfaces**
   High-level R functions with `.Call()` bridges to native Vulkan code
 
-### Install Vulkan SDK
+# Vulkan Installation Guide for VulkanForge
 
-Before using vulkan-forge, you must install the **Vulkan SDK** from LunarG. Follow the steps for your operating system:
+## Prerequisites
 
-#### Windows
+To use GPU rendering with VulkanForge, you need:
 
-1. **Download the SDK**
+1. **Vulkan-capable GPU** (NVIDIA, AMD, or Intel)
+2. **Updated GPU drivers** with Vulkan support
+3. **Vulkan SDK** (optional but recommended for development)
+4. **Python vulkan package**
 
-   * Visit [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home#windows) and download the latest Windows installer.
-2. **Run the Installer**
+## Step 1: Install/Update GPU Drivers
 
-   * Execute the downloaded `.exe` and follow the prompts.
-3. **Update PATH**
+### NVIDIA
+- Download from: https://www.nvidia.com/Download/index.aspx
+- Ensure driver version 390+ for Vulkan support
 
-   * Ensure the SDK `Bin` directory (e.g. `C:\VulkanSDK\<version>\Bin`) is added to your **System** `PATH` environment variable.
+### AMD
+- Download from: https://www.amd.com/en/support
+- Use latest Adrenalin drivers
 
-#### macOS
+### Intel
+- Download from: https://www.intel.com/content/www/us/en/support
+- Use latest graphics drivers
 
-1. **Download the SDK**
+## Step 2: Install Vulkan Runtime
 
-   * Visit [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home#macos) and download the macOS `.dmg` package.
-2. **Install**
+### Windows
+The Vulkan runtime is usually included with GPU drivers. If not:
 
-   * Open the `.dmg` and drag the SDK folder to `/usr/local/` (or a location of your choice).
-3. **Update PATH**
+1. Download Vulkan SDK from: https://vulkan.lunarg.com/sdk/home#windows
+2. Run the installer
+3. Add to PATH: `C:\VulkanSDK\<version>\Bin`
 
-   * Add the SDK binaries to your shell profile, e.g.:
-
-     ```bash
-     export VULKAN_SDK="/usr/local/VulkanSDK/<version>/macOS"
-     export PATH="$VULKAN_SDK/bin:$PATH"
-     ```
-
-#### Linux
-
-1. **Download & Extract**
-
-   ```bash
-   # Replace <version> with the downloaded version
-   wget https://sdk.lunarg.com/sdk/download/<version>/linux/vulkansdk-linux-x86_64-<version>.tar.gz
-   tar -xzf vulkansdk-linux-x86_64-<version>.tar.gz -C $HOME
-   ```
-2. **Source Environment**
-
-   ```bash
-   source $HOME/VulkanSDK/<version>/setup-env.sh
-   ```
-3. **Persist Across Sessions**
-
-   * Add the above `source` line to your `~/.bashrc` or `~/.zshrc`.
-
-#### Verification
-
-After installation, confirm everything is working by running:
-
-```bash
-vulkaninfo | head -n 10
+### Verify Installation
+Open PowerShell and run:
+```powershell
+vulkaninfo
 ```
 
-You should see your GPU and driver details printed to the console.
+## Step 3: Install Python Vulkan Package
 
----
+```powershell
+# Install the vulkan package with all dependencies
+pip install vulkan-forge[vulkan]
 
-## Installation
-
-Install the released version from CRAN:
-
-```r
-install.packages("vulkan-forge")
+# Or install vulkan separately
+pip install vulkan
 ```
 
-Or install the development version from GitHub:
+## Step 4: Test GPU Detection
 
-```r
-# install.packages("devtools")
-devtools::install_github("milos-agathon/vulkan-forge")
+Create `test_gpu.py`:
+
+```python
+import vulkan_forge
+from vulkan_forge import create_renderer
+
+# This will show if Vulkan is available
+print(f"Vulkan available: {vulkan_forge.backend.VULKAN_AVAILABLE}")
+
+# Create renderer with GPU preference
+renderer = create_renderer(prefer_gpu=True)
+print(f"Renderer type: {type(renderer).__name__}")
+
+if hasattr(renderer, 'gpu_active'):
+    print(f"GPU active: {renderer.gpu_active}")
+```
+
+## Troubleshooting
+
+### "Vulkan not available"
+- Ensure GPU drivers are updated
+- Check if `vulkaninfo` works in terminal
+- Reinstall the vulkan Python package
+
+### "No GPU devices found"
+- Update GPU drivers
+- Ensure your GPU supports Vulkan
+- Check Device Manager for GPU issues
+
+### "Failed to create logical device"
+- This usually means the GPU doesn't support required features
+- Try disabling validation layers: `create_renderer(enable_validation=False)`
+
+## Environment Variables
+
+You may need to set:
+```powershell
+$env:VK_ICD_FILENAMES = "C:\Windows\System32\nv-vk64.json"  # For NVIDIA
+# or
+$env:VK_ICD_FILENAMES = "C:\Windows\System32\amd-vulkan64.json"  # For AMD
 ```
 
 ## System Requirements
