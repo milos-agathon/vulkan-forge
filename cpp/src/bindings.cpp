@@ -32,6 +32,8 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
 
     py::register_exception<vf::VulkanForgeError>(m, "VulkanForgeError");
 
+    py::register_exception<vf::VulkanForgeError>(m, "VulkanForgeError");
+
     /* ------------------------- HeightFieldScene ---------------------- */
     py::class_<HeightFieldScene>(m, "HeightFieldScene")
         .def(py::init<>())
@@ -114,9 +116,8 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
 
     m.def(
         "allocate_buffer",
-        [](py::capsule allocator_cap, std::size_t size, uint32_t usage) {
-            auto allocator = reinterpret_cast<VmaAllocator>(
-                allocator_cap.get_pointer());
+        [](std::uintptr_t allocator_ptr, std::size_t size, uint32_t usage) {
+            auto allocator = reinterpret_cast<VmaAllocator>(allocator_ptr);
             VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
             info.size = size;
             info.usage = usage;
@@ -134,9 +135,8 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
 
     m.def(
         "destroy_allocator",
-        [](py::capsule allocator_cap) {
-            vf::destroy_allocator(reinterpret_cast<VmaAllocator>(
-                allocator_cap.get_pointer()));
+        [](std::uintptr_t allocator_ptr) {
+            vf::destroy_allocator(reinterpret_cast<VmaAllocator>(allocator_ptr));
         },
         py::arg("allocator"));
 }

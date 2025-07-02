@@ -3,6 +3,7 @@
 
 import logging
 import weakref
+import ctypes
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Tuple
 
@@ -181,6 +182,14 @@ class VulkanForgeError(Exception):
 
 if native is not None and hasattr(native, "VulkanForgeError"):
     VulkanForgeError = native.VulkanForgeError  # type: ignore[misc]
+
+_capsule_get_ptr = ctypes.pythonapi.PyCapsule_GetPointer
+_capsule_get_ptr.restype = ctypes.c_void_p
+_capsule_get_ptr.argtypes = [ctypes.py_object, ctypes.c_char_p]
+
+def _capsule_to_void_p(cap: object, name: str) -> ctypes.c_void_p:
+    """Extract raw pointer from a PyCapsule."""
+    return ctypes.c_void_p(_capsule_get_ptr(cap, name.encode()))
 
 
 @dataclass
@@ -449,15 +458,26 @@ class DeviceManager:
         self.physical_devices.clear()
 
 
-def create_allocator(instance: Any, physical_device: Any, device: Any) -> Any:
+def create_allocator(instance: Any, physical_device: Any, device: Any) -> ctypes.c_void_p:
     """Create a VMA allocator."""
     if native is None or not hasattr(native, "create_allocator"):
         raise VulkanForgeError("create_allocator unavailable")
-    return native.create_allocator(int(instance), int(physical_device), int(device))
+    cap = native.create_allocator(int(instance), int(physical_device), int(device))
+    ptr = _capsule_to_void_p(cap, "VmaAllocator")
+    weakref.finalize(ptr, destroy_allocator, ptr)
+    return ptr
 
 
-def allocate_buffer(allocator: Any, size: int, usage: int) -> Tuple[int, int]:
+def allocate_buffer(allocator: ctypes.c_void_p, size: int, usage: int) -> Tuple[ctypes.c_void_p, ctypes.c_void_p]:
     """Allocate a Vulkan buffer via VMA."""
     if native is None or not hasattr(native, "allocate_buffer"):
         raise VulkanForgeError("allocate_buffer unavailable")
-    return native.allocate_buffer(allocator, size, usage)
+    buf, alloc = native.allocate_buffer(int(allocator.value), size, usage)
+    return ctypes.c_void_p(buf), ctypes.c_void_p(alloc)
+
+
+def destroy_allocator(allocator: ctypes.c_void_p) -> None:
+    """Destroy a VMA allocator."""
+    if native is None or not hasattr(native, "destroy_allocator"):
+        raise VulkanForgeError("destroy_allocator unavailable")
+    native.destroy_allocator(int(allocator.value))
