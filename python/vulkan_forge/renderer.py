@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from abc import ABC, abstractmethod
 import ctypes
 import numpy as np
+import os
+import subprocess
 
 # Import vulkan with fallback
 try:
@@ -15,13 +17,14 @@ try:
     VULKAN_AVAILABLE = True
 except ImportError:
     VULKAN_AVAILABLE = False
-    # Use the mock from backend
+    # Fallback mock or stub (for CPU path or CI tests)
     try:
         from .backend import vk
     except ImportError:
-        from backend import vk
+        import types
+        vk = types.SimpleNamespace()  # minimal stub
 
-# Import local modules
+# Import local modules (relative when in package, absolute when standalone)
 try:
     from .backend import DeviceManager, VulkanForgeError, LogicalDevice
     from .matrices import Matrix4x4
@@ -32,22 +35,23 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-@dataclass 
+# ─────────────────────────────────────────────────────────────────────────────
+# Utility dataclasses
+# ─────────────────────────────────────────────────────────────────────────────
+@dataclass
 class Transform:
-    """3D transformation matrix."""
-    matrix: np.ndarray = field(default_factory=lambda: np.eye(4))    
-    
+    """4 × 4 matrix wrapper with a convenience transform method."""
+    matrix: np.ndarray = field(default_factory=lambda: np.eye(4, dtype=np.float32))
+
     def transform_point(self, point: Tuple[float, float, float]) -> Tuple[float, float, float]:
-        """Transform a 3D point."""
-        p = np.array([point[0], point[1], point[2], 1.0])
-        result = self.matrix @ p
-        return (result[0], result[1], result[2])
+        p = np.array([*point, 1.0], dtype=np.float32)
+        r = self.matrix @ p
+        return (float(r[0]), float(r[1]), float(r[2]))
 
 
 @dataclass
 class RenderTarget:
-    """Target for rendering operations."""
-    
+    """Off-screen or swap-chain render target."""
     width: int
     height: int
     format: str = "RGBA8"
@@ -56,217 +60,558 @@ class RenderTarget:
 
 @dataclass
 class Mesh:
-    """3D mesh data."""
-    
-    vertices: np.ndarray  # Shape: (N, 3) for positions
-    normals: np.ndarray   # Shape: (N, 3) for normals
-    uvs: np.ndarray       # Shape: (N, 2) for texture coordinates
-    indices: np.ndarray   # Shape: (M,) for triangle indices
+    """Simple triangle-mesh container."""
+    vertices: np.ndarray
+    normals: np.ndarray
+    uvs: np.ndarray
+    indices: np.ndarray
 
 
 @dataclass
 class Material:
-    """PBR material properties."""
-    
-    base_color: Tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
+    base_color: Tuple[float, float, float, float] = (1, 1, 1, 1)
     metallic: float = 0.0
     roughness: float = 0.5
-    emissive: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    emissive: Tuple[float, float, float] = (0, 0, 0)
 
 
 @dataclass
 class Light:
-    """Light source."""
-    
     position: Tuple[float, float, float]
-    color: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+    color: Tuple[float, float, float] = (1, 1, 1)
     intensity: float = 1.0
-    light_type: str = "point"  # "point", "directional", "spot"
+    light_type: str = "point"          # "point" | "directional" | "spot"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Abstract renderer
+# ─────────────────────────────────────────────────────────────────────────────
 class Renderer(ABC):
-    """Abstract base class for renderers."""
-    
+    """API-agnostic base class."""
+
     @abstractmethod
-    def render(self, meshes: List[Mesh], materials: List[Material], 
-               lights: List[Light], view_matrix: Matrix4x4, 
-               projection_matrix: Matrix4x4) -> np.ndarray:
-        """Render a scene and return the framebuffer."""
-        pass
-    
+    def render(
+        self,
+        meshes: List[Mesh],
+        materials: List[Material],
+        lights: List[Light],
+        view_matrix: Matrix4x4,
+        projection_matrix: Matrix4x4,
+    ) -> np.ndarray:
+        ...
+
     @abstractmethod
     def set_render_target(self, target: RenderTarget) -> None:
-        """Set the render target."""
-        pass
-    
+        ...
+
     @abstractmethod
     def cleanup(self) -> None:
-        """Clean up resources."""
-        pass
+        ...
 
-    def _draw_test_triangle(self, framebuffer: np.ndarray) -> None:
-        """Draw a simple RGB test triangle into the framebuffer."""
-        height, width, _ = framebuffer.shape
-        v0 = np.array([width * 0.2, height * 0.8])
-        v1 = np.array([width * 0.5, height * 0.2])
-        v2 = np.array([width * 0.8, height * 0.8])
+    # ─────────────────────────────────────────────────────────────────────
+    # Small CPU helpers for visual debug
+    # ─────────────────────────────────────────────────────────────────────
+    def _draw_test_triangle(self, fb: np.ndarray) -> None:
+        h, w, _ = fb.shape
+        v0 = np.array([w * 0.25, h * 0.75])
+        v1 = np.array([w * 0.50, h * 0.25])
+        v2 = np.array([w * 0.75, h * 0.75])
         area = (v1[0] - v0[0]) * (v2[1] - v0[1]) - (v1[1] - v0[1]) * (v2[0] - v0[0])
         if abs(area) < 1e-6:
             return
         min_x = int(max(0, np.floor(min(v0[0], v1[0], v2[0]))))
-        max_x = int(min(width - 1, np.ceil(max(v0[0], v1[0], v2[0]))))
+        max_x = int(min(w - 1, np.ceil(max(v0[0], v1[0], v2[0]))))
         min_y = int(max(0, np.floor(min(v0[1], v1[1], v2[1]))))
-        max_y = int(min(height - 1, np.ceil(max(v0[1], v1[1], v2[1]))))
+        max_y = int(min(h - 1, np.ceil(max(v0[1], v1[1], v2[1]))))
         for y in range(min_y, max_y + 1):
             for x in range(min_x, max_x + 1):
                 w0 = ((v1[0] - v2[0]) * (y - v2[1]) - (v1[1] - v2[1]) * (x - v2[0])) / area
                 w1 = ((v2[0] - v0[0]) * (y - v0[1]) - (v2[1] - v0[1]) * (x - v0[0])) / area
                 w2 = 1 - w0 - w1
                 if w0 >= 0 and w1 >= 0 and w2 >= 0:
-                    framebuffer[y, x, :3] = [w0, w1, w2]
-                    framebuffer[y, x, 3] = 1.0
+                    fb[y, x, :3] = [w0, w1, w2]
+                    fb[y, x, 3] = 1.0
 
-    def _draw_crosshair(self, framebuffer: np.ndarray) -> None:
-        """Draw a simple crosshair pattern in the framebuffer."""
-        height, width, _ = framebuffer.shape
-        cx = width // 2
-        cy = height // 2
-        framebuffer[cy, :, :3] = 1.0
-        framebuffer[:, cx, :3] = 1.0
-        framebuffer[cy, :, 3] = 1.0
-        framebuffer[:, cx, 3] = 1.0
+    def _draw_crosshair(self, fb: np.ndarray) -> None:
+        h, w, _ = fb.shape
+        cx, cy = w // 2, h // 2
+        fb[cy, :, :3] = 1
+        fb[:, cx, :3] = 1
+        fb[cy, :, 3] = 1
+        fb[:, cx, 3] = 1
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Vulkan (GPU) renderer
+# ─────────────────────────────────────────────────────────────────────────────
 class VulkanRenderer(Renderer):
-    """GPU-accelerated Vulkan renderer with automatic CPU fallback."""
+    """GPU backend with automatic graceful CPU fallback."""
 
     def __init__(self, device_manager: DeviceManager, logical_devices: List[LogicalDevice]):
-        """Initialize Vulkan renderer with device pool."""
         self.device_manager = device_manager
         self.logical_devices = logical_devices
         self.render_target: Optional[RenderTarget] = None
-        self.swapchain_format = vk.VK_FORMAT_B8G8R8A8_UNORM
+
+        self.swapchain_format = vk.VK_FORMAT_B8G8R8A8_UNORM if VULKAN_AVAILABLE else None
         self.current_device_index = 0
         self.gpu_active = False
+
         self.pipelines: List[Any] = []
         self.render_passes: List[Any] = []
-        
+        self._compiled_shaders: Dict[str, bytes] = {}
+        self.pipeline_layouts: List[Any] = []
+        self.descriptor_set_layouts: List[Any] = []
+
         if VULKAN_AVAILABLE and logical_devices:
             try:
-                for device in logical_devices:
-                    # For now, skip render pass creation due to ctypes issues
-                    # Just mark GPU as active if we have devices
-                    self.pipelines.append(None)
-                    self.render_passes.append(None)
-                self.gpu_active = True
-                logger.info(f"GPU rendering initialized with {len(logical_devices)} device(s)")
+                for dev in logical_devices:
+                    rp = self._create_render_pass(dev)
+                    pl = self._create_pipeline(dev, rp)
+                    self.render_passes.append(rp)
+                    self.pipelines.append(pl)
+                    # Add layouts if created inside pipeline creation
+                self.gpu_active = any(self.pipelines)
+                logger.info("GPU rendering enabled" if self.gpu_active else "GPU init failed; CPU fallback")
             except Exception as e:
-                logger.error(f"Failed to initialize GPU rendering: {e}")
+                logger.exception("Vulkan init failed, switching to CPU: %s", e)
                 self.gpu_active = False
         else:
-            logger.info("Using CPU fallback renderer (no GPU devices available)")
+            logger.info("No Vulkan devices detected – CPU fallback renderer engaged.")
 
+    # ─────────────────────────────────────────────────────────────────────
+    # Helpers
+    # ─────────────────────────────────────────────────────────────────────
     def get_surface_extent(self) -> Tuple[int, int]:
-        """Return the current render target dimensions."""
-        if self.render_target is not None:
+        if self.render_target:
             return self.render_target.width, self.render_target.height
         return (800, 600)
 
+    # (Placeholder swap-chain for headless off-screen rendering)
     def _create_swapchain(self) -> None:
-        """Placeholder swapchain creation."""
-        width, height = self.get_surface_extent()
-        self.swapchain_extent = (width, height)
-    
-    def render(self, meshes: List[Mesh], materials: List[Material],
-               lights: List[Light], view_matrix: Matrix4x4,
-               projection_matrix: Matrix4x4) -> np.ndarray:
-        """Render scene using GPU if available, otherwise CPU fallback."""
-        if not self.render_target:
-            raise VulkanForgeError("No render target set")
-        
-        if self.gpu_active and self.logical_devices:
-            # Use GPU rendering
-            device = self.logical_devices[self.current_device_index]
-            self.current_device_index = (self.current_device_index + 1) % len(self.logical_devices)
-            
-            # For now, render a test pattern to show GPU is active
-            width, height = self.render_target.width, self.render_target.height
-            framebuffer = np.zeros((height, width, 4), dtype=np.float32)
-            
-            # Draw a gradient to show GPU rendering is working
-            for y in range(height):
-                for x in range(width):
-                    framebuffer[y, x, 0] = x / width  # Red gradient
-                    framebuffer[y, x, 1] = y / height  # Green gradient
-                    framebuffer[y, x, 2] = 0.5  # Blue constant
-                    framebuffer[y, x, 3] = 1.0  # Alpha
-            
-            # Add test triangle
-            self._draw_test_triangle(framebuffer)
-            
-            logger.debug(f"GPU rendered frame using device {self.current_device_index}")
-            return (framebuffer * 255).astype(np.uint8)
-        else:
-            # Fall back to CPU rendering
-            return self.render_cpu_fallback(meshes, materials, lights, view_matrix, projection_matrix)
+        self.swapchain_extent = self.get_surface_extent()
 
-    def render_cpu_fallback(self, meshes: List[Mesh], materials: List[Material],
-                           lights: List[Light], view_matrix: Matrix4x4,
-                           projection_matrix: Matrix4x4) -> np.ndarray:
-        """CPU fallback renderer."""
-        if not self.render_target:
-            raise VulkanForgeError("No render target set")
-        
-        width, height = self.render_target.width, self.render_target.height
-        framebuffer = np.zeros((height, width, 4), dtype=np.uint8)
-        framebuffer[:, :, 3] = 255
+    # ─────────────────────────────────────────────────────────────────────
+    # Shader compilation utilities
+    # ─────────────────────────────────────────────────────────────────────
+    def _compile_shader(self, shader_name: str, stage: str) -> bytes:
+        """Compile GLSL → SPIR-V or return a cached blob."""
+        if shader_name in self._compiled_shaders:
+            return self._compiled_shaders[shader_name]
 
-        # Draw crosshair pattern
-        cx = width // 2
-        cy = height // 2
-        framebuffer[cy, :, :3] = 255
-        framebuffer[:, cx, :3] = 255
+        shader_dir = os.path.join(os.path.dirname(__file__), "shaders")
+        glsl = os.path.join(shader_dir, f"{shader_name}.glsl")
+        spv = os.path.join(shader_dir, f"{shader_name}.spv")
 
-        return framebuffer
-    
+        # Use cached SPIR-V if it’s newer than GLSL source
+        if os.path.exists(spv) and os.path.getmtime(spv) >= os.path.getmtime(glsl):
+            with open(spv, "rb") as fh:
+                blob = fh.read()
+                self._compiled_shaders[shader_name] = blob
+                return blob
+
+        # Try to invoke glslc
+        try:
+            subprocess.run(
+                ["glslc", f"-fshader-stage={stage}", glsl, "-o", spv],
+                check=True,
+                capture_output=True,
+            )
+            with open(spv, "rb") as fh:
+                blob = fh.read()
+                self._compiled_shaders[shader_name] = blob
+                return blob
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            logger.warning("glslc unavailable – using embedded placeholder for %s", shader_name)
+            blob = self._get_embedded_spirv(shader_name)
+            self._compiled_shaders[shader_name] = blob
+            return blob
+
+    def _get_embedded_spirv(self, shader_name: str) -> bytes:
+        """Tiny dummy SPIR-V blobs for fallback (minimal header only)."""
+        header = [
+            0x03, 0x02, 0x23, 0x07,
+            0x00, 0x00, 0x01, 0x00,
+            0x0A, 0x00, 0x0D, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+        ]
+        return bytes(header)
+
+    def _create_shader_module(self, device: Any, code: bytes) -> Any:
+        array = (ctypes.c_uint32 * (len(code) // 4)).from_buffer_copy(code)
+        info = vk.VkShaderModuleCreateInfo(
+            sType=vk.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            pNext=None,
+            flags=0,
+            codeSize=len(code),
+            pCode=array,
+        )
+        return vk.vkCreateShaderModule(device.device, info, None)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Render-pass / pipeline
+    # ─────────────────────────────────────────────────────────────────────
+    def _create_render_pass(self, dev: LogicalDevice) -> Any:
+        if not VULKAN_AVAILABLE:
+            return None
+        try:
+            # Color attachment
+            color_attachment = vk.VkAttachmentDescription(
+                flags=0,
+                format=self.swapchain_format,
+                samples=vk.VK_SAMPLE_COUNT_1_BIT,
+                loadOp=vk.VK_ATTACHMENT_LOAD_OP_CLEAR,
+                storeOp=vk.VK_ATTACHMENT_STORE_OP_STORE,
+                stencilLoadOp=vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                stencilStoreOp=vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                initialLayout=vk.VK_IMAGE_LAYOUT_UNDEFINED,
+                finalLayout=vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+            )
+            
+            # Depth attachment
+            depth_attachment = vk.VkAttachmentDescription(
+                flags=0,
+                format=vk.VK_FORMAT_D32_SFLOAT,
+                samples=vk.VK_SAMPLE_COUNT_1_BIT,
+                loadOp=vk.VK_ATTACHMENT_LOAD_OP_CLEAR,
+                storeOp=vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                stencilLoadOp=vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                stencilStoreOp=vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                initialLayout=vk.VK_IMAGE_LAYOUT_UNDEFINED,
+                finalLayout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            )
+            
+            # Attachment references
+            color_ref = vk.VkAttachmentReference(
+                attachment=0,
+                layout=vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+            )
+            
+            depth_ref = vk.VkAttachmentReference(
+                attachment=1,
+                layout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            )
+            
+            # Subpass
+            subpass = vk.VkSubpassDescription(
+                flags=0,
+                pipelineBindPoint=vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
+                inputAttachmentCount=0,
+                pInputAttachments=None,
+                colorAttachmentCount=1,
+                pColorAttachments=ctypes.pointer(color_ref),
+                pResolveAttachments=None,
+                pDepthStencilAttachment=ctypes.pointer(depth_ref),
+                preserveAttachmentCount=0,
+                pPreserveAttachments=None
+            )
+            
+            # Create render pass
+            attachments = [color_attachment, depth_attachment]
+            render_pass_info = vk.VkRenderPassCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                attachmentCount=len(attachments),
+                pAttachments=(vk.VkAttachmentDescription * len(attachments))(*attachments),
+                subpassCount=1,
+                pSubpasses=ctypes.pointer(subpass),
+                dependencyCount=0,
+                pDependencies=None
+            )
+            
+            return vk.vkCreateRenderPass(dev.device, render_pass_info, None)
+            
+        except Exception as e:
+            logger.error(f"Failed to create render pass: {e}")
+            return None
+
+    def _create_pipeline(self, dev: LogicalDevice, render_pass: Any) -> Any:
+        if not VULKAN_AVAILABLE or render_pass is None:
+            return None
+               
+        try:
+            # Compile shaders
+            vert_code = self._compile_shader('vertex', 'vertex')
+            frag_code = self._compile_shader('fragment', 'fragment')
+            
+            vert_module = self._create_shader_module(dev.device, vert_code)
+            frag_module = self._create_shader_module(dev.device, frag_code)
+            
+            # Shader stages
+            vert_stage = vk.VkPipelineShaderStageCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                stage=vk.VK_SHADER_STAGE_VERTEX_BIT,
+                module=vert_module,
+                pName="main",
+                pSpecializationInfo=None
+            )
+            
+            frag_stage = vk.VkPipelineShaderStageCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                stage=vk.VK_SHADER_STAGE_FRAGMENT_BIT,
+                module=frag_module,
+                pName="main",
+                pSpecializationInfo=None
+            )
+            
+            shader_stages = [vert_stage, frag_stage]
+            
+            # Vertex input
+            binding_desc = vk.VkVertexInputBindingDescription(
+                binding=0,
+                stride=32,  # 3 floats pos + 3 floats normal + 2 floats uv
+                inputRate=vk.VK_VERTEX_INPUT_RATE_VERTEX
+            )
+            
+            attr_descs = [
+                vk.VkVertexInputAttributeDescription(
+                    location=0, binding=0, format=vk.VK_FORMAT_R32G32B32_SFLOAT, offset=0
+                ),
+                vk.VkVertexInputAttributeDescription(
+                    location=1, binding=0, format=vk.VK_FORMAT_R32G32B32_SFLOAT, offset=12
+                ),
+                vk.VkVertexInputAttributeDescription(
+                    location=2, binding=0, format=vk.VK_FORMAT_R32G32_SFLOAT, offset=24
+                )
+            ]
+            
+            vertex_input = vk.VkPipelineVertexInputStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                vertexBindingDescriptionCount=1,
+                pVertexBindingDescriptions=ctypes.pointer(binding_desc),
+                vertexAttributeDescriptionCount=len(attr_descs),
+                pVertexAttributeDescriptions=(vk.VkVertexInputAttributeDescription * len(attr_descs))(*attr_descs)
+            )
+            
+            # Input assembly
+            input_assembly = vk.VkPipelineInputAssemblyStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                topology=vk.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                primitiveRestartEnable=vk.VK_FALSE
+            )
+            
+            # Viewport state
+            viewport = vk.VkViewport(
+                x=0.0, y=0.0,
+                width=float(self.swapchain_extent[0]),
+                height=float(self.swapchain_extent[1]),
+                minDepth=0.0, maxDepth=1.0
+            )
+            
+            scissor = vk.VkRect2D(
+                offset=vk.VkOffset2D(x=0, y=0),
+                extent=vk.VkExtent2D(
+                    width=self.swapchain_extent[0],
+                    height=self.swapchain_extent[1]
+                )
+            )
+            
+            viewport_state = vk.VkPipelineViewportStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                viewportCount=1,
+                pViewports=ctypes.pointer(viewport),
+                scissorCount=1,
+                pScissors=ctypes.pointer(scissor)
+            )
+            
+            # Rasterizer
+            rasterizer = vk.VkPipelineRasterizationStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                depthClampEnable=vk.VK_FALSE,
+                rasterizerDiscardEnable=vk.VK_FALSE,
+                polygonMode=vk.VK_POLYGON_MODE_FILL,
+                lineWidth=1.0,
+                cullMode=vk.VK_CULL_MODE_BACK_BIT,
+                frontFace=vk.VK_FRONT_FACE_COUNTER_CLOCKWISE,
+                depthBiasEnable=vk.VK_FALSE,
+                depthBiasConstantFactor=0.0,
+                depthBiasClamp=0.0,
+                depthBiasSlopeFactor=0.0
+            )
+            
+            # Multisampling
+            multisampling = vk.VkPipelineMultisampleStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                sampleShadingEnable=vk.VK_FALSE,
+                rasterizationSamples=vk.VK_SAMPLE_COUNT_1_BIT,
+                minSampleShading=1.0,
+                pSampleMask=None,
+                alphaToCoverageEnable=vk.VK_FALSE,
+                alphaToOneEnable=vk.VK_FALSE
+            )
+            
+            # Depth stencil
+            depth_stencil = vk.VkPipelineDepthStencilStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                depthTestEnable=vk.VK_TRUE,
+                depthWriteEnable=vk.VK_TRUE,
+                depthCompareOp=vk.VK_COMPARE_OP_LESS,
+                depthBoundsTestEnable=vk.VK_FALSE,
+                stencilTestEnable=vk.VK_FALSE,
+                front=vk.VkStencilOpState(),
+                back=vk.VkStencilOpState(),
+                minDepthBounds=0.0,
+                maxDepthBounds=1.0
+            )
+            
+            # Color blending
+            color_blend_attachment = vk.VkPipelineColorBlendAttachmentState(
+                colorWriteMask=vk.VK_COLOR_COMPONENT_R_BIT | vk.VK_COLOR_COMPONENT_G_BIT |
+                              vk.VK_COLOR_COMPONENT_B_BIT | vk.VK_COLOR_COMPONENT_A_BIT,
+                blendEnable=vk.VK_FALSE,
+                srcColorBlendFactor=vk.VK_BLEND_FACTOR_ONE,
+                dstColorBlendFactor=vk.VK_BLEND_FACTOR_ZERO,
+                colorBlendOp=vk.VK_BLEND_OP_ADD,
+                srcAlphaBlendFactor=vk.VK_BLEND_FACTOR_ONE,
+                dstAlphaBlendFactor=vk.VK_BLEND_FACTOR_ZERO,
+                alphaBlendOp=vk.VK_BLEND_OP_ADD
+            )
+            
+            color_blending = vk.VkPipelineColorBlendStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                logicOpEnable=vk.VK_FALSE,
+                logicOp=vk.VK_LOGIC_OP_COPY,
+                attachmentCount=1,
+                pAttachments=ctypes.pointer(color_blend_attachment),
+                blendConstants=[0.0, 0.0, 0.0, 0.0]
+            )
+            
+            # Create descriptor set layout
+            ubo_layout_binding = vk.VkDescriptorSetLayoutBinding(
+                binding=0,
+                descriptorType=vk.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                descriptorCount=1,
+                stageFlags=vk.VK_SHADER_STAGE_VERTEX_BIT,
+                pImmutableSamplers=None
+            )
+            
+            layout_bindings = [ubo_layout_binding]
+            
+            layout_info = vk.VkDescriptorSetLayoutCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                bindingCount=len(layout_bindings),
+                pBindings=(vk.VkDescriptorSetLayoutBinding * len(layout_bindings))(*layout_bindings)
+            )
+            
+            desc_layout = vk.vkCreateDescriptorSetLayout(dev.device, layout_info, None)
+            self.descriptor_set_layouts.append(desc_layout)
+            
+            # Pipeline layout
+            pipeline_layout_info = vk.VkPipelineLayoutCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                setLayoutCount=1,
+                pSetLayouts=ctypes.pointer(desc_layout),
+                pushConstantRangeCount=0,
+                pPushConstantRanges=None
+            )
+            
+            pipeline_layout = vk.vkCreatePipelineLayout(dev.device, pipeline_layout_info, None)
+            self.pipeline_layouts.append(pipeline_layout)
+            
+            # Create pipeline
+            pipeline_info = vk.VkGraphicsPipelineCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                stageCount=len(shader_stages),
+                pStages=(vk.VkPipelineShaderStageCreateInfo * len(shader_stages))(*shader_stages),
+                pVertexInputState=ctypes.pointer(vertex_input),
+                pInputAssemblyState=ctypes.pointer(input_assembly),
+                pTessellationState=None,
+                pViewportState=ctypes.pointer(viewport_state),
+                pRasterizationState=ctypes.pointer(rasterizer),
+                pMultisampleState=ctypes.pointer(multisampling),
+                pDepthStencilState=ctypes.pointer(depth_stencil),
+                pColorBlendState=ctypes.pointer(color_blending),
+                pDynamicState=None,
+                layout=pipeline_layout,
+                renderPass=render_pass,
+                subpass=0,
+                basePipelineHandle=None,
+                basePipelineIndex=-1
+            )
+            
+            pipelines = vk.vkCreateGraphicsPipelines(
+                dev.device, None, 1, ctypes.pointer(pipeline_info), None
+            )
+            
+            # Clean up shader modules
+            vk.vkDestroyShaderModule(dev.device, vert_module, None)
+            vk.vkDestroyShaderModule(dev.device, frag_module, None)
+            
+            return pipelines[0] if pipelines else None
+            
+        except Exception as e:
+            logger.error(f"Failed to create pipeline: {e}")
+            if hasattr(self, 'descriptor_set_layouts') and self.descriptor_set_layouts:
+                self.descriptor_set_layouts.pop()  # Remove the failed layout
+            return None
+
     def set_render_target(self, target: RenderTarget) -> None:
-        """Set the render target."""
         self.render_target = target
         self._create_swapchain()
-    
-    def cleanup(self) -> None:
-        """Clean up Vulkan resources."""
-        # Since we're not creating real Vulkan resources yet, just pass
-        pass
 
-
-class CPURenderer(Renderer):
-    """Software CPU fallback renderer."""
-    
-    def __init__(self):
-        """Initialize CPU renderer."""
-        self.render_target: Optional[RenderTarget] = None
-        logger.info("Using CPU fallback renderer")
-    
-    def render(self, meshes: List[Mesh], materials: List[Material], 
-               lights: List[Light], view_matrix: Matrix4x4, 
-               projection_matrix: Matrix4x4) -> np.ndarray:
-        """Render scene using CPU rasterization."""
+    # ─────────────────────────────────────────────────────────────────────
+    # Main render entry
+    # ─────────────────────────────────────────────────────────────────────
+    def render(
+        self,
+        meshes: List[Mesh],
+        materials: List[Material],
+        lights: List[Light],
+        view_matrix: Matrix4x4,
+        projection_matrix: Matrix4x4,
+    ) -> np.ndarray:
         if not self.render_target:
-            raise VulkanForgeError("No render target set")
+            raise VulkanForgeError("Render target not set")
+
+        w, h = self.render_target.width, self.render_target.height
+        fb = np.zeros((h, w, 4), dtype=np.float32)
+        # Since GPU rendering isn't fully implemented, use CPU fallback
+        return self.render_cpu_fallback(meshes, materials, lights, view_matrix, projection_matrix)
+
+    def render_cpu_fallback(
+        self,
+        meshes: List[Mesh],
+        materials: List[Material],
+        lights: List[Light],
+        view_matrix: Matrix4x4,
+        projection_matrix: Matrix4x4,
+    ) -> np.ndarray:
+        """CPU software rasterizer."""
+        if not self.render_target:
+            raise VulkanForgeError("Render target not set")
+            
+        w, h = self.render_target.width, self.render_target.height
+        fb = np.zeros((h, w, 4), dtype=np.float32)
+        depth_buffer = np.full((h, w), np.inf, dtype=np.float32)
         
-        # Initialize framebuffer
-        width, height = self.render_target.width, self.render_target.height
-        framebuffer = np.zeros((height, width, 4), dtype=np.float32)
-        depth_buffer = np.full((height, width), np.inf, dtype=np.float32)
-
-        pixels_drawn = 0
-        triangles_rendered = 0
-
         # Transform matrices
         mvp = projection_matrix @ view_matrix
-
-        # Simple rasterization for each mesh
+        
+        # Rasterize each mesh
         for mesh_idx, mesh in enumerate(meshes):
             if mesh_idx >= len(materials):
                 continue
@@ -278,20 +623,13 @@ class CPURenderer(Renderer):
             transformed = vertices_4d @ mvp.data.T
             
             # Perspective division
-            w = transformed[:, 3:4]
-            w = np.where(np.abs(w) < 1e-6, 1e-6, w)
-            ndc = transformed[:, :3] / w
-
-            # Check if vertices are in view frustum
-            in_frustum = (
-                (ndc[:, 0] >= -1) & (ndc[:, 0] <= 1) &
-                (ndc[:, 1] >= -1) & (ndc[:, 1] <= 1) &
-                (ndc[:, 2] >= -1) & (ndc[:, 2] <= 1)
-            )
+            w_vals = transformed[:, 3:4]
+            w_vals = np.where(np.abs(w_vals) < 1e-6, 1e-6, w_vals)
+            ndc = transformed[:, :3] / w_vals
             
             # Viewport transform
-            screen_x = (ndc[:, 0] + 1) * width / 2
-            screen_y = (1 - ndc[:, 1]) * height / 2
+            screen_x = (ndc[:, 0] + 1) * w / 2
+            screen_y = (1 - ndc[:, 1]) * h / 2
             
             # Rasterize triangles
             for i in range(0, len(mesh.indices), 3):
@@ -299,14 +637,6 @@ class CPURenderer(Renderer):
                     break
                     
                 i0, i1, i2 = mesh.indices[i:i+3]
-
-                # Skip degenerate triangles
-                if i0 == i1 or i1 == i2 or i0 == i2:
-                    continue
-
-                # Skip if any vertex is outside frustum
-                if not (in_frustum[i0] or in_frustum[i1] or in_frustum[i2]):
-                    continue
                 
                 # Triangle vertices in screen space
                 x0, y0, z0 = screen_x[i0], screen_y[i0], ndc[i0, 2]
@@ -315,22 +645,19 @@ class CPURenderer(Renderer):
                 
                 # Bounding box
                 min_x = max(0, int(np.floor(min(x0, x1, x2))))
-                max_x = min(width - 1, int(np.ceil(max(x0, x1, x2))))
+                max_x = min(w - 1, int(np.ceil(max(x0, x1, x2))))
                 min_y = max(0, int(np.floor(min(y0, y1, y2))))
-                max_y = min(height - 1, int(np.ceil(max(y0, y1, y2))))
-
-                # Skip if triangle is outside screen
+                max_y = min(h - 1, int(np.ceil(max(y0, y1, y2))))
+                
                 if min_x > max_x or min_y > max_y:
                     continue
-
+                
                 # Calculate edge function coefficients
                 area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
                 if abs(area) < 1e-6:
                     continue
-
-                triangles_rendered += 1
                 
-                # Rasterize pixels in bounding box
+                # Rasterize pixels
                 for yi in range(min_y, max_y + 1):
                     for xi in range(min_x, max_x + 1):
                         # Barycentric coordinates
@@ -347,73 +674,167 @@ class CPURenderer(Renderer):
                                 depth_buffer[yi, xi] = z
                                 
                                 # Interpolate normal
-                                if (i0 < len(mesh.normals) and i1 < len(mesh.normals) and 
-                                    i2 < len(mesh.normals)):
-                                    normal = (mesh.normals[i0] * w0 + 
-                                             mesh.normals[i1] * w1 + 
-                                             mesh.normals[i2] * w2)
-                                    normal_length = np.linalg.norm(normal)
-                                    if normal_length > 1e-10:
-                                        normal = normal / normal_length
-                                    else:
-                                        normal = np.array([0, 0, 1])
-                                else:
-                                    normal = np.array([0, 0, 1])
+                                normal = np.array([0, 0, 1])  # Default normal
+                                if i0 < len(mesh.normals) and i1 < len(mesh.normals) and i2 < len(mesh.normals):
+                                    normal = mesh.normals[i0] * w0 + mesh.normals[i1] * w1 + mesh.normals[i2] * w2
+                                    norm_len = np.linalg.norm(normal)
+                                    if norm_len > 1e-10:
+                                        normal = normal / norm_len
                                 
                                 # Basic lighting
                                 color = np.array(material.base_color[:3]) * 0.3  # Ambient
                                 for light in lights:
-                                    light_pos = np.array(light.position)
-                                    light_length = np.linalg.norm(light_pos)
-                                    if light_length > 1e-10:
-                                        light_dir = light_pos / light_length
-                                    else:
-                                        light_dir = np.array([0, 0, 1])
-                                    
+                                    light_dir = np.array(light.position)
+                                    light_dir = light_dir / (np.linalg.norm(light_dir) + 1e-10)
                                     diffuse = max(0, np.dot(normal, light_dir))
-                                    light_contrib = np.array(light.color) * diffuse * light.intensity
-                                    color = color + np.array(material.base_color[:3]) * light_contrib * 0.7
+                                    color = color + np.array(material.base_color[:3]) * diffuse * 0.7
                                 
-                                # Clamp and store
-                                framebuffer[yi, xi, :3] = np.clip(color, 0, 1)
-                                framebuffer[yi, xi, 3] = material.base_color[3]
-                                pixels_drawn += 1
+                                fb[yi, xi, :3] = np.clip(color, 0, 1)
+                                fb[yi, xi, 3] = material.base_color[3]
+        
+        return (fb * 255).astype(np.uint8)
 
-        # If no triangles rendered, draw a crosshair
-        if triangles_rendered == 0:
-            self._draw_crosshair(framebuffer)
-            
-        # Convert to uint8
-        return (framebuffer * 255).astype(np.uint8)
-    
-    def set_render_target(self, target: RenderTarget) -> None:
-        """Set the render target."""
-        self.render_target = target
-    
+    # ─────────────────────────────────────────────────────────────────────
+    # Cleanup
+    # ─────────────────────────────────────────────────────────────────────
     def cleanup(self) -> None:
-        """Clean up resources."""
+        if not VULKAN_AVAILABLE:
+            return
+        for idx, dev in enumerate(self.logical_devices):
+            if idx < len(self.pipelines) and self.pipelines[idx]:
+                vk.vkDestroyPipeline(dev.device, self.pipelines[idx], None)
+            if idx < len(self.render_passes) and self.render_passes[idx]:
+                vk.vkDestroyRenderPass(dev.device, self.render_passes[idx], None)
+            if idx < len(self.pipeline_layouts) and self.pipeline_layouts[idx]:
+                vk.vkDestroyPipelineLayout(dev.device, self.pipeline_layouts[idx], None)
+            if idx < len(self.descriptor_set_layouts) and self.descriptor_set_layouts[idx]:
+                vk.vkDestroyDescriptorSetLayout(dev.device, self.descriptor_set_layouts[idx], None)
+        self.device_manager.cleanup()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CPU-only renderer (stub)
+# ─────────────────────────────────────────────────────────────────────────────
+class CPURenderer(Renderer):
+    """Simple software renderer placeholder."""
+
+    def __init__(self) -> None:
+        self.render_target: Optional[RenderTarget] = None
+
+    def set_render_target(self, target: RenderTarget) -> None:
+        self.render_target = target
+
+    def render(
+        self,
+        meshes: List[Mesh],
+        materials: List[Material],
+        lights: List[Light],
+        view_matrix: Matrix4x4,
+        projection_matrix: Matrix4x4,
+    ) -> np.ndarray:
+        if not self.render_target:
+            raise RuntimeError("Render target not set")
+        w, h = self.render_target.width, self.render_target.height
+        fb = np.zeros((h, w, 4), dtype=np.float32)
+        depth_buffer = np.full((h, w), np.inf, dtype=np.float32)
+        
+        # Transform matrices
+        mvp = projection_matrix @ view_matrix
+        
+        # Simple rasterization for each mesh
+        for mesh_idx, mesh in enumerate(meshes):
+            if mesh_idx >= len(materials):
+                continue
+                
+            material = materials[mesh_idx]
+            
+            # Transform vertices
+            vertices_4d = np.hstack([mesh.vertices, np.ones((len(mesh.vertices), 1))])
+            transformed = vertices_4d @ mvp.data.T
+            
+            # Perspective division
+            w_vals = transformed[:, 3:4]
+            w_vals = np.where(np.abs(w_vals) < 1e-6, 1e-6, w_vals)
+            ndc = transformed[:, :3] / w_vals
+            
+            # Viewport transform
+            screen_x = (ndc[:, 0] + 1) * w / 2
+            screen_y = (1 - ndc[:, 1]) * h / 2
+            
+            # Rasterize triangles
+            for i in range(0, len(mesh.indices), 3):
+                if i + 2 >= len(mesh.indices):
+                    break
+                    
+                i0, i1, i2 = mesh.indices[i:i+3]
+                
+                # Triangle vertices in screen space
+                x0, y0, z0 = screen_x[i0], screen_y[i0], ndc[i0, 2]
+                x1, y1, z1 = screen_x[i1], screen_y[i1], ndc[i1, 2]
+                x2, y2, z2 = screen_x[i2], screen_y[i2], ndc[i2, 2]
+                
+                # Bounding box
+                min_x = max(0, int(np.floor(min(x0, x1, x2))))
+                max_x = min(w - 1, int(np.ceil(max(x0, x1, x2))))
+                min_y = max(0, int(np.floor(min(y0, y1, y2))))
+                max_y = min(h - 1, int(np.ceil(max(y0, y1, y2))))
+                
+                if min_x > max_x or min_y > max_y:
+                    continue
+                
+                # Calculate edge function coefficients
+                area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
+                if abs(area) < 1e-6:
+                    continue
+                
+                # Rasterize pixels
+                for yi in range(min_y, max_y + 1):
+                    for xi in range(min_x, max_x + 1):
+                        # Barycentric coordinates
+                        w0 = ((x1 - x2) * (yi - y2) - (y1 - y2) * (xi - x2)) / area
+                        w1 = ((x2 - x0) * (yi - y0) - (y2 - y0) * (xi - x0)) / area
+                        w2 = 1 - w0 - w1
+                        
+                        if w0 >= 0 and w1 >= 0 and w2 >= 0:
+                            # Interpolate depth
+                            z = w0 * z0 + w1 * z1 + w2 * z2
+                            
+                            # Depth test
+                            if z < depth_buffer[yi, xi]:
+                                depth_buffer[yi, xi] = z
+                                
+                                # Simple shading
+                                normal = np.array([0, 0, 1])  # Default normal
+                                if i0 < len(mesh.normals) and i1 < len(mesh.normals) and i2 < len(mesh.normals):
+                                    normal = mesh.normals[i0] * w0 + mesh.normals[i1] * w1 + mesh.normals[i2] * w2
+                                    norm_len = np.linalg.norm(normal)
+                                    if norm_len > 1e-10:
+                                        normal = normal / norm_len
+                                
+                                # Basic lighting
+                                color = np.array(material.base_color[:3]) * 0.3  # Ambient
+                                for light in lights:
+                                    light_dir = np.array(light.position)
+                                    light_dir = light_dir / (np.linalg.norm(light_dir) + 1e-10)
+                                    diffuse = max(0, np.dot(normal, light_dir))
+                                    color = color + np.array(material.base_color[:3]) * diffuse * 0.7
+                                
+                                fb[yi, xi, :3] = np.clip(color, 0, 1)
+                                fb[yi, xi, 3] = material.base_color[3]
+        
+        return (fb * 255).astype(np.uint8)
+
+    def cleanup(self) -> None:
         pass
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Factory
+# ─────────────────────────────────────────────────────────────────────────────
 def create_renderer(prefer_gpu: bool = True, enable_validation: bool = True) -> Renderer:
-    """Create a renderer with automatic backend selection."""
-    try:
-        if prefer_gpu and VULKAN_AVAILABLE:
-            logger.info("Attempting to create Vulkan renderer")
-            device_manager = DeviceManager(enable_validation=enable_validation)
-            logical_devices = device_manager.create_logical_devices()
-            
-            # Check if we have any GPU devices
-            gpu_devices = [d for d in logical_devices if not d.physical_device.is_cpu]
-            if gpu_devices:
-                logger.info(f"Using Vulkan renderer with {len(gpu_devices)} GPU(s)")
-                return VulkanRenderer(device_manager, gpu_devices)
-            else:
-                logger.warning("No GPU devices found, falling back to CPU renderer")
-                device_manager.cleanup()
-        else:
-            logger.info("GPU rendering disabled or Vulkan not available, using CPU renderer")
-    except Exception as e:
-        logger.warning(f"Failed to initialize Vulkan: {e}, falling back to CPU renderer")
-    
+    if prefer_gpu and VULKAN_AVAILABLE:
+        dm = DeviceManager(enable_validation=enable_validation)
+        devices = dm.create_logical_devices()
+        if devices:
+            return VulkanRenderer(dm, devices)
     return CPURenderer()
