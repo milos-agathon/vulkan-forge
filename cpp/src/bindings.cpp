@@ -32,6 +32,8 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
 
     py::register_exception<vf::VulkanForgeError>(m, "VulkanForgeError");
 
+    py::register_exception<vf::VulkanForgeError>(m, "VulkanForgeError");
+
     /* ------------------------- HeightFieldScene ---------------------- */
     py::class_<HeightFieldScene>(m, "HeightFieldScene")
         .def(py::init<>())
