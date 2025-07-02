@@ -103,6 +103,7 @@ def test_3d_rendering():
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     axes = axes.flatten()
     
+    pixel_counts = []
     for idx, angle in enumerate(angles):
         print(f"\n4. Rendering at {angle}° angle...")
         
@@ -137,13 +138,17 @@ def test_3d_rendering():
         
         # Check if we got any rendered pixels
         non_black_pixels = np.any(framebuffer[:, :, :3] > 0, axis=2)
-        rendered_pixel_count = np.sum(non_black_pixels)
+        rendered_pixel_count = int(np.sum(non_black_pixels))
+        pixel_counts.append(rendered_pixel_count)
         print(f"   Rendered {rendered_pixel_count} non-black pixels")
         
         # Display
         axes[idx].imshow(framebuffer)
         axes[idx].set_title(f'View angle: {angle}°\n({rendered_pixel_count} pixels rendered)')
         axes[idx].axis('off')
+
+    threshold = 30000 if getattr(renderer, 'gpu_active', False) else 15000
+    assert max(pixel_counts) > threshold
     
     plt.suptitle(f'VulkanForge 3D Cube Rendering ({type(renderer).__name__})', fontsize=16)
     plt.tight_layout()
