@@ -14,6 +14,14 @@ endif()
 find_package(pybind11 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
 
+# Fetch VulkanMemoryAllocator header
+include(FetchContent)
+FetchContent_Declare(
+    vma_headers
+    URL https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/archive/refs/heads/master.zip
+)
+FetchContent_MakeAvailable(vma_headers)
+
 # Find or download GLM with better error handling
 find_package(glm 1.0 CONFIG QUIET)
 
@@ -116,6 +124,7 @@ pybind11_add_module(_vulkan_forge_native
     src/vk_common.cpp
     src/heightfield_scene.cpp
     src/renderer.cpp
+    src/vma_util.cpp
 )
 
 # Set include directories
@@ -123,6 +132,7 @@ target_include_directories(_vulkan_forge_native PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${GENERATED_DIR}
     ${Vulkan_INCLUDE_DIRS}
+    ${vma_headers_SOURCE_DIR}/include
 )
 
 # Link libraries

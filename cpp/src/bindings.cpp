@@ -4,6 +4,7 @@
 
 #include "vf/renderer.hpp"
 #include "vf/heightfield_scene.hpp"
+#include "vf/vma_util.hpp"
 
 namespace py = pybind11;
 using vf::HeightFieldScene;
@@ -28,6 +29,8 @@ numpyToVector(py::array_t<float, py::array::c_style | py::array::forcecast> arr)
 PYBIND11_MODULE(_vulkan_forge_native, m)
 {
     m.doc() = "Minimal Vulkan height-field renderer";
+
+    py::register_exception<vf::VulkanForgeError>(m, "VulkanForgeError");
 
     /* ------------------------- HeightFieldScene ---------------------- */
     py::class_<HeightFieldScene>(m, "HeightFieldScene")
@@ -89,4 +92,51 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
              },
              py::arg("scene"),
              py::arg("spp") = 1);
+
+    m.def(
+        "create_allocator",
+        [](std::uintptr_t inst, std::uintptr_t phys, std::uintptr_t dev) {
+            VmaAllocator alloc = vf::create_allocator(
+                reinterpret_cast<VkInstance>(inst),
+                reinterpret_cast<VkPhysicalDevice>(phys),
+                reinterpret_cast<VkDevice>(dev));
+            return py::capsule(
+                alloc,
+                "VmaAllocator",
+                [](PyObject* cap) {
+                    vf::destroy_allocator(reinterpret_cast<VmaAllocator>(
+                        PyCapsule_GetPointer(cap, "VmaAllocator")));
+                });
+        },
+        py::arg("instance"),
+        py::arg("physical_device"),
+        py::arg("device"));
+
+    m.def(
+        "allocate_buffer",
+        [](py::capsule allocator_cap, std::size_t size, uint32_t usage) {
+            auto allocator = reinterpret_cast<VmaAllocator>(
+                allocator_cap.get_pointer());
+            VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            info.size = size;
+            info.usage = usage;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            VkBuffer buf{};
+            VmaAllocation alloc =
+                vf::allocate_buffer(allocator, &info, &buf);
+            return py::make_tuple(
+                reinterpret_cast<std::uintptr_t>(buf),
+                reinterpret_cast<std::uintptr_t>(alloc));
+        },
+        py::arg("allocator"),
+        py::arg("size"),
+        py::arg("usage"));
+
+    m.def(
+        "destroy_allocator",
+        [](py::capsule allocator_cap) {
+            vf::destroy_allocator(reinterpret_cast<VmaAllocator>(
+                allocator_cap.get_pointer()));
+        },
+        py::arg("allocator"));
 }

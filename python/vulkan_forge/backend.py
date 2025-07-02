@@ -2,8 +2,14 @@
 """Device enumeration and selection for Vulkan/CPU backends."""
 
 import logging
+import weakref
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Tuple
+
+try:
+    from . import vulkan_forge_native as native
+except Exception:  # pragma: no cover - native module optional
+    native = None
 
 try:
     import vulkan as vk
@@ -172,6 +178,9 @@ class VulkanForgeError(Exception):
         self.vk_result = vk_result
         if vk_result is not None:
             logger.error(f"Vulkan error: {message} (vkResult: {vk_result})")
+
+if native is not None and hasattr(native, "VulkanForgeError"):
+    VulkanForgeError = native.VulkanForgeError  # type: ignore[misc]
 
 
 @dataclass
@@ -435,6 +444,20 @@ class DeviceManager:
         
         if self.instance:
             vk.vkDestroyInstance(self.instance, None)
-        
+
         self.logical_devices.clear()
         self.physical_devices.clear()
+
+
+def create_allocator(instance: Any, physical_device: Any, device: Any) -> Any:
+    """Create a VMA allocator."""
+    if native is None or not hasattr(native, "create_allocator"):
+        raise VulkanForgeError("create_allocator unavailable")
+    return native.create_allocator(int(instance), int(physical_device), int(device))
+
+
+def allocate_buffer(allocator: Any, size: int, usage: int) -> Tuple[int, int]:
+    """Allocate a Vulkan buffer via VMA."""
+    if native is None or not hasattr(native, "allocate_buffer"):
+        raise VulkanForgeError("allocate_buffer unavailable")
+    return native.allocate_buffer(allocator, size, usage)
