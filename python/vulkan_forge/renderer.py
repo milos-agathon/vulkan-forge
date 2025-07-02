@@ -656,15 +656,15 @@ class VulkanRenderer(Renderer):
                 area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
                 if abs(area) < 1e-6:
                     continue
-                
+
                 # Rasterize pixels
                 for yi in range(min_y, max_y + 1):
                     for xi in range(min_x, max_x + 1):
                         # Barycentric coordinates
-                        w0 = ((x1 - x2) * (yi - y2) - (y1 - y2) * (xi - x2)) / area
-                        w1 = ((x2 - x0) * (yi - y0) - (y2 - y0) * (xi - x0)) / area
+                        w0 = ((x1 - xi) * (y2 - yi) - (y1 - yi) * (x2 - xi)) / area
+                        w1 = ((x2 - xi) * (y0 - yi) - (y2 - yi) * (x0 - xi)) / area
                         w2 = 1 - w0 - w1
-                        
+
                         if w0 >= 0 and w1 >= 0 and w2 >= 0:
                             # Interpolate depth
                             z = w0 * z0 + w1 * z1 + w2 * z2
@@ -791,10 +791,10 @@ class CPURenderer(Renderer):
                 for yi in range(min_y, max_y + 1):
                     for xi in range(min_x, max_x + 1):
                         # Barycentric coordinates
-                        w0 = ((x1 - x2) * (yi - y2) - (y1 - y2) * (xi - x2)) / area
-                        w1 = ((x2 - x0) * (yi - y0) - (y2 - y0) * (xi - x0)) / area
+                        w0 = ((x1 - xi) * (y2 - yi) - (y1 - yi) * (x2 - xi)) / area
+                        w1 = ((x2 - xi) * (y0 - yi) - (y2 - yi) * (x0 - xi)) / area
                         w2 = 1 - w0 - w1
-                        
+
                         if w0 >= 0 and w1 >= 0 and w2 >= 0:
                             # Interpolate depth
                             z = w0 * z0 + w1 * z1 + w2 * z2

@@ -62,24 +62,27 @@ class VulkanRenderer:
             attachment=1,
             layout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         )
+        color_refs = (vk.VkAttachmentReference2 * 1)(color_ref)
         subpass = vk.VkSubpassDescription2(
             sType=vk.VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2,
             pipelineBindPoint=vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
             colorAttachmentCount=1,
-            pColorAttachments=[color_ref],
-            pDepthStencilAttachment=depth_ref,
+            pColorAttachments=color_refs,
+            pDepthStencilAttachment=ctypes.pointer(depth_ref),
         )
+        attachments = (vk.VkAttachmentDescription2 * 2)(
+            color_attachment,
+            depth_attachment,
+        )
+        subpasses = (vk.VkSubpassDescription2 * 1)(subpass)
         info = vk.VkRenderPassCreateInfo2(
             sType=vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2,
-            attachmentCount=2,
-            pAttachments=[color_attachment, depth_attachment],
+            attachmentCount=len(attachments),
+            pAttachments=attachments,
             subpassCount=1,
-            pSubpasses=[subpass],
+            pSubpasses=subpasses,
         )
-        render_pass = vk.VkRenderPass(0)
-        result = vk.vkCreateRenderPass2(self.device, info, None, render_pass)
-        if result != vk.VK_SUCCESS:
-            raise RuntimeError("vkCreateRenderPass2 failed")
+        render_pass = vk.vkCreateRenderPass2(self.device, info, None)
         return render_pass
 
     def _load_shader(self, name: str) -> bytes:
