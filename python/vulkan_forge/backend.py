@@ -450,16 +450,14 @@ class DeviceManager:
 
 
 def create_allocator(instance: Any, physical_device: Any, device: Any) -> Any:
-    """Create a VMA allocator and attach finalizer."""
-    if native is None:
-        raise VulkanForgeError("native module unavailable")
-    allocator = native.create_allocator(int(instance), int(physical_device), int(device))
-    weakref.finalize(allocator, native.destroy_allocator, allocator)
-    return allocator
+    """Create a VMA allocator."""
+    if native is None or not hasattr(native, "create_allocator"):
+        raise VulkanForgeError("create_allocator unavailable")
+    return native.create_allocator(int(instance), int(physical_device), int(device))
 
 
 def allocate_buffer(allocator: Any, size: int, usage: int) -> Tuple[int, int]:
     """Allocate a Vulkan buffer via VMA."""
-    if native is None:
-        raise VulkanForgeError("native module unavailable")
-    return native.allocate_buffer(int(allocator), size, usage)
+    if native is None or not hasattr(native, "allocate_buffer"):
+        raise VulkanForgeError("allocate_buffer unavailable")
+    return native.allocate_buffer(allocator, size, usage)

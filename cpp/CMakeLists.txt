@@ -124,6 +124,7 @@ pybind11_add_module(_vulkan_forge_native
     src/vk_common.cpp
     src/heightfield_scene.cpp
     src/renderer.cpp
+    src/vma_util.cpp
 )
 
 # Set include directories
