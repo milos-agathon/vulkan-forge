@@ -79,6 +79,7 @@ class VertexInputDescription:
         self.attributes: List[VertexAttribute] = []
         self.bindings: List[VertexBinding] = []
         self._binding_strides: Dict[int, int] = {}
+        self._binding_offsets: Dict[int, int] = {}
     
     def add_attribute(self, location: int, array: np.ndarray,
                      binding: int = 0, offset: int = 0) -> 'VertexInputDescription':
@@ -113,6 +114,9 @@ class VertexInputDescription:
                            f"components={components}")
         
         # Add attribute
+        if offset == 0 and binding in self._binding_offsets:
+            offset = self._binding_offsets[binding]
+
         attr = VertexAttribute(
             location=location,
             binding=binding,
@@ -120,14 +124,12 @@ class VertexInputDescription:
             offset=offset
         )
         self.attributes.append(attr)
-        
-        # Update binding stride
-        stride = array.strides[0] if array.ndim > 1 else array.itemsize * components
-        if binding in self._binding_strides:
-            self._binding_strides[binding] = max(self._binding_strides[binding], 
-                                               offset + array.itemsize * components)
-        else:
-            self._binding_strides[binding] = stride
+
+        size = array.itemsize * components
+        next_offset = offset + size
+        prev_stride = self._binding_strides.get(binding, 0)
+        self._binding_strides[binding] = max(prev_stride, next_offset)
+        self._binding_offsets[binding] = next_offset
         
         return self
     
@@ -196,15 +198,16 @@ class VertexInputDescription:
         desc = cls()
         location = 0
         
-        for field_name, (field_dtype, field_shape) in dtype.fields.items():
-            # Determine components
-            if field_shape:
-                components = field_shape[0] if isinstance(field_shape, tuple) else field_shape
-            else:
-                components = 1
+        for field_name, (field_dtype, offset) in dtype.fields.items():
+            base_dtype = field_dtype
+            shape = None
+            if field_dtype.subdtype:
+                base_dtype, shape = field_dtype.subdtype
+
+            components = shape[0] if shape else 1
             
             # Get format
-            format_key = (field_dtype, components)
+            format_key = (base_dtype, components)
             format_str = NUMPY_TO_VK_FORMAT.get(format_key)
             
             if not format_str:

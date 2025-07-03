@@ -45,11 +45,17 @@ class StructuredBuffer:
     alloc: int
     _ptr: Optional[ctypes.c_void_p] = None
 
-    def __init__(self, size_bytes: int,
-                 usage: int = BUFFER_USAGE_STORAGE,
-                 dtype: np.dtype = np.float32,
-                 device: Optional[int] = None):
-        self.data = np.zeros(size_bytes // np.dtype(dtype).itemsize, dtype=dtype)
+    def __init__(self, size_or_allocator, dtype: np.dtype = np.float32,
+                 count: int = None, usage: int = BUFFER_USAGE_STORAGE):
+        if isinstance(size_or_allocator, int) and count is None:
+            size_bytes = size_or_allocator
+            self.data = np.zeros(size_bytes // np.dtype(dtype).itemsize, dtype=dtype)
+        else:
+            if count is None:
+                raise TypeError("count must be provided when allocator is given")
+            allocator = size_or_allocator
+            self.data = np.zeros(count, dtype=dtype)
+            size_bytes = self.data.nbytes
         self.gpu_buffer = 0
         self.alloc = 0
         self._ptr = None
@@ -76,125 +82,104 @@ class StructuredBuffer:
             ctypes.memmove(self.data.ctypes.data, self._ptr.value, self.data.nbytes)
         return self.data
 
+    def __getitem__(self, field: str) -> np.ndarray:
+        if field not in self.data.dtype.fields:
+            raise KeyError(field)
+        return self.data[field]
+
+    def __setitem__(self, field: str, value) -> None:
+        if field not in self.data.dtype.fields:
+            raise KeyError(field)
+        self.data[field] = value
+        self.upload()
+
 
 class NumpyBuffer:
-    """GPU buffer backed by NumPy array with zero-copy support when possible.
-    
-    This class provides a bridge between NumPy arrays and Vulkan buffers,
-    enabling efficient data transfer and manipulation.
-    
-    Parameters
-    ----------
-    allocator : VmaAllocator
-        The Vulkan memory allocator
-    array : np.ndarray
-        The NumPy array to upload
-    usage : int, optional
-        Vulkan buffer usage flags (default: BUFFER_USAGE_VERTEX)
+    """GPU buffer backed by a NumPy array.
 
-    Yields
-    ------
-    NumpyBuffer
-        The GPU buffer
-
-    Examples
-    --------
-    >>> vertex_dtype = np.dtype([
-    ...     ('position', np.float32, 3),
-    ...     ('normal', np.float32, 3),
-    ...     ('texcoord', np.float32, 2)
-    ... ])
-    >>> buffer = StructuredBuffer(allocator, vertex_dtype, 1000)
-    >>> buffer['position'] = positions
-    >>> buffer['normal'] = normals
+    The constructor accepts either an existing ``np.ndarray`` which will be
+    used directly (zero-copy) or a ``dtype`` and element ``count`` to allocate
+    a new array.
     """
-    
-    def __init__(self, allocator, dtype: np.dtype, count: int,
+
+    def __init__(self, allocator, dtype_or_data, count: int = None,
                  usage: int = BUFFER_USAGE_VERTEX):
         self._allocator = allocator
-        self._dtype = dtype
-        self._count = count
         self._usage = usage
-        
-        # Create backing array
-        self._array = np.zeros(count, dtype=dtype)
-        
-        # Create GPU buffer
-        self._buffer = NumpyBuffer(allocator, self._array, usage)
-        
-        # Parse fields for attribute info
+
+        if isinstance(dtype_or_data, np.ndarray):
+            self._array = dtype_or_data
+            self._dtype = self._array.dtype
+            self._count = (
+                self._array.size if self._array.ndim == 1 else self._array.shape[0]
+            )
+        else:
+            if count is None:
+                raise TypeError("count must be provided when dtype is given")
+            self._dtype = np.dtype(dtype_or_data)
+            self._count = count
+            self._array = np.zeros(count, dtype=self._dtype)
+
+        if self._dtype.kind == "c":
+            raise TypeError("complex dtypes are not supported")
+
+        self.gpu_buffer = 0
+        self.allocation = 0
+        if hasattr(native, "allocate_buffer"):
+            try:
+                buf, alloc = native.allocate_buffer(
+                    int(getattr(self._allocator, "value", 0)),
+                    self._array.nbytes,
+                    usage,
+                )
+                self.gpu_buffer = int(buf)
+                self.allocation = int(alloc)
+            except Exception:
+                self.gpu_buffer = 0
+                self.allocation = 0
+
         self._fields = {}
-        self._parse_fields()
-    
-    def _parse_fields(self):
-        """Parse dtype fields to extract attribute information."""
-        offset = 0
-        for name, (dtype, shape) in self._dtype.fields.items():
-            if shape:
-                # Array field
-                components = shape[0] if isinstance(shape, tuple) else shape
-            else:
-                components = 1
-            
-            self._fields[name] = {
-                'dtype': dtype,
-                'offset': offset,
-                'components': components,
-                'format': NUMPY_TO_VK_FORMAT.get((dtype, components))
-            }
-            
-            offset += dtype.itemsize * components
-    
-    def __getitem__(self, field: str) -> np.ndarray:
-        """Get field data."""
-        if field not in self._fields:
-            raise KeyError(f"Field '{field}' not found in structured buffer")
-        self._buffer.sync_from_gpu()
-        return self._array[field]
-    
-    def __setitem__(self, field: str, value):
-        """Set field data."""
-        if field not in self._fields:
-            raise KeyError(f"Field '{field}' not found in structured buffer")
-        self._array[field] = value
-        self._buffer.sync_to_gpu()
-    
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
     @property
-    def buffer(self) -> 'NumpyBuffer':
-        """Get the underlying buffer."""
-        return self._buffer
-    
+    def size(self) -> int:
+        """Size of the underlying array in bytes."""
+        return self._array.nbytes
+
     @property
-    def fields(self) -> dict:
-        """Get field information."""
-        return self._fields.copy()
-    
-    def get_vertex_attributes(self, binding: int = 0) -> List[dict]:
-        """Get vertex attribute descriptions for this buffer.
-        
-        Parameters
-        ----------
-        binding : int, optional
-            Vertex buffer binding index (default: 0)
-        
-        Returns
-        -------
-        List[dict]
-            List of vertex attribute descriptions
-        """
-        attributes = []
-        location = 0
-        
-        for name, info in self._fields.items():
-            attributes.append({
-                'location': location,
-                'binding': binding,
-                'format': info['format'],
-                'offset': info['offset']
-            })
-            location += 1
-        
-        return attributes
+    def shape(self) -> tuple:
+        """Shape of the underlying array."""
+        return self._array.shape
+
+    # ------------------------------------------------------------------
+    # Data transfer helpers
+    # ------------------------------------------------------------------
+    def upload(self) -> None:
+        """Copy host data to GPU (if GPU buffer exists)."""
+        if self.gpu_buffer and hasattr(native, "upload_buffer"):
+            native.upload_buffer(int(self.gpu_buffer), self._array)
+
+    def download(self) -> np.ndarray:
+        """Copy GPU data back to host (if GPU buffer exists)."""
+        if self.gpu_buffer and hasattr(native, "download_buffer"):
+            native.download_buffer(int(self.gpu_buffer), self._array)
+        return self._array
+
+    # Backwards compatibility with older API used in tests
+    def sync_to_gpu(self) -> None:
+        self.upload()
+
+    def sync_from_gpu(self) -> None:
+        self.download()
+
+    def update(self, data: np.ndarray) -> None:
+        """Update buffer contents with ``data`` and upload to GPU."""
+        if data.nbytes > self._array.nbytes:
+            raise ValueError("Data too large for buffer")
+        np.copyto(self._array, data, casting="no")
+        self.upload()
 
 
 class MultiBuffer:
@@ -367,7 +352,7 @@ def create_vertex_buffer(allocator, vertices: np.ndarray) -> NumpyBuffer:
     NumpyBuffer
         The created vertex buffer
     """
-    return NumpyBuffer(allocator, vertices, BUFFER_USAGE_VERTEX)
+    return NumpyBuffer(allocator, vertices, usage=BUFFER_USAGE_VERTEX)
 
 
 def create_index_buffer(allocator, indices: np.ndarray) -> NumpyBuffer:
@@ -387,7 +372,7 @@ def create_index_buffer(allocator, indices: np.ndarray) -> NumpyBuffer:
     """
     if indices.dtype not in [np.uint16, np.uint32]:
         indices = indices.astype(np.uint32)
-    return NumpyBuffer(allocator, indices, BUFFER_USAGE_INDEX)
+    return NumpyBuffer(allocator, indices, usage=BUFFER_USAGE_INDEX)
 
 
 def create_uniform_buffer(allocator, data: np.ndarray) -> NumpyBuffer:
@@ -405,7 +390,7 @@ def create_uniform_buffer(allocator, data: np.ndarray) -> NumpyBuffer:
     NumpyBuffer
         The created uniform buffer
     """
-    return NumpyBuffer(allocator, data, BUFFER_USAGE_UNIFORM)
+    return NumpyBuffer(allocator, data, usage=BUFFER_USAGE_UNIFORM)
 
 
 def create_storage_buffer(allocator, data: np.ndarray,
@@ -429,4 +414,4 @@ def create_storage_buffer(allocator, data: np.ndarray,
     usage = BUFFER_USAGE_STORAGE
     if not read_only:
         usage |= BUFFER_USAGE_TRANSFER_DST
-    return NumpyBuffer(allocator, data, usage)
+    return NumpyBuffer(allocator, data, usage=usage)
