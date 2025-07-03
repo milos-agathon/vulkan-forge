@@ -65,6 +65,7 @@ try:
         LogicalDevice,
         PhysicalDeviceInfo,
         create_allocator,
+        create_allocator_native,
         allocate_buffer,
         destroy_allocator,
     )
@@ -77,6 +78,7 @@ except ImportError as e:
             LogicalDevice,
             PhysicalDeviceInfo,
             create_allocator,
+            create_allocator_native,
             allocate_buffer,
             destroy_allocator,
         )

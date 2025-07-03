@@ -458,8 +458,8 @@ class DeviceManager:
         self.physical_devices.clear()
 
 
-def create_allocator(instance: Any, physical_device: Any, device: Any) -> Optional[ctypes.c_void_p]:
-    """Create a VMA allocator."""
+def create_allocator_native(instance: Any, physical_device: Any, device: Any) -> Optional[ctypes.c_void_p]:
+    """Create a VMA allocator (native binding)."""
     if native is None or not hasattr(native, "create_allocator"):
         logger.warning("VMA allocator not available - native extension required")
         return None
@@ -472,6 +472,16 @@ def create_allocator(instance: Any, physical_device: Any, device: Any) -> Option
     except Exception as e:
         logger.warning(f"Failed to create VMA allocator: {e}")
         return None
+
+
+def create_allocator() -> Optional[ctypes.c_void_p]:
+    """Convenience wrapper that creates a default allocator."""
+    dm = DeviceManager(enable_validation=False)
+    devices = dm.create_logical_devices()
+    if not devices:
+        return None
+    dev = devices[0]
+    return create_allocator_native(dm.instance, dev.physical_device.device, dev.device)
 
 
 def allocate_buffer(allocator: Optional[ctypes.c_void_p], size: int, usage: int) -> Tuple[Optional[ctypes.c_void_p], Optional[ctypes.c_void_p]]:
