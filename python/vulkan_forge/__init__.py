@@ -68,6 +68,8 @@ try:
         create_allocator_native,
         allocate_buffer,
         destroy_allocator,
+        BUFFER_USAGE_VERTEX,
+        BUFFER_USAGE_STORAGE,
     )
 except ImportError as e:
     _import_errors.append(f"backend: {e}")
@@ -76,11 +78,13 @@ except ImportError as e:
             DeviceManager,
             VulkanForgeError,
             LogicalDevice,
-            PhysicalDeviceInfo,
-            create_allocator,
-            create_allocator_native,
-            allocate_buffer,
-            destroy_allocator,
+        PhysicalDeviceInfo,
+        create_allocator,
+        create_allocator_native,
+        allocate_buffer,
+        destroy_allocator,
+        BUFFER_USAGE_VERTEX,
+        BUFFER_USAGE_STORAGE,
         )
     except ImportError as e2:
         _import_errors.append(f"backend (direct): {e2}")
@@ -124,7 +128,8 @@ if create_renderer is not None:
 if DeviceManager is not None:
     __all__.extend([
         'DeviceManager', 'VulkanForgeError', 'LogicalDevice', 'PhysicalDeviceInfo',
-        'create_allocator', 'allocate_buffer', 'destroy_allocator'
+        'create_allocator', 'allocate_buffer', 'destroy_allocator',
+        'BUFFER_USAGE_VERTEX', 'BUFFER_USAGE_STORAGE'
     ])
 
 # Module initialization message

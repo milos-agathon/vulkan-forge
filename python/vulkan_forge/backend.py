@@ -60,6 +60,9 @@ except ImportError:
         VK_IMAGE_ASPECT_DEPTH_BIT = 2
         VK_PIPELINE_BIND_POINT_GRAPHICS = 0
         VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT = 2
+
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT = 0x00000001
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT = 0x00000020
         
         # Mock classes for Vulkan structures
         class VkApplicationInfo:
@@ -167,6 +170,9 @@ except ImportError:
             pass
     
     vk = MockVK()
+
+BUFFER_USAGE_VERTEX = vk.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+BUFFER_USAGE_STORAGE = vk.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
 
 logger = logging.getLogger(__name__)
 
@@ -507,3 +513,17 @@ def destroy_allocator(allocator: ctypes.c_void_p) -> None:
         native.destroy_allocator(int(allocator.value))
     except Exception as e:
         logger.warning(f"Failed to destroy allocator: {e}")
+
+
+__all__ = [
+    "DeviceManager",
+    "VulkanForgeError",
+    "LogicalDevice",
+    "PhysicalDeviceInfo",
+    "create_allocator_native",
+    "create_allocator",
+    "allocate_buffer",
+    "destroy_allocator",
+    "BUFFER_USAGE_VERTEX",
+    "BUFFER_USAGE_STORAGE",
+]

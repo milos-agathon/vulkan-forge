@@ -417,9 +417,9 @@ def create_storage_buffer(allocator, data: np.ndarray,
     return NumpyBuffer(allocator, data, usage=usage)
 
 
-def numpy_buffer(*args, **kwargs) -> "NumpyBuffer":
+def numpy_buffer(allocator, array, usage: int = BUFFER_USAGE_VERTEX) -> "NumpyBuffer":
     """Convenience wrapper for :class:`NumpyBuffer`."""
-    return NumpyBuffer(*args, **kwargs)
+    return NumpyBuffer(allocator, array, usage=usage)
 
 
 __all__ = [
