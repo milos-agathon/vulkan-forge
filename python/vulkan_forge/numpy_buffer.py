@@ -4,7 +4,10 @@ import numpy as np
 from typing import Optional, Union, Tuple, List
 import weakref
 from contextlib import contextmanager
-from . import _vulkan_forge_native as native
+try:
+    from . import _vulkan_forge_native as native
+except ImportError:
+    from . import vulkan_forge_native as native
 
 # Buffer usage flags
 BUFFER_USAGE_VERTEX = native.BUFFER_USAGE_VERTEX_BUFFER
@@ -114,7 +117,7 @@ class NumpyBuffer:
         self._buffer.sync_to_gpu()
     
     @property
-    def buffer(self) -> NumpyBuffer:
+    def buffer(self) -> 'NumpyBuffer':
         """Get the underlying buffer."""
         return self._buffer
     
