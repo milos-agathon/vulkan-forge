@@ -432,10 +432,16 @@ class VulkanRenderer(Renderer):
                 pCorrelatedViewMasks=None,
             )
 
-            result = vk.vkCreateRenderPass2(dev.device, ctypes.byref(render_pass_info), None)
-            if isinstance(result, int) and result != vk.VK_SUCCESS:
+            render_pass = vk.VkRenderPass(0)
+            result = vk.vkCreateRenderPass2(
+                dev.device,
+                ctypes.byref(render_pass_info),
+                None,
+                ctypes.byref(render_pass),
+            )
+            if result != vk.VK_SUCCESS:
                 raise VulkanForgeError("Failed to create render pass", result)
-            return result
+            return render_pass
 
         except Exception as e:
             logger.error(f"Failed to create render pass: {e}")
@@ -688,6 +694,16 @@ class VulkanRenderer(Renderer):
     def set_render_target(self, target: RenderTarget) -> None:
         self.render_target = target
         self._create_swapchain()
+
+    def set_vertex_buffer(self, numpy_buf, binding: int = 0) -> None:
+        """Bind a vertex buffer for rendering."""
+        if not hasattr(self, "vertex_buffers"):
+            self.vertex_buffers = {}
+        if self.gpu_active and hasattr(numpy_buf, "gpu_buffer"):
+            self.vertex_buffers[binding] = int(numpy_buf.gpu_buffer)
+        else:
+            array = getattr(numpy_buf, "_array", numpy_buf)
+            self.vertex_buffers[binding] = np.asarray(array)
 
     # ─────────────────────────────────────────────────────────────────────
     # Main render entry
@@ -956,6 +972,20 @@ def create_renderer(prefer_gpu: bool = True, enable_validation: bool = True) -> 
     return CPURenderer()
 
 
+def save_image(image: np.ndarray, filename: str) -> None:
+    """Save an RGBA image array to disk."""
+    try:
+        from PIL import Image
+        Image.fromarray(image).save(filename)
+    except Exception as e:
+        logger.error(f"Failed to save image to {filename}: {e}")
+
+
+def set_vertex_buffer(renderer: Renderer, numpy_buf, binding: int = 0) -> None:
+    """Convenience wrapper for :meth:`Renderer.set_vertex_buffer`."""
+    renderer.set_vertex_buffer(numpy_buf, binding)
+
+
 __all__ = [
     "RenderTarget",
     "Mesh",
@@ -966,4 +996,6 @@ __all__ = [
     "VulkanRenderer",
     "CPURenderer",
     "create_renderer",
+    "set_vertex_buffer",
+    "save_image",
 ]

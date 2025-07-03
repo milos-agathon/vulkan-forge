@@ -93,14 +93,16 @@ except ImportError as e:
 try:
     from .renderer import (
         create_renderer, RenderTarget, Mesh, Material, Light,
-        Transform, Renderer, VulkanRenderer, CPURenderer
+        Transform, Renderer, VulkanRenderer, CPURenderer,
+        set_vertex_buffer, save_image,
     )
 except ImportError as e:
     _import_errors.append(f"renderer: {e}")
     try:
         from renderer import (
-            create_renderer, RenderTarget, Mesh, Material, Light, 
-            Transform, Renderer, VulkanRenderer, CPURenderer
+            create_renderer, RenderTarget, Mesh, Material, Light,
+            Transform, Renderer, VulkanRenderer, CPURenderer,
+            set_vertex_buffer, save_image,
         )
     except ImportError as e2:
         _import_errors.append(f"renderer (direct): {e2}")
@@ -132,7 +134,8 @@ if Matrix4x4 is not None:
 if create_renderer is not None:
     __all__.extend([
         'create_renderer', 'RenderTarget', 'Mesh', 'Material', 'Light',
-        'Transform', 'Renderer', 'VulkanRenderer', 'CPURenderer'
+        'Transform', 'Renderer', 'VulkanRenderer', 'CPURenderer',
+        'set_vertex_buffer', 'save_image'
     ])
     
 if DeviceManager is not None:

@@ -181,6 +181,11 @@ class NumpyBuffer:
         np.copyto(self._array, data, casting="no")
         self.upload()
 
+    def release(self) -> None:
+        """Release GPU resources (no-op if not allocated)."""
+        self.gpu_buffer = 0
+        self.allocation = 0
+
 
 class _NumpyBufferCtx(NumpyBuffer):
     """Context-managed NumpyBuffer that releases resources on exit."""
@@ -189,7 +194,7 @@ class _NumpyBufferCtx(NumpyBuffer):
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        self.release()
+        super().release()
         return False
 
 
