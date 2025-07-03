@@ -22,19 +22,23 @@ if _current_dir not in sys.path:
 
 # Try to import native extension if available
 _native_available = False
+_native_module = None
 try:
-    try:
-        # Try relative import first
-        from . import vulkan_forge_native
-    except ImportError:
-        # Fall back to direct import
-        import vulkan_forge_native
-    _native_available = True
-    logger.info("Native extension loaded successfully")
+   try:
+       # Try relative import first
+       from . import _vulkan_forge_native
+       _native_module = _vulkan_forge_native
+       _native_available = True
+   except ImportError:
+       # Fall back to direct import
+       import vulkan_forge_native
+       _native_module = vulkan_forge_native
+       _native_available = True
+   logger.info("Native extension loaded successfully")
 except ImportError as e:
-    logger.debug(f"Native extension not available: {e}")
-    # This is fine - we'll use pure Python implementation
-
+   logger.debug(f"Native extension not available: {e}")
+   # This is fine - we'll use pure Python implementation
+   _native_module = None
 # Import Python modules with better error handling
 _import_errors = []
 

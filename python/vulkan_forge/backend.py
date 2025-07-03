@@ -458,26 +458,42 @@ class DeviceManager:
         self.physical_devices.clear()
 
 
-def create_allocator(instance: Any, physical_device: Any, device: Any) -> ctypes.c_void_p:
+def create_allocator(instance: Any, physical_device: Any, device: Any) -> Optional[ctypes.c_void_p]:
     """Create a VMA allocator."""
     if native is None or not hasattr(native, "create_allocator"):
-        raise VulkanForgeError("create_allocator unavailable")
-    cap = native.create_allocator(int(instance), int(physical_device), int(device))
-    ptr = _capsule_to_void_p(cap, "VmaAllocator")
-    weakref.finalize(ptr, destroy_allocator, ptr)
-    return ptr
+        logger.warning("VMA allocator not available - native extension required")
+        return None
+    
+    try:
+        cap = native.create_allocator(int(instance), int(physical_device), int(device))
+        ptr = _capsule_to_void_p(cap, "VmaAllocator")
+        weakref.finalize(ptr, destroy_allocator, ptr)
+        return ptr
+    except Exception as e:
+        logger.warning(f"Failed to create VMA allocator: {e}")
+        return None
 
 
-def allocate_buffer(allocator: ctypes.c_void_p, size: int, usage: int) -> Tuple[ctypes.c_void_p, ctypes.c_void_p]:
+def allocate_buffer(allocator: Optional[ctypes.c_void_p], size: int, usage: int) -> Tuple[Optional[ctypes.c_void_p], Optional[ctypes.c_void_p]]:
     """Allocate a Vulkan buffer via VMA."""
-    if native is None or not hasattr(native, "allocate_buffer"):
-        raise VulkanForgeError("allocate_buffer unavailable")
-    buf, alloc = native.allocate_buffer(int(allocator.value), size, usage)
-    return ctypes.c_void_p(buf), ctypes.c_void_p(alloc)
+    if native is None or not hasattr(native, "allocate_buffer") or allocator is None:
+        logger.warning("Buffer allocation not available - native extension required")
+        return None, None
+    
+    try:
+        buf, alloc = native.allocate_buffer(int(allocator.value), size, usage)
+        return ctypes.c_void_p(buf), ctypes.c_void_p(alloc)
+    except Exception as e:
+        logger.warning(f"Failed to allocate buffer: {e}")
+        return None, None
 
 
 def destroy_allocator(allocator: ctypes.c_void_p) -> None:
     """Destroy a VMA allocator."""
-    if native is None or not hasattr(native, "destroy_allocator"):
-        raise VulkanForgeError("destroy_allocator unavailable")
-    native.destroy_allocator(int(allocator.value))
+    if native is None or not hasattr(native, "destroy_allocator") or allocator is None:
+        return
+    
+    try:
+        native.destroy_allocator(int(allocator.value))
+    except Exception as e:
+        logger.warning(f"Failed to destroy allocator: {e}")
