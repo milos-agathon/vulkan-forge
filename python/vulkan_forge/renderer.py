@@ -291,6 +291,15 @@ class VulkanRenderer(Renderer):
         if not VULKAN_AVAILABLE:
             return None
         try:
+            class VkAttachmentReference2(ctypes.Structure):
+                _fields_ = [
+                    ("sType", ctypes.c_uint32),
+                    ("pNext", ctypes.c_void_p),
+                    ("attachment", ctypes.c_uint32),
+                    ("layout", ctypes.c_uint32),
+                    ("aspectMask", ctypes.c_uint32),
+                ]
+
             class VkAttachmentDescription2(ctypes.Structure):
                 _fields_ = [
                     ("sType", ctypes.c_uint32),
@@ -368,15 +377,23 @@ class VulkanRenderer(Renderer):
             )
             
             # Attachment references
-            color_ref = vk.VkAttachmentReference(
+            color_ref = VkAttachmentReference2(
+                sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2,
+                pNext=None,
                 attachment=0,
-                layout=vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                layout=vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                aspectMask=vk.VK_IMAGE_ASPECT_COLOR_BIT,
             )
-            
-            depth_ref = vk.VkAttachmentReference(
+            depth_ref = VkAttachmentReference2(
+                sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2,
+                pNext=None,
                 attachment=1,
-                layout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                layout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                aspectMask=vk.VK_IMAGE_ASPECT_DEPTH_BIT,
             )
+
+            color_ref_arr = (VkAttachmentReference2 * 1)(color_ref)
+            depth_ref_ptr = ctypes.pointer(depth_ref)
             
             # Subpass
             subpass = VkSubpassDescription2(
@@ -388,9 +405,9 @@ class VulkanRenderer(Renderer):
                 inputAttachmentCount=0,
                 pInputAttachments=None,
                 colorAttachmentCount=1,
-                pColorAttachments=ctypes.pointer(color_ref),
+                pColorAttachments=color_ref_arr,
                 pResolveAttachments=None,
-                pDepthStencilAttachment=ctypes.pointer(depth_ref),
+                pDepthStencilAttachment=depth_ref_ptr,
                 preserveAttachmentCount=0,
                 pPreserveAttachments=None,
             )
@@ -411,7 +428,10 @@ class VulkanRenderer(Renderer):
                 pCorrelatedViewMasks=None,
             )
 
-            return vk.vkCreateRenderPass2(dev.device, render_pass_info, None)
+            result = vk.vkCreateRenderPass2(dev.device, ctypes.byref(render_pass_info), None)
+            if isinstance(result, int) and result != vk.VK_SUCCESS:
+                raise VulkanForgeError("Failed to create render pass", result)
+            return result
 
         except Exception as e:
             logger.error(f"Failed to create render pass: {e}")

@@ -4,7 +4,7 @@ import numpy as np
 from vulkan_forge.backend import (
     DeviceManager,
     VULKAN_AVAILABLE,
-    create_allocator,
+    create_allocator_native,
     allocate_buffer,
 )
 
@@ -19,7 +19,7 @@ def test_vma_buffer_allocation():
     if not devices:
         pytest.skip("No Vulkan device")
     dev = devices[0]
-    allocator = create_allocator(dm.instance, dev.physical_device.device, dev.device)
+    allocator = create_allocator_native(dm.instance, dev.physical_device.device, dev.device)
     size = 32 * 1024 * 1024
     usage = vk.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
     buf, alloc = allocate_buffer(allocator, size, usage)
