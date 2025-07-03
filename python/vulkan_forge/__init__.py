@@ -7,6 +7,7 @@ print('DEBUG: Loading vulkan_forge/__init__.py from:', __file__)
 import logging
 import sys
 import os
+import importlib
 
 # Set up module logger
 logger = logging.getLogger(__name__)
@@ -24,21 +25,24 @@ if _current_dir not in sys.path:
 _native_available = False
 _native_module = None
 try:
-   try:
-       # Try relative import first
-       from . import _vulkan_forge_native
-       _native_module = _vulkan_forge_native
-       _native_available = True
-   except ImportError:
-       # Fall back to direct import
-       import vulkan_forge_native
-       _native_module = vulkan_forge_native
-       _native_available = True
-   logger.info("Native extension loaded successfully")
+    try:
+        # Try relative import first
+        from . import _vulkan_forge_native
+        _native_module = _vulkan_forge_native
+        _native_available = True
+    except ImportError:
+        # Fall back to direct import
+        from . import vulkan_forge_native
+        _native_module = vulkan_forge_native
+        _native_available = True
+    logger.info("Native extension loaded successfully")
 except ImportError as e:
-   logger.debug(f"Native extension not available: {e}")
-   # This is fine - we'll use pure Python implementation
-   _native_module = None
+    logger.debug(f"Native extension not available: {e}")
+    # This is fine - we'll use pure Python implementation
+    _native_module = None
+
+if _native_module is not None:
+    sys.modules[f"{__name__}._vulkan_forge_native"] = _native_module
 # Import Python modules with better error handling
 _import_errors = []
 
