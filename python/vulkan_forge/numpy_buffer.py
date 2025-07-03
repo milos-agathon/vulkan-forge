@@ -182,6 +182,17 @@ class NumpyBuffer:
         self.upload()
 
 
+class _NumpyBufferCtx(NumpyBuffer):
+    """Context-managed NumpyBuffer that releases resources on exit."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.release()
+        return False
+
+
 class MultiBuffer:
     """Manager for multiple related GPU buffers.
     
@@ -418,8 +429,8 @@ def create_storage_buffer(allocator, data: np.ndarray,
 
 
 def numpy_buffer(allocator, array, usage: int = BUFFER_USAGE_VERTEX) -> "NumpyBuffer":
-    """Convenience wrapper for :class:`NumpyBuffer`."""
-    return NumpyBuffer(allocator, array, usage=usage)
+    """Convenience wrapper returning a context-managed buffer."""
+    return _NumpyBufferCtx(allocator, array, usage=usage)
 
 
 __all__ = [
