@@ -4,6 +4,8 @@ import numpy as np
 from typing import Optional, Union, Tuple, List
 import weakref
 from contextlib import contextmanager
+import ctypes
+from dataclasses import dataclass
 try:
     from . import _vulkan_forge_native as native
 except ImportError:
@@ -32,6 +34,47 @@ NUMPY_TO_VK_FORMAT = {
     (np.dtype('uint8'), 1): 'VK_FORMAT_R8_UINT',
     (np.dtype('uint8'), 4): 'VK_FORMAT_R8G8B8A8_UNORM',
 }
+
+
+@dataclass
+class StructuredBuffer:
+    """Simple structured buffer backed by a NumPy array and optional GPU memory."""
+
+    data: np.ndarray
+    gpu_buffer: int
+    alloc: int
+    _ptr: Optional[ctypes.c_void_p] = None
+
+    def __init__(self, size_bytes: int,
+                 usage: int = BUFFER_USAGE_STORAGE,
+                 dtype: np.dtype = np.float32,
+                 device: Optional[int] = None):
+        self.data = np.zeros(size_bytes // np.dtype(dtype).itemsize, dtype=dtype)
+        self.gpu_buffer = 0
+        self.alloc = 0
+        self._ptr = None
+
+        if hasattr(native, 'create_structured_buffer'):
+            buf, alloc, ptr = native.create_structured_buffer(size_bytes, usage)
+            self.gpu_buffer = int(buf)
+            self.alloc = int(alloc)
+            if ptr:
+                self._ptr = ctypes.c_void_p(ptr)
+        else:
+            # CPU fallback uses an in-memory buffer to mimic mapped GPU memory
+            self._cpu_backing = (ctypes.c_ubyte * size_bytes)()
+            self._ptr = ctypes.cast(self._cpu_backing, ctypes.c_void_p)
+
+    def upload(self) -> None:
+        """Copy data from host array to GPU mapping if available."""
+        if self._ptr:
+            ctypes.memmove(self._ptr.value, self.data.ctypes.data, self.data.nbytes)
+
+    def download(self) -> np.ndarray:
+        """Copy data from GPU mapping back to the host array."""
+        if self._ptr:
+            ctypes.memmove(self.data.ctypes.data, self._ptr.value, self.data.nbytes)
+        return self.data
 
 
 class NumpyBuffer:
