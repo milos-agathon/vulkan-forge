@@ -87,7 +87,34 @@ class Light:
 # Abstract renderer
 # ─────────────────────────────────────────────────────────────────────────────
 class Renderer(ABC):
-    """API-agnostic base class."""
+    """API-agnostic base class and convenience factory.
+
+    Parameters
+    ----------
+    width : int, optional
+        Target framebuffer width. Defaults to ``1280``.
+    height : int, optional
+        Target framebuffer height. Defaults to ``720``.
+    """
+
+    def __new__(
+        cls,
+        width: int = 1280,
+        height: int = 720,
+        prefer_gpu: bool = True,
+        enable_validation: bool = True,
+    ) -> "Renderer":
+        if cls is Renderer:
+            impl = create_renderer(prefer_gpu=prefer_gpu, enable_validation=enable_validation)
+            impl.set_render_target(RenderTarget(width, height))
+            impl.width = width
+            impl.height = height
+            return impl
+        return super().__new__(cls)
+
+    def __init__(self, width: int = 1280, height: int = 720) -> None:
+        self.width = width
+        self.height = height
 
     @abstractmethod
     def render(
@@ -838,3 +865,16 @@ def create_renderer(prefer_gpu: bool = True, enable_validation: bool = True) -> 
         if devices:
             return VulkanRenderer(dm, devices)
     return CPURenderer()
+
+
+__all__ = [
+    "RenderTarget",
+    "Mesh",
+    "Material",
+    "Light",
+    "Transform",
+    "Renderer",
+    "VulkanRenderer",
+    "CPURenderer",
+    "create_renderer",
+]
