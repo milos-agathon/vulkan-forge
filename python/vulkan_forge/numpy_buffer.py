@@ -415,3 +415,19 @@ def create_storage_buffer(allocator, data: np.ndarray,
     if not read_only:
         usage |= BUFFER_USAGE_TRANSFER_DST
     return NumpyBuffer(allocator, data, usage=usage)
+
+
+def numpy_buffer(*args, **kwargs) -> "NumpyBuffer":
+    """Convenience wrapper for :class:`NumpyBuffer`."""
+    return NumpyBuffer(*args, **kwargs)
+
+
+__all__ = [
+    "StructuredBuffer",
+    "NumpyBuffer",
+    "numpy_buffer",
+    "create_vertex_buffer",
+    "create_index_buffer",
+    "create_uniform_buffer",
+    "create_storage_buffer",
+]
