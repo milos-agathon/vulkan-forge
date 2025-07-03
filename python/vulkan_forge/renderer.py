@@ -188,6 +188,8 @@ class VulkanRenderer(Renderer):
         self.device_manager = device_manager
         self.logical_devices = logical_devices if isinstance(logical_devices, list) else []
         self.render_target: Optional[RenderTarget] = None
+        self._render_pass: Optional[int] = None
+        self._framebuffer: Optional[np.ndarray] = None
 
         self.swapchain_format = vk.VK_FORMAT_B8G8R8A8_UNORM if VULKAN_AVAILABLE else None
         self.current_device_index = 0
@@ -432,7 +434,7 @@ class VulkanRenderer(Renderer):
                 pCorrelatedViewMasks=None,
             )
 
-            render_pass = vk.VkRenderPass(0)
+            render_pass = ctypes.c_uint64()
             result = vk.vkCreateRenderPass2(
                 dev.device,
                 ctypes.byref(render_pass_info),
@@ -441,7 +443,8 @@ class VulkanRenderer(Renderer):
             )
             if result != vk.VK_SUCCESS:
                 raise VulkanForgeError("Failed to create render pass", result)
-            return render_pass
+            self._render_pass = render_pass.value
+            return render_pass.value
 
         except Exception as e:
             logger.error(f"Failed to create render pass: {e}")
@@ -704,6 +707,48 @@ class VulkanRenderer(Renderer):
         else:
             array = getattr(numpy_buf, "_array", numpy_buf)
             self.vertex_buffers[binding] = np.asarray(array)
+
+    def render_points(self, first_vertex: int = 0, vertex_count: Optional[int] = None) -> np.ndarray:
+        """Render bound vertex buffers as a point cloud."""
+        if not self.render_target:
+            raise VulkanForgeError("Render target not set")
+
+        if vertex_count is None:
+            buf = self.vertex_buffers.get(0)
+            if isinstance(buf, np.ndarray):
+                vertex_count = len(buf) - first_vertex
+            else:
+                vertex_count = 0
+
+        if self.gpu_active and hasattr(vk, "vkCmdDraw"):
+            try:
+                cmd_buf = getattr(self, "command_buffer", None)
+                if cmd_buf is not None:
+                    buffers = (ctypes.c_uint64 * 1)(ctypes.c_uint64(self.vertex_buffers.get(0, 0)))
+                    offsets = (ctypes.c_ulonglong * 1)(0)
+                    vk.vkCmdBindVertexBuffers(cmd_buf, 0, 1, buffers, offsets)
+                    vk.vkCmdDraw(cmd_buf, vertex_count, 1, first_vertex, 0)
+            except Exception as e:
+                logger.error("GPU draw failed: %s", e)
+
+        w, h = self.render_target.width, self.render_target.height
+        fb = np.zeros((h, w, 4), dtype=np.uint8)
+        positions = self.vertex_buffers.get(0)
+        colors = self.vertex_buffers.get(1)
+        if isinstance(positions, np.ndarray):
+            pts = positions[first_vertex:first_vertex + vertex_count]
+            if not isinstance(colors, np.ndarray):
+                colors = np.ones((len(pts), 4), dtype=np.float32)
+            cols = colors[first_vertex:first_vertex + len(pts)] if isinstance(colors, np.ndarray) else None
+            xs = ((pts[:, 0] + 1) * w / 2).astype(int)
+            ys = ((1 - pts[:, 1]) * h / 2).astype(int)
+            for i, (x, y) in enumerate(zip(xs, ys)):
+                if 0 <= x < w and 0 <= y < h:
+                    c = cols[i] if cols is not None else np.array([1, 1, 1, 1])
+                    fb[y, x, :3] = np.clip(c[:3] * 255, 0, 255)
+                    fb[y, x, 3] = int(c[3] * 255)
+        self._framebuffer = fb
+        return fb
 
     # ─────────────────────────────────────────────────────────────────────
     # Main render entry
