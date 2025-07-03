@@ -59,11 +59,27 @@ except ImportError as e:
         Matrix4x4 = None
 
 try:
-    from .backend import DeviceManager, VulkanForgeError, LogicalDevice, PhysicalDeviceInfo
+    from .backend import (
+        DeviceManager,
+        VulkanForgeError,
+        LogicalDevice,
+        PhysicalDeviceInfo,
+        create_allocator,
+        allocate_buffer,
+        destroy_allocator,
+    )
 except ImportError as e:
     _import_errors.append(f"backend: {e}")
     try:
-        from backend import DeviceManager, VulkanForgeError, LogicalDevice, PhysicalDeviceInfo
+        from backend import (
+            DeviceManager,
+            VulkanForgeError,
+            LogicalDevice,
+            PhysicalDeviceInfo,
+            create_allocator,
+            allocate_buffer,
+            destroy_allocator,
+        )
     except ImportError as e2:
         _import_errors.append(f"backend (direct): {e2}")
         DeviceManager = VulkanForgeError = LogicalDevice = PhysicalDeviceInfo = None
@@ -105,7 +121,8 @@ if create_renderer is not None:
     
 if DeviceManager is not None:
     __all__.extend([
-        'DeviceManager', 'VulkanForgeError', 'LogicalDevice', 'PhysicalDeviceInfo'
+        'DeviceManager', 'VulkanForgeError', 'LogicalDevice', 'PhysicalDeviceInfo',
+        'create_allocator', 'allocate_buffer', 'destroy_allocator'
     ])
 
 # Module initialization message

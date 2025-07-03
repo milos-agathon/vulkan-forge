@@ -174,9 +174,19 @@ class Renderer(ABC):
 class VulkanRenderer(Renderer):
     """GPU backend with automatic graceful CPU fallback."""
 
-    def __init__(self, device_manager: DeviceManager, logical_devices: List[LogicalDevice]):
+    def __init__(
+        self,
+        device_manager: Optional[DeviceManager] = None,
+        logical_devices: Optional[List[LogicalDevice]] = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        if not isinstance(device_manager, DeviceManager):
+            # Secondary __init__ call from Renderer factory
+            return
+
         self.device_manager = device_manager
-        self.logical_devices = logical_devices
+        self.logical_devices = logical_devices if isinstance(logical_devices, list) else []
         self.render_target: Optional[RenderTarget] = None
 
         self.swapchain_format = vk.VK_FORMAT_B8G8R8A8_UNORM if VULKAN_AVAILABLE else None
@@ -189,9 +199,9 @@ class VulkanRenderer(Renderer):
         self.pipeline_layouts: List[Any] = []
         self.descriptor_set_layouts: List[Any] = []
 
-        if VULKAN_AVAILABLE and logical_devices:
+        if VULKAN_AVAILABLE and self.logical_devices:
             try:
-                for dev in logical_devices:
+                for dev in self.logical_devices:
                     rp = self._create_render_pass(dev)
                     pl = self._create_pipeline(dev, rp)
                     self.render_passes.append(rp)
@@ -281,8 +291,56 @@ class VulkanRenderer(Renderer):
         if not VULKAN_AVAILABLE:
             return None
         try:
-            # Color attachment
-            color_attachment = vk.VkAttachmentDescription(
+            class VkAttachmentDescription2(ctypes.Structure):
+                _fields_ = [
+                    ("sType", ctypes.c_uint32),
+                    ("pNext", ctypes.c_void_p),
+                    ("flags", ctypes.c_uint32),
+                    ("format", ctypes.c_uint32),
+                    ("samples", ctypes.c_uint32),
+                    ("loadOp", ctypes.c_uint32),
+                    ("storeOp", ctypes.c_uint32),
+                    ("stencilLoadOp", ctypes.c_uint32),
+                    ("stencilStoreOp", ctypes.c_uint32),
+                    ("initialLayout", ctypes.c_uint32),
+                    ("finalLayout", ctypes.c_uint32),
+                ]
+
+            class VkSubpassDescription2(ctypes.Structure):
+                _fields_ = [
+                    ("sType", ctypes.c_uint32),
+                    ("pNext", ctypes.c_void_p),
+                    ("flags", ctypes.c_uint32),
+                    ("pipelineBindPoint", ctypes.c_uint32),
+                    ("viewMask", ctypes.c_uint32),
+                    ("inputAttachmentCount", ctypes.c_uint32),
+                    ("pInputAttachments", ctypes.c_void_p),
+                    ("colorAttachmentCount", ctypes.c_uint32),
+                    ("pColorAttachments", ctypes.c_void_p),
+                    ("pResolveAttachments", ctypes.c_void_p),
+                    ("pDepthStencilAttachment", ctypes.c_void_p),
+                    ("preserveAttachmentCount", ctypes.c_uint32),
+                    ("pPreserveAttachments", ctypes.c_void_p),
+                ]
+
+            class VkRenderPassCreateInfo2(ctypes.Structure):
+                _fields_ = [
+                    ("sType", ctypes.c_uint32),
+                    ("pNext", ctypes.c_void_p),
+                    ("flags", ctypes.c_uint32),
+                    ("attachmentCount", ctypes.c_uint32),
+                    ("pAttachments", ctypes.c_void_p),
+                    ("subpassCount", ctypes.c_uint32),
+                    ("pSubpasses", ctypes.c_void_p),
+                    ("dependencyCount", ctypes.c_uint32),
+                    ("pDependencies", ctypes.c_void_p),
+                    ("correlatedViewMaskCount", ctypes.c_uint32),
+                    ("pCorrelatedViewMasks", ctypes.c_void_p),
+                ]
+
+            color_attachment = VkAttachmentDescription2(
+                sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2,
+                pNext=None,
                 flags=0,
                 format=self.swapchain_format,
                 samples=vk.VK_SAMPLE_COUNT_1_BIT,
@@ -291,11 +349,13 @@ class VulkanRenderer(Renderer):
                 stencilLoadOp=vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                 stencilStoreOp=vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
                 initialLayout=vk.VK_IMAGE_LAYOUT_UNDEFINED,
-                finalLayout=vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+                finalLayout=vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             )
             
             # Depth attachment
-            depth_attachment = vk.VkAttachmentDescription(
+            depth_attachment = VkAttachmentDescription2(
+                sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2,
+                pNext=None,
                 flags=0,
                 format=vk.VK_FORMAT_D32_SFLOAT,
                 samples=vk.VK_SAMPLE_COUNT_1_BIT,
@@ -304,7 +364,7 @@ class VulkanRenderer(Renderer):
                 stencilLoadOp=vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                 stencilStoreOp=vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
                 initialLayout=vk.VK_IMAGE_LAYOUT_UNDEFINED,
-                finalLayout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                finalLayout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             )
             
             # Attachment references
@@ -319,9 +379,12 @@ class VulkanRenderer(Renderer):
             )
             
             # Subpass
-            subpass = vk.VkSubpassDescription(
+            subpass = VkSubpassDescription2(
+                sType=vk.VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2,
+                pNext=None,
                 flags=0,
                 pipelineBindPoint=vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
+                viewMask=0,
                 inputAttachmentCount=0,
                 pInputAttachments=None,
                 colorAttachmentCount=1,
@@ -329,28 +392,30 @@ class VulkanRenderer(Renderer):
                 pResolveAttachments=None,
                 pDepthStencilAttachment=ctypes.pointer(depth_ref),
                 preserveAttachmentCount=0,
-                pPreserveAttachments=None
+                pPreserveAttachments=None,
             )
             
             # Create render pass
-            attachments = [color_attachment, depth_attachment]
-            render_pass_info = vk.VkRenderPassCreateInfo(
-                sType=vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+            attachments = (VkAttachmentDescription2 * 2)(color_attachment, depth_attachment)
+            render_pass_info = VkRenderPassCreateInfo2(
+                sType=vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2,
                 pNext=None,
                 flags=0,
-                attachmentCount=len(attachments),
-                pAttachments=(vk.VkAttachmentDescription * len(attachments))(*attachments),
+                attachmentCount=2,
+                pAttachments=attachments,
                 subpassCount=1,
                 pSubpasses=ctypes.pointer(subpass),
                 dependencyCount=0,
-                pDependencies=None
+                pDependencies=None,
+                correlatedViewMaskCount=0,
+                pCorrelatedViewMasks=None,
             )
-            
-            return vk.vkCreateRenderPass(dev.device, render_pass_info, None)
-            
+
+            return vk.vkCreateRenderPass2(dev.device, render_pass_info, None)
+
         except Exception as e:
             logger.error(f"Failed to create render pass: {e}")
-            return None
+            raise VulkanForgeError(f"Failed to create render pass: {e}")
 
     def _create_pipeline(self, dev: LogicalDevice, render_pass: Any) -> Any:
         if not VULKAN_AVAILABLE or render_pass is None:
@@ -745,7 +810,7 @@ class VulkanRenderer(Renderer):
 class CPURenderer(Renderer):
     """Simple software renderer placeholder."""
 
-    def __init__(self) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.render_target: Optional[RenderTarget] = None
 
     def set_render_target(self, target: RenderTarget) -> None:
