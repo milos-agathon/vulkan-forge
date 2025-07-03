@@ -393,7 +393,7 @@ class VulkanRenderer(Renderer):
             )
 
             color_ref_arr = (VkAttachmentReference2 * 1)(color_ref)
-            depth_ref_ptr = ctypes.pointer(depth_ref)
+            depth_ref_arr = (VkAttachmentReference2 * 1)(depth_ref)
             
             # Subpass
             subpass = VkSubpassDescription2(
@@ -405,23 +405,25 @@ class VulkanRenderer(Renderer):
                 inputAttachmentCount=0,
                 pInputAttachments=None,
                 colorAttachmentCount=1,
-                pColorAttachments=color_ref_arr,
+                pColorAttachments=ctypes.cast(color_ref_arr, ctypes.POINTER(VkAttachmentReference2)),
                 pResolveAttachments=None,
-                pDepthStencilAttachment=depth_ref_ptr,
+                pDepthStencilAttachment=ctypes.cast(depth_ref_arr, ctypes.POINTER(VkAttachmentReference2)),
                 preserveAttachmentCount=0,
                 pPreserveAttachments=None,
             )
             
             # Create render pass
             attachments = (VkAttachmentDescription2 * 2)(color_attachment, depth_attachment)
+            attachments_ptr = ctypes.cast(attachments, ctypes.POINTER(VkAttachmentDescription2))
+            subpass_arr = (VkSubpassDescription2 * 1)(subpass)
             render_pass_info = VkRenderPassCreateInfo2(
                 sType=vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2,
                 pNext=None,
                 flags=0,
                 attachmentCount=2,
-                pAttachments=attachments,
+                pAttachments=attachments_ptr,
                 subpassCount=1,
-                pSubpasses=ctypes.pointer(subpass),
+                pSubpasses=ctypes.cast(subpass_arr, ctypes.POINTER(VkSubpassDescription2)),
                 dependencyCount=0,
                 pDependencies=None,
                 correlatedViewMaskCount=0,
