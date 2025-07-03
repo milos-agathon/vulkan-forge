@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <cstdint>
+#include <unordered_map>
 
 namespace vf
 {
@@ -20,6 +21,12 @@ public:
 
     uint32_t width()  const { return m_width;  }
     uint32_t height() const { return m_height; }
+
+    /** Set external vertex buffer for rendering */
+    void set_vertex_buffer(VkBuffer buffer, uint32_t binding = 0);
+    
+    /** Clear external buffers */
+    void clear_external_buffers();
 
 private:
     void createColorTarget();
@@ -41,5 +48,8 @@ private:
     VkCommandBuffer    m_cmd        = VK_NULL_HANDLE;
     VkBuffer           m_readback   = VK_NULL_HANDLE;
     VkDeviceMemory     m_readMem    = VK_NULL_HANDLE;
+
+    /* External buffer bindings */
+    std::unordered_map<uint32_t, VkBuffer> m_external_buffers;
 };
 } // namespace vf

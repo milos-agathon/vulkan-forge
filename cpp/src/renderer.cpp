@@ -41,6 +41,19 @@ Renderer::~Renderer()
 }
 
 /* --------------------------------------------------------------------- */
+/*  External buffer management                                           */
+/* --------------------------------------------------------------------- */
+void Renderer::set_vertex_buffer(VkBuffer buffer, uint32_t binding)
+{
+    m_external_buffers[binding] = buffer;
+}
+
+void Renderer::clear_external_buffers()
+{
+    m_external_buffers.clear();
+}
+
+/* --------------------------------------------------------------------- */
 /*  public API                                                           */
 /* --------------------------------------------------------------------- */
 std::vector<std::uint8_t> Renderer::render(const HeightFieldScene& /*scene*/,
@@ -65,6 +78,11 @@ std::vector<std::uint8_t> Renderer::render(const HeightFieldScene& /*scene*/,
     rbi.pClearValues    = &clear;
 
     vkCmdBeginRenderPass(m_cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+        // Bind external vertex buffers if any
+        for (const auto& [binding, buffer] : m_external_buffers) {
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(m_cmd, binding, 1, &buffer, &offset);
+        }
         // TODO: bind pipeline, descriptor sets, draw meshes here
     vkCmdEndRenderPass(m_cmd);
 

@@ -59,7 +59,17 @@ static void initOnce()
     qci.queueCount       = 1;
     qci.pQueuePriorities = &prio;
 
+    // Enable features for buffer device address
+    VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES
+    };
+    bufferDeviceAddressFeatures.bufferDeviceAddress = VK_TRUE;
+
+    VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    features2.pNext = &bufferDeviceAddressFeatures;
+
     VkDeviceCreateInfo dci{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+    dci.pNext = &features2;
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos    = &qci;
     VK_CHECK(vkCreateDevice(g_ctx.phys, &dci, nullptr, &g_ctx.device));

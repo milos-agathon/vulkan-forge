@@ -1,14 +1,117 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
+#include <pybind11/buffer_info.h>
 
 #include "vf/renderer.hpp"
 #include "vf/heightfield_scene.hpp"
 #include "vf/vma_util.hpp"
+#include "vf/vk_common.hpp"
+#include <unordered_map>
+#include <memory>
 
 namespace py = pybind11;
 using vf::HeightFieldScene;
 using vf::Renderer;
+using vf::MappedBuffer;
+
+/* -------------------------------------------------------------------------
+   NumPy format to Vulkan format mapping
+   --------------------------------------------------------------------- */
+static VkFormat numpy_dtype_to_vk_format(const std::string& format, size_t itemsize) {
+    if (format == "f" && itemsize == 4) return VK_FORMAT_R32_SFLOAT;
+    if (format == "f" && itemsize == 8) return VK_FORMAT_R64_SFLOAT;
+    if (format == "i" && itemsize == 4) return VK_FORMAT_R32_SINT;
+    if (format == "u" && itemsize == 4) return VK_FORMAT_R32_UINT;
+    if (format == "i" && itemsize == 2) return VK_FORMAT_R16_SINT;
+    if (format == "u" && itemsize == 2) return VK_FORMAT_R16_UINT;
+    if (format == "i" && itemsize == 1) return VK_FORMAT_R8_SINT;
+    if (format == "u" && itemsize == 1) return VK_FORMAT_R8_UINT;
+    throw std::runtime_error("Unsupported NumPy dtype for Vulkan");
+}
+
+/* -------------------------------------------------------------------------
+   Zero-copy NumPy buffer wrapper
+   --------------------------------------------------------------------- */
+class NumpyBuffer {
+public:
+    NumpyBuffer(VmaAllocator allocator, py::buffer& buf, VkBufferUsageFlags usage)
+        : m_allocator(allocator) {
+        py::buffer_info info = buf.request();
+        
+        // Calculate total size
+        m_size = info.itemsize;
+        for (auto s : info.shape) {
+            m_size *= s;
+        }
+        
+        // Create mapped buffer
+        m_buffer = vf::create_mapped_buffer(m_allocator, m_size, usage);
+        
+        // Copy data if not writable or has strides
+        if (info.readonly || !is_contiguous(info)) {
+            std::memcpy(m_buffer.mapped_data, info.ptr, m_size);
+            m_owns_data = true;
+        } else {
+            // Zero-copy: just reference the data
+            m_numpy_data = info.ptr;
+            m_buffer.mapped_data = info.ptr;
+        }
+        
+        // Store format info
+        m_format = numpy_dtype_to_vk_format(info.format, info.itemsize);
+        m_shape = info.shape;
+        m_strides = info.strides;
+    }
+    
+    ~NumpyBuffer() {
+        if (m_buffer.buffer) {
+            vf::destroy_mapped_buffer(m_allocator, m_buffer);
+        }
+    }
+    
+    VkBuffer get_buffer() const { return m_buffer.buffer; }
+    VkDeviceSize get_size() const { return m_size; }
+    VkFormat get_format() const { return m_format; }
+    void* get_mapped_data() const { return m_buffer.mapped_data; }
+    
+    void sync_to_gpu() {
+        if (m_numpy_data && !m_owns_data) {
+            // Ensure CPU writes are visible to GPU
+            VmaAllocationInfo info;
+            vmaGetAllocationInfo(m_allocator, m_buffer.allocation, &info);
+            vmaFlushAllocation(m_allocator, m_buffer.allocation, 0, VK_WHOLE_SIZE);
+        }
+    }
+    
+    void sync_from_gpu() {
+        if (m_numpy_data && !m_owns_data) {
+            // Ensure GPU writes are visible to CPU
+            VmaAllocationInfo info;
+            vmaGetAllocationInfo(m_allocator, m_buffer.allocation, &info);
+            vmaInvalidateAllocation(m_allocator, m_buffer.allocation, 0, VK_WHOLE_SIZE);
+        }
+    }
+    
+private:
+    bool is_contiguous(const py::buffer_info& info) {
+        size_t expected_stride = info.itemsize;
+        for (int i = info.ndim - 1; i >= 0; --i) {
+            if (info.strides[i] != expected_stride) return false;
+            expected_stride *= info.shape[i];
+        }
+        return true;
+    }
+    
+    VmaAllocator m_allocator;
+    MappedBuffer m_buffer{};
+    VkDeviceSize m_size = 0;
+    VkFormat m_format = VK_FORMAT_UNDEFINED;
+    std::vector<ssize_t> m_shape;
+    std::vector<ssize_t> m_strides;
+    void* m_numpy_data = nullptr;
+    bool m_owns_data = false;
+};
 
 /* -------------------------------------------------------------------------
    Convert a 2-D NumPy float32 array → std::vector<float>
@@ -33,6 +136,25 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
     py::register_exception<vf::VulkanForgeError>(m, "VulkanForgeError");
 
     py::register_exception<vf::VulkanForgeError>(m, "VulkanForgeError");
+
+    +    /* ------------------------- NumpyBuffer ---------------------- */
+    py::class_<NumpyBuffer, std::shared_ptr<NumpyBuffer>>(m, "NumpyBuffer")
+        .def(py::init([](std::uintptr_t allocator_ptr, py::buffer buf, uint32_t usage) {
+            auto allocator = reinterpret_cast<VmaAllocator>(allocator_ptr);
+            return std::make_shared<NumpyBuffer>(allocator, buf, usage);
+        }),
+        py::arg("allocator"),
+        py::arg("buffer"),
+        py::arg("usage") = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)
+        .def("get_buffer", [](const NumpyBuffer& self) {
+            return reinterpret_cast<std::uintptr_t>(self.get_buffer());
+        })
+        .def("get_size", &NumpyBuffer::get_size)
+        .def("get_format", &NumpyBuffer::get_format)
+        .def("sync_to_gpu", &NumpyBuffer::sync_to_gpu)
+        .def("sync_from_gpu", &NumpyBuffer::sync_from_gpu)
+        .def("__enter__", [](std::shared_ptr<NumpyBuffer> self) { return self; })
+        .def("__exit__", [](NumpyBuffer& self, py::args) { });
 
     /* ------------------------- HeightFieldScene ---------------------- */
     py::class_<HeightFieldScene>(m, "HeightFieldScene")
@@ -73,6 +195,13 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
 
         .def_property_readonly("width",  &Renderer::width)
         .def_property_readonly("height", &Renderer::height)
+
+        
+        .def("set_vertex_buffer", [](Renderer& r, std::shared_ptr<NumpyBuffer> buffer, uint32_t binding) {
+            r.set_vertex_buffer(buffer->get_buffer(), binding);
+        },
+        py::arg("buffer"),
+        py::arg("binding") = 0)
 
         .def("render",
              [](Renderer& r, const HeightFieldScene& scn, uint32_t spp)
@@ -139,4 +268,12 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
             vf::destroy_allocator(reinterpret_cast<VmaAllocator>(allocator_ptr));
         },
         py::arg("allocator"));
+
+    /* Buffer usage flags */
+    m.attr("BUFFER_USAGE_VERTEX_BUFFER") = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    m.attr("BUFFER_USAGE_INDEX_BUFFER") = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    m.attr("BUFFER_USAGE_UNIFORM_BUFFER") = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    m.attr("BUFFER_USAGE_STORAGE_BUFFER") = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    m.attr("BUFFER_USAGE_TRANSFER_SRC") = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    m.attr("BUFFER_USAGE_TRANSFER_DST") = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 }
