@@ -177,8 +177,3 @@ When creating patches the agent **must**:
 * Keep bullets concise; external links for deep dives.
 * Run `markdownlint-cli2 AGENTS.md` before commit.
 
-
----
-
-*(End of AGENTS.md)*
-
