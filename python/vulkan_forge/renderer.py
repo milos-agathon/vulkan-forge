@@ -836,7 +836,13 @@ class VulkanRenderer(Renderer):
                 logger.error("GPU indexed draw failed: %s", e)
 
         # -- resolve vertex data for CPU raster --
-        if hasattr(vertex_buffer, "_array"):
+        if hasattr(vertex_buffer, "get_vertex_buffer"):
+            entry = vertex_buffer.get_vertex_buffer("vertices")
+            if not entry:
+                raise ValueError("MultiBuffer missing 'vertices' entry")
+            _, buf = entry
+            verts_arr = getattr(buf, "_array", getattr(buf, "array", buf))
+        elif hasattr(vertex_buffer, "_array"):
             verts_arr = vertex_buffer._array
         elif hasattr(vertex_buffer, "host_view"):
             verts_arr = vertex_buffer.host_view
@@ -860,7 +866,17 @@ class VulkanRenderer(Renderer):
         elif isinstance(index_buffer, np.ndarray):
             idx_arr = index_buffer
         elif isinstance(index_buffer, int):
-            idx_arr = np.arange(index_count, dtype=np.int32)
+            # When index_buffer is just a count, look for indices in vertex_buffer
+            if hasattr(vertex_buffer, "get_index_buffer"):
+                idx_buf = vertex_buffer.get_index_buffer()
+                if idx_buf:
+                    idx_arr = idx_buf._array if hasattr(idx_buf, "_array") else idx_buf
+                else:
+                    # No index buffer, create sequential indices
+                    idx_arr = np.arange(index_buffer, dtype=np.int32)
+            else:
+                # Create sequential indices
+                idx_arr = np.arange(index_buffer, dtype=np.int32)
         else:
             raise TypeError("index_buffer must be NumpyBuffer, numpy.ndarray or int")
 
@@ -1062,7 +1078,15 @@ class CPURenderer(Renderer):
         if self.render_target is None:
             self.set_render_target(RenderTarget(self.width, self.height))
 
+        # Handle MultiBuffer case
         if hasattr(vertex_buffer, "get_vertex_buffer"):
+            entry = vertex_buffer.get_vertex_buffer("vertices")
+            if entry:
+                _, vertex_buffer = entry
+            # Also check for index buffer in MultiBuffer
+            idx_buf = vertex_buffer.get_index_buffer() if hasattr(vertex_buffer, "get_index_buffer") else None
+            if idx_buf is not None and not isinstance(index_buffer, (NumpyBuffer, np.ndarray)):
+                index_buffer = idx_buf
             entry = vertex_buffer.get_vertex_buffer("vertices")
             if entry:
                 vertex_buffer = entry[1]
