@@ -267,24 +267,9 @@ class VulkanRenderer(Renderer):
 
     def _get_embedded_spirv(self, shader_name: str) -> bytes:
         """Tiny dummy SPIR-V blobs for fallback (minimal header only)."""
-        header = [
-            0x03, 0x02, 0x23, 0x07,
-            0x00, 0x00, 0x01, 0x00,
-            0x0A, 0x00, 0x0D, 0x00,
-            0x00, 0x00, 0x00, 0x00,
-        ]
-        return bytes(header)
-
-    def _create_shader_module(self, device: Any, code: bytes) -> Any:
-        array = (ctypes.c_uint32 * (len(code) // 4)).from_buffer_copy(code)
-        info = vk.VkShaderModuleCreateInfo(
-            sType=vk.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-            pNext=None,
-            flags=0,
-            codeSize=len(code),
-            pCode=array,
-        )
-        return vk.vkCreateShaderModule(device.device, info, None)
+        # We don't have valid embedded SPIR-V, so return empty bytes
+        # This will signal that shader compilation is not available
+        return b''
 
     # ─────────────────────────────────────────────────────────────────────
     # Render-pass / pipeline
@@ -293,65 +278,7 @@ class VulkanRenderer(Renderer):
         if not VULKAN_AVAILABLE:
             return None
         try:
-            class VkAttachmentReference2(ctypes.Structure):
-                _fields_ = [
-                    ("sType", ctypes.c_uint32),
-                    ("pNext", ctypes.c_void_p),
-                    ("attachment", ctypes.c_uint32),
-                    ("layout", ctypes.c_uint32),
-                    ("aspectMask", ctypes.c_uint32),
-                ]
-
-            class VkAttachmentDescription2(ctypes.Structure):
-                _fields_ = [
-                    ("sType", ctypes.c_uint32),
-                    ("pNext", ctypes.c_void_p),
-                    ("flags", ctypes.c_uint32),
-                    ("format", ctypes.c_uint32),
-                    ("samples", ctypes.c_uint32),
-                    ("loadOp", ctypes.c_uint32),
-                    ("storeOp", ctypes.c_uint32),
-                    ("stencilLoadOp", ctypes.c_uint32),
-                    ("stencilStoreOp", ctypes.c_uint32),
-                    ("initialLayout", ctypes.c_uint32),
-                    ("finalLayout", ctypes.c_uint32),
-                ]
-
-            class VkSubpassDescription2(ctypes.Structure):
-                _fields_ = [
-                    ("sType", ctypes.c_uint32),
-                    ("pNext", ctypes.c_void_p),
-                    ("flags", ctypes.c_uint32),
-                    ("pipelineBindPoint", ctypes.c_uint32),
-                    ("viewMask", ctypes.c_uint32),
-                    ("inputAttachmentCount", ctypes.c_uint32),
-                    ("pInputAttachments", ctypes.c_void_p),
-                    ("colorAttachmentCount", ctypes.c_uint32),
-                    ("pColorAttachments", ctypes.c_void_p),
-                    ("pResolveAttachments", ctypes.c_void_p),
-                    ("pDepthStencilAttachment", ctypes.c_void_p),
-                    ("preserveAttachmentCount", ctypes.c_uint32),
-                    ("pPreserveAttachments", ctypes.c_void_p),
-                ]
-
-            class VkRenderPassCreateInfo2(ctypes.Structure):
-                _fields_ = [
-                    ("sType", ctypes.c_uint32),
-                    ("pNext", ctypes.c_void_p),
-                    ("flags", ctypes.c_uint32),
-                    ("attachmentCount", ctypes.c_uint32),
-                    ("pAttachments", ctypes.c_void_p),
-                    ("subpassCount", ctypes.c_uint32),
-                    ("pSubpasses", ctypes.c_void_p),
-                    ("dependencyCount", ctypes.c_uint32),
-                    ("pDependencies", ctypes.c_void_p),
-                    ("correlatedViewMaskCount", ctypes.c_uint32),
-                    ("pCorrelatedViewMasks", ctypes.c_void_p),
-                ]
-
-            color_attachment = VkAttachmentDescription2(
-                sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2,
-                pNext=None,
+            color_attachment = vk.VkAttachmentDescription(
                 flags=0,
                 format=self.swapchain_format,
                 samples=vk.VK_SAMPLE_COUNT_1_BIT,
@@ -360,13 +287,11 @@ class VulkanRenderer(Renderer):
                 stencilLoadOp=vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                 stencilStoreOp=vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
                 initialLayout=vk.VK_IMAGE_LAYOUT_UNDEFINED,
-                finalLayout=vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                finalLayout=vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
             )
             
             # Depth attachment
-            depth_attachment = VkAttachmentDescription2(
-                sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2,
-                pNext=None,
+            depth_attachment = vk.VkAttachmentDescription(
                 flags=0,
                 format=vk.VK_FORMAT_D32_SFLOAT,
                 samples=vk.VK_SAMPLE_COUNT_1_BIT,
@@ -375,77 +300,64 @@ class VulkanRenderer(Renderer):
                 stencilLoadOp=vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                 stencilStoreOp=vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
                 initialLayout=vk.VK_IMAGE_LAYOUT_UNDEFINED,
-                finalLayout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                finalLayout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
             )
+            
+            attachments = [color_attachment, depth_attachment]
             
             # Attachment references
-            color_ref = VkAttachmentReference2(
-                sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2,
-                pNext=None,
+            color_ref = vk.VkAttachmentReference(
                 attachment=0,
-                layout=vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                aspectMask=vk.VK_IMAGE_ASPECT_COLOR_BIT,
+                layout=vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
             )
-            depth_ref = VkAttachmentReference2(
-                sType=vk.VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2,
-                pNext=None,
+            
+            depth_ref = vk.VkAttachmentReference(
                 attachment=1,
-                layout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                aspectMask=vk.VK_IMAGE_ASPECT_DEPTH_BIT,
+                layout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
             )
-
-            color_refs = (VkAttachmentReference2 * 1)(color_ref)
-            depth_refs = (VkAttachmentReference2 * 1)(depth_ref)
-            color_ptr = ctypes.cast(color_refs, ctypes.c_void_p)
-            depth_ptr = ctypes.cast(depth_refs, ctypes.c_void_p)
             
             # Subpass
-            subpass = VkSubpassDescription2(
-                sType=vk.VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2,
-                pNext=None,
+            subpass = vk.VkSubpassDescription(
                 flags=0,
                 pipelineBindPoint=vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
-                viewMask=0,
                 inputAttachmentCount=0,
                 pInputAttachments=None,
                 colorAttachmentCount=1,
-                pColorAttachments=color_ptr,
+                pColorAttachments=[color_ref],
                 pResolveAttachments=None,
-                pDepthStencilAttachment=depth_ptr,
+                pDepthStencilAttachment=depth_ref,
                 preserveAttachmentCount=0,
-                pPreserveAttachments=None,
+                pPreserveAttachments=None
+            )
+    
+            # Subpass dependency
+            dependency = vk.VkSubpassDependency(
+                srcSubpass=vk.VK_SUBPASS_EXTERNAL,
+                dstSubpass=0,
+                srcStageMask=vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                srcAccessMask=0,
+                dstStageMask=vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                dstAccessMask=vk.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
             )
             
             # Create render pass
-            attachments = (VkAttachmentDescription2 * 2)(color_attachment, depth_attachment)
-            attachments_ptr = ctypes.cast(attachments, ctypes.c_void_p)
-            subpass_arr = (VkSubpassDescription2 * 1)(subpass)
-            render_pass_info = VkRenderPassCreateInfo2(
-                sType=vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2,
+            render_pass_info = vk.VkRenderPassCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
                 pNext=None,
                 flags=0,
-                attachmentCount=2,
-                pAttachments=attachments_ptr,
+                attachmentCount=len(attachments),
+                pAttachments=attachments,
                 subpassCount=1,
-                pSubpasses=ctypes.cast(subpass_arr, ctypes.c_void_p),
-                dependencyCount=0,
-                pDependencies=None,
-                correlatedViewMaskCount=0,
-                pCorrelatedViewMasks=None,
+                pSubpasses=[subpass],
+                dependencyCount=1,
+                pDependencies=[dependency]
             )
-
-            render_pass = ctypes.c_uint64()
-            result = vk.vkCreateRenderPass2(
-                dev.device,
-                ctypes.byref(render_pass_info),
-                None,
-                ctypes.byref(render_pass),
-            )
-            if result != vk.VK_SUCCESS:
-                raise VulkanForgeError("Failed to create render pass", result)
-            self._render_pass = render_pass.value
-            return render_pass.value
-
+    
+            # Create the render pass
+            render_pass = vk.vkCreateRenderPass(dev.device, render_pass_info, None)
+            self._render_pass = render_pass
+            return render_pass
+            
         except Exception as e:
             logger.error(f"Failed to create render pass: {e}")
             raise VulkanForgeError(f"Failed to create render pass: {e}")
@@ -453,14 +365,30 @@ class VulkanRenderer(Renderer):
     def _create_pipeline(self, dev: LogicalDevice, render_pass: Any) -> Any:
         if not VULKAN_AVAILABLE or render_pass is None:
             return None
-               
+        
+        # Skip pipeline creation if we don't have shader support
+        if not hasattr(self, '_compile_shader'):
+            logger.warning("Shader compilation not available - skipping pipeline creation")
+            return None
+  
         try:
             # Compile shaders
             vert_code = self._compile_shader('vertex', 'vertex')
             frag_code = self._compile_shader('fragment', 'fragment')
+
+            # Check if shader compilation succeeded
+            if not vert_code or not frag_code:
+                logger.warning("Shader compilation failed - skipping pipeline creation")
+                return None
             
-            vert_module = self._create_shader_module(dev.device, vert_code)
-            frag_module = self._create_shader_module(dev.device, frag_code)
+            vert_module = self._create_shader_module(dev, vert_code)
+            frag_module = self._create_shader_module(dev, frag_code)
+
+            # If shader modules couldn't be created, we can't create pipeline
+            if not vert_module or not frag_module:
+                logger.warning("Shader modules not available - falling back to CPU rendering")
+                return None
+            
             
             # Shader stages
             vert_stage = vk.VkPipelineShaderStageCreateInfo(
@@ -638,7 +566,7 @@ class VulkanRenderer(Renderer):
                 pBindings=(vk.VkDescriptorSetLayoutBinding * len(layout_bindings))(*layout_bindings)
             )
             
-            desc_layout = vk.vkCreateDescriptorSetLayout(dev.device, layout_info, None)
+            desc_layout = vk.vkCreateDescriptorSetLayout(dev.device.value if hasattr(dev.device, 'value') else dev.device, layout_info, None)
             self.descriptor_set_layouts.append(desc_layout)
             
             # Pipeline layout
@@ -652,7 +580,7 @@ class VulkanRenderer(Renderer):
                 pPushConstantRanges=None
             )
             
-            pipeline_layout = vk.vkCreatePipelineLayout(dev.device, pipeline_layout_info, None)
+            pipeline_layout = vk.vkCreatePipelineLayout(dev.device.value if hasattr(dev.device, 'value') else dev.device, pipeline_layout_info, None)
             self.pipeline_layouts.append(pipeline_layout)
             
             # Create pipeline
@@ -679,12 +607,12 @@ class VulkanRenderer(Renderer):
             )
             
             pipelines = vk.vkCreateGraphicsPipelines(
-                dev.device, None, 1, ctypes.pointer(pipeline_info), None
+                dev.device.value if hasattr(dev.device, 'value') else dev.device, None, 1, ctypes.pointer(pipeline_info), None
             )
             
             # Clean up shader modules
-            vk.vkDestroyShaderModule(dev.device, vert_module, None)
-            vk.vkDestroyShaderModule(dev.device, frag_module, None)
+            vk.vkDestroyShaderModule(dev.device.value if hasattr(dev.device, 'value') else dev.device, vert_module, None)
+            vk.vkDestroyShaderModule(dev.device.value if hasattr(dev.device, 'value') else dev.device, frag_module, None)
             
             return pipelines[0] if pipelines else None
             
