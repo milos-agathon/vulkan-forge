@@ -711,54 +711,95 @@ class VulkanRenderer(Renderer):
             self.vertex_buffers[binding] = np.asarray(array)
 
     def render_points(
-        self, first_vertex: int = 0, vertex_count: Optional[int] = None
+        self,
+        vertex_buffer: Any,
+        model_matrix: Optional[Matrix4x4] = None,
+        view_matrix: Optional[Matrix4x4] = None,
+        projection_matrix: Optional[Matrix4x4] = None,
+        point_size: int = 2,
+        color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
     ) -> np.ndarray:
-        """Render bound vertex buffers as a point cloud."""
-        if not self.render_target:
-            raise VulkanForgeError("Render target not set")
+        """Render a point cloud from ``vertex_buffer``.
 
-        if vertex_count is None:
-            buf = self.vertex_buffers.get(0)
-            if isinstance(buf, np.ndarray):
-                vertex_count = len(buf) - first_vertex
-            else:
-                vertex_count = 0
+        Falls back to a simple CPU rasteriser when GPU shaders are unavailable.
+        """
 
-        if self.gpu_active and hasattr(vk, "vkCmdDraw"):
+        if model_matrix is None:
+            model_matrix = Matrix4x4.identity()
+        if view_matrix is None:
+            view_matrix = Matrix4x4.identity()
+        if projection_matrix is None:
+            projection_matrix = Matrix4x4.identity()
+
+        if self.gpu_active and self.pipelines:
+            # GPU path not yet implemented
             try:
-                cmd_buf = getattr(self, "command_buffer", None)
-                if cmd_buf is not None:
-                    buffers = (ctypes.c_uint64 * 1)(
-                        ctypes.c_uint64(self.vertex_buffers.get(0, 0))
-                    )
-                    offsets = (ctypes.c_ulonglong * 1)(0)
-                    vk.vkCmdBindVertexBuffers(cmd_buf, 0, 1, buffers, offsets)
-                    vk.vkCmdDraw(cmd_buf, vertex_count, 1, first_vertex, 0)
-            except Exception as e:
-                logger.error("GPU draw failed: %s", e)
+                return self._render_points_gpu(
+                    vertex_buffer,
+                    model_matrix,
+                    view_matrix,
+                    projection_matrix,
+                    point_size,
+                    color,
+                )
+            except Exception as e:  # pragma: no cover - GPU optional
+                logger.error("GPU point rendering failed: %s", e)
 
-        w, h = self.render_target.width, self.render_target.height
-        fb = np.zeros((h, w, 4), dtype=np.uint8)
-        positions = self.vertex_buffers.get(0)
-        colors = self.vertex_buffers.get(1)
-        if isinstance(positions, np.ndarray):
-            pts = positions[first_vertex : first_vertex + vertex_count]
-            if not isinstance(colors, np.ndarray):
-                colors = np.ones((len(pts), 4), dtype=np.float32)
-            cols = (
-                colors[first_vertex : first_vertex + len(pts)]
-                if isinstance(colors, np.ndarray)
-                else None
-            )
-            xs = ((pts[:, 0] + 1) * w / 2).astype(int)
-            ys = ((1 - pts[:, 1]) * h / 2).astype(int)
-            for i, (x, y) in enumerate(zip(xs, ys)):
-                if 0 <= x < w and 0 <= y < h:
-                    c = cols[i] if cols is not None else np.array([1, 1, 1, 1])
-                    fb[y, x, :3] = np.clip(c[:3] * 255, 0, 255)
-                    fb[y, x, 3] = int(c[3] * 255)
-        self._framebuffer = fb
-        return fb
+        return self._render_points_cpu(
+            vertex_buffer, model_matrix, view_matrix, projection_matrix, color
+        )
+
+    def _render_points_cpu(
+        self,
+        vertex_buffer: Any,
+        model_matrix: Matrix4x4,
+        view_matrix: Matrix4x4,
+        projection_matrix: Matrix4x4,
+        color: Tuple[float, float, float],
+    ) -> np.ndarray:
+        verts = np.asarray(
+            getattr(
+                vertex_buffer,
+                "_array",
+                getattr(
+                    vertex_buffer,
+                    "host_view",
+                    getattr(vertex_buffer, "array", vertex_buffer),
+                ),
+            ),
+            dtype=np.float32,
+            order="C",
+        )
+        if verts.ndim != 2 or verts.shape[1] < 3:
+            raise ValueError("vertex_buffer must contain Nx3 positions")
+
+        mvp = projection_matrix.data @ view_matrix.data @ model_matrix.data
+        coords = np.c_[verts[:, :3], np.ones(len(verts))] @ mvp.T
+        ndc = coords[:, :3] / np.where(
+            np.abs(coords[:, 3:4]) < 1e-6, 1e-6, coords[:, 3:4]
+        )
+
+        x = ((ndc[:, 0] + 1) * 0.5 * self.width).astype(int)
+        y = ((1 - ndc[:, 1]) * 0.5 * self.height).astype(int)
+        in_bounds = (x >= 0) & (x < self.width) & (y >= 0) & (y < self.height)
+
+        img = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        col = (np.array(color) * 255).astype(np.uint8)
+        img[y[in_bounds], x[in_bounds]] = col
+
+        return img
+
+    def _render_points_gpu(
+        self,
+        vertex_buffer: Any,
+        model_matrix: Matrix4x4,
+        view_matrix: Matrix4x4,
+        projection_matrix: Matrix4x4,
+        point_size: int,
+        color: Tuple[float, float, float],
+    ) -> np.ndarray:
+        """Placeholder GPU implementation (not yet available)."""
+        raise NotImplementedError
 
     def render_indexed(
         self,
@@ -1085,21 +1126,15 @@ class CPURenderer(Renderer):
             if entry:
                 _, vertex_buffer = entry
             # Also check for index buffer in MultiBuffer
-            idx_buf = vertex_buffer.get_index_buffer() if hasattr(vertex_buffer, "get_index_buffer") else None
-            if idx_buf is not None and not isinstance(index_buffer, (NumpyBuffer, np.ndarray)):
-                index_buffer = idx_buf
-            entry = vertex_buffer.get_vertex_buffer("vertices")
-            if entry:
-                vertex_buffer = entry[1]
-            buf = (
+            idx_buf = (
                 vertex_buffer.get_index_buffer()
                 if hasattr(vertex_buffer, "get_index_buffer")
                 else None
             )
-            if buf is not None and not isinstance(
+            if idx_buf is not None and not isinstance(
                 index_buffer, (NumpyBuffer, np.ndarray)
             ):
-                index_buffer = buf
+                index_buffer = idx_buf
 
         # -- resolve vertex data for CPU raster --
         if hasattr(vertex_buffer, "_array"):
