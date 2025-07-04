@@ -741,9 +741,17 @@ class VulkanRenderer(Renderer):
                 if i + 2 >= len(mesh.indices):
                     break
                     
-                i0, i1, i2 = mesh.indices[i:i+3]
+                # Convert indices to integers
+                indices = mesh.indices[i:i+3]
+                i0 = int(indices[0])
+                i1 = int(indices[1])
+                i2 = int(indices[2])
                 
                 # Triangle vertices in screen space
+                # Ensure indices are valid
+                if i0 >= len(screen_x) or i1 >= len(screen_x) or i2 >= len(screen_x):
+                    continue
+                    
                 x0, y0, z0 = screen_x[i0], screen_y[i0], ndc[i0, 2]
                 x1, y1, z1 = screen_x[i1], screen_y[i1], ndc[i1, 2]
                 x2, y2, z2 = screen_x[i2], screen_y[i2], ndc[i2, 2]

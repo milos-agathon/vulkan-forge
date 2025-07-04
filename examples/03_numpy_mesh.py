@@ -1,11 +1,17 @@
 """Example: Load mesh data from NumPy arrays with structured vertices."""
 
+import sys
+import os
+import logging
+
+# Add parent directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import numpy as np
 import vulkan_forge as vf
-from vulkan_forge.numpy_buffer import StructuredBuffer, create_index_buffer
-from vulkan_forge.vertex_input import VertexInputDescription
 import time
 
+logger = logging.getLogger(__name__)
 
 def create_sphere_mesh(subdivisions=4):
     """Create a UV sphere mesh using NumPy."""
@@ -92,7 +98,12 @@ def main():
     
     # Initialize
     renderer = vf.Renderer(1920, 1080)
-    allocator = vf.create_allocator()
+    # Try to create allocator
+    try:
+        allocator = vf.create_allocator() if hasattr(vf, 'create_allocator') else None
+    except Exception as e:
+        logger.warning(f"Failed to create allocator: {e}")
+        allocator = None
     
     # Create sphere mesh
     print("Creating subdivided sphere mesh...")
@@ -104,72 +115,65 @@ def main():
     print(f"  Vertices: {len(vertices):,}")
     print(f"  Triangles: {len(indices):,}")
     print(f"  Creation time: {creation_time:.2f}ms")
+
+    # Create mesh object for renderer
+    mesh = vf.Mesh(
+        vertices=vertices,
+        normals=normals,
+        uvs=texcoords,
+        indices=indices
+    )
     
-    # Create structured vertex buffer
-    print("\nCreating structured vertex buffer...")
-    vertex_dtype = np.dtype([
-        ('position', np.float32, 3),
-        ('normal', np.float32, 3),
-        ('texcoord', np.float32, 2)
-    ])
+    # Create material
+    material = vf.Material(
+        base_color=(0.8, 0.8, 0.8, 1.0),
+        metallic=0.0,
+        roughness=0.5
+    )
     
-    vertex_buffer = StructuredBuffer(allocator, vertex_dtype, len(vertices))
+    # Create light
+    light = vf.Light(
+        position=(5.0, 5.0, 5.0),
+        color=(1.0, 1.0, 1.0),
+        intensity=1.0
+    )
     
-    # Fill vertex data
-    start_time = time.perf_counter()
-    vertex_buffer['position'] = vertices
-    vertex_buffer['normal'] = normals
-    vertex_buffer['texcoord'] = texcoords
-    fill_time = (time.perf_counter() - start_time) * 1000
-    print(f"Fill time: {fill_time:.2f}ms")
-    
-    # Create index buffer
-    index_buffer = create_index_buffer(allocator, indices)
-    
-    # Set up vertex input description
-    vertex_desc = VertexInputDescription.from_dtype(vertex_dtype)
-    
-    # Create uniform buffer for transformation matrix
-    uniform_dtype = np.dtype([
-        ('model', np.float32, (4, 4)),
-        ('view', np.float32, (4, 4)),
-        ('proj', np.float32, (4, 4)),
-        ('light_dir', np.float32, 4)
-    ])
-    
-    uniforms = np.zeros(1, dtype=uniform_dtype)
     
     # Set up matrices
-    uniforms['model'] = np.eye(4, dtype=np.float32)
-    uniforms['view'] = look_at(
-        np.array([3, 3, 3], dtype=np.float32),
-        np.array([0, 0, 0], dtype=np.float32),
-        np.array([0, 1, 0], dtype=np.float32)
+    view_matrix = vf.Matrix4x4.look_at(
+        (3.0, 3.0, 3.0),  # eye - expects tuple
+        (0.0, 0.0, 0.0),  # target - expects tuple  
+        (0.0, 1.0, 0.0)   # up - expects tuple
     )
-    uniforms['proj'] = perspective(45, 1920/1080, 0.1, 100)
-    uniforms['light_dir'] = [0.577, 0.577, 0.577, 0]  # Normalized
-    
-    uniform_buffer = vf.create_uniform_buffer(allocator, uniforms)
+
+    projection_matrix = vf.Matrix4x4.perspective(np.radians(45), 1920/1080, 0.1, 100)
     
     # Render loop
     print("\nRendering...")
     frame_times = []
     
-    for frame in range(300):  # 10 seconds at 30 FPS
+    for frame in range(30):  # 1 second at 30 FPS
         frame_start = time.perf_counter()
         
-        # Animate rotation
+        # Animate rotation - create rotated vertices
         angle = frame * 0.02
-        uniforms['model'] = rotation_matrix_y(angle)
-        uniform_buffer.sync_to_gpu()
+        rotation = vf.Matrix4x4.rotation_y(angle)
+
+        # Transform vertices
+        rotated_vertices = np.empty_like(vertices)
+        for i, vertex in enumerate(vertices):
+            rotated_vertices[i] = rotation.transform_point(tuple(vertex))[:3]
+         
+        # Update mesh with rotated vertices
+        mesh.vertices = rotated_vertices
         
         # Render
-        image = renderer.render_mesh(
-            vertex_buffer.buffer,
-            index_buffer,
-            uniform_buffer,
-            vertex_desc,
-            len(indices)
+        image = renderer.render(
+            meshes=[mesh],
+            materials=[material],
+            lights=[light],
+            view_matrix=view_matrix,
+            projection_matrix=projection_matrix
         )
         
         frame_time = (time.perf_counter() - frame_start) * 1000
@@ -183,52 +187,6 @@ def main():
     vf.save_image(image, "sphere_mesh.png")
     
     print("\nDone!")
-
-
-# Helper functions for matrices
-def look_at(eye, center, up):
-    """Create view matrix."""
-    f = center - eye
-    f = f / np.linalg.norm(f)
-    
-    s = np.cross(f, up)
-    s = s / np.linalg.norm(s)
-    
-    u = np.cross(s, f)
-    
-    m = np.eye(4, dtype=np.float32)
-    m[0, :3] = s
-    m[1, :3] = u
-    m[2, :3] = -f
-    m[3, :3] = -np.dot(m[:3, :3], eye)
-    
-    return m
-
-
-def perspective(fovy, aspect, near, far):
-    """Create perspective projection matrix."""
-    f = 1.0 / np.tan(np.radians(fovy) / 2)
-    
-    m = np.zeros((4, 4), dtype=np.float32)
-    m[0, 0] = f / aspect
-    m[1, 1] = f
-    m[2, 2] = (far + near) / (near - far)
-    m[2, 3] = -1
-    m[3, 2] = (2 * far * near) / (near - far)
-    
-    return m
-
-
-def rotation_matrix_y(angle):
-    """Create Y-axis rotation matrix."""
-    c, s = np.cos(angle), np.sin(angle)
-    m = np.eye(4, dtype=np.float32)
-    m[0, 0] = c
-    m[0, 2] = s
-    m[2, 0] = -s
-    m[2, 2] = c
-    return m
-
 
 if __name__ == "__main__":
     main()

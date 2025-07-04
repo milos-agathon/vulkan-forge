@@ -110,14 +110,24 @@ except ImportError as e:
         Transform = Renderer = VulkanRenderer = CPURenderer = None
 
 try:
-    from .numpy_buffer import numpy_buffer
+    from .numpy_buffer import (
+        numpy_buffer,
+        create_uniform_buffer,
+        create_vertex_buffer,
+        create_index_buffer,
+        create_storage_buffer,
+    )
 except ImportError as e:
     _import_errors.append(f"numpy_buffer: {e}")
     try:
-        from numpy_buffer import numpy_buffer  # type: ignore
+        from numpy_buffer import numpy_buffer, create_uniform_buffer, create_vertex_buffer, create_index_buffer, create_storage_buffer  # type: ignore
     except ImportError as e2:
         _import_errors.append(f"numpy_buffer (direct): {e2}")
         numpy_buffer = None
+        create_uniform_buffer = None
+        create_vertex_buffer = None
+        create_index_buffer = None
+        create_storage_buffer = None
 
 # Check if any critical imports failed
 if _import_errors and (Matrix4x4 is None or create_renderer is None):
@@ -147,6 +157,9 @@ if DeviceManager is not None:
 
 if numpy_buffer is not None:
     __all__.append('numpy_buffer')
+
+if create_uniform_buffer is not None:
+    __all__.extend(['create_uniform_buffer', 'create_vertex_buffer', 'create_index_buffer', 'create_storage_buffer'])
 
 if 'BUFFER_USAGE_VERTEX' not in __all__:
     __all__.append('BUFFER_USAGE_VERTEX')
