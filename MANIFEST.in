@@ -1,0 +1,33 @@
+# Include documentation
+include README.md
+include LICENSE
+include AGENTS.md
+
+# Include all shader files
+recursive-include python/vulkan_forge/shaders *.glsl *.vert *.frag *.comp *.spv
+include python/vulkan_forge/shaders/embedded_spirv.py
+
+# Include C++ source files if needed for source distributions
+recursive-include cpp *.cpp *.hpp *.h
+recursive-include cpp/shaders *.glsl *.vert *.frag
+
+# Include build configuration
+include setup.py
+include setup.cfg
+include pyproject.toml
+include build.py
+
+# Include tests
+recursive-include tests *.py
+
+# Include examples
+recursive-include examples *.py
+
+# Exclude build artifacts
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .git*
+global-exclude *.so
+global-exclude *.dylib
+global-exclude *.dll
+global-exclude *.pyd

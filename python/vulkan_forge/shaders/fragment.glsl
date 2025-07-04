@@ -1,71 +1,45 @@
+// File: python/vulkan_forge/shaders/fragment.glsl
 #version 450
 
-layout(location = 0) in vec3 fragNormal;
-layout(location = 1) in vec2 fragTexCoord;
-layout(location = 2) in vec3 fragWorldPos;
+//---------------------------------------------
+// Inputs from vertex shader
+//---------------------------------------------
+layout(location = 0) in vec3 vNormal;
+layout(location = 1) in vec2 vUV;
+layout(location = 2) in vec3 vWorldPos;
 
+//---------------------------------------------
+// Output
+//---------------------------------------------
 layout(location = 0) out vec4 outColor;
 
-layout(push_constant) uniform PushConstants {
-    mat4 model;
-    mat4 view;
-    mat4 projection;
-    vec3 lightPos;
-    vec3 lightColor;
-    vec3 viewPos;
-    float metallic;
-    float roughness;
+//---------------------------------------------
+// Material push-constants (std430 for tight packing)
+// metallic  = mr.x
+// roughness = mr.y
+//---------------------------------------------
+layout(push_constant, std430) uniform PushConstants {
+    vec4 baseColor;   // rgba
+    vec2 mr;          // x = metallic, y = roughness
 } pc;
 
-vec3 fresnelSchlick(float cosTheta, vec3 F0) {
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
+//---------------------------------------------
+// Single, hard-coded directional light
+//---------------------------------------------
+const vec3 kLightDir = normalize(vec3(1.0, 1.0, 1.0));
+const vec3 kAmbient  = vec3(0.3);
 
-float distributionGGX(vec3 N, vec3 H, float roughness) {
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
-    
-    float num = a2;
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
-    denom = 3.14159265359 * denom * denom;
-    
-    return num / denom;
-}
+void main()
+{
+    vec3  N      = normalize(vNormal);
+    float NdotL  = max(dot(N, kLightDir), 0.0);
 
-float geometrySchlickGGX(float NdotV, float roughness) {
-    float r = (roughness + 1.0);
-    float k = (r * r) / 8.0;
-    
-    float num = NdotV;
-    float denom = NdotV * (1.0 - k) + k;
-    
-    return num / denom;
-}
+    // Simple Lambert diffuse + ambient
+    vec3 diffuse = pc.baseColor.rgb * NdotL;
+    vec3 color   = diffuse + pc.baseColor.rgb * kAmbient;
 
-float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float ggx2 = geometrySchlickGGX(NdotV, roughness);
-    float ggx1 = geometrySchlickGGX(NdotL, roughness);
-    
-    return ggx1 * ggx2;
-}
+    // (optional) apply gamma if swap-chain is UNORM; skip if SRGB
+    // color = pow(color, vec3(1.0/2.2));
 
-void main() {
-    // Transform position to world space
-    vec4 worldPos = ubo.model * vec4(inPosition, 1.0);
-    fragWorldPos = worldPos.xyz;
-    
-    // Transform position to clip space
-    gl_Position = ubo.proj * ubo.view * worldPos;
-    
-    // Transform normal to world space
-    mat3 normalMatrix = transpose(inverse(mat3(ubo.model)));
-    fragNormal = normalize(normalMatrix * inNormal);
-    
-    // Pass through position and UV
-    fragPosition = inPosition;
-    fragUV = inUV;
+    outColor = vec4(color, pc.baseColor.a);
 }
