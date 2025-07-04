@@ -781,8 +781,8 @@ class VulkanRenderer(Renderer):
 
         Notes
         -----
-        Accepted ``vertex_buffer`` types: ``NumpyBuffer``, ``NumpyBufferCtx``,
-        ``MultiBuffer``, or ``numpy.ndarray``.
+        Accepts any object exposing ``.array``/``._array``/``.host_view`` or a
+        ``numpy.ndarray``.
         """
         if model_matrix is None:
             model_matrix = Matrix4x4.identity()
@@ -836,7 +836,7 @@ class VulkanRenderer(Renderer):
                 logger.error("GPU indexed draw failed: %s", e)
 
         # -- resolve vertex data for CPU raster --
-        if isinstance(vertex_buffer, NumpyBuffer):
+        if hasattr(vertex_buffer, "_array"):
             verts_arr = vertex_buffer._array
         elif hasattr(vertex_buffer, "host_view"):
             verts_arr = vertex_buffer.host_view
@@ -1077,7 +1077,7 @@ class CPURenderer(Renderer):
                 index_buffer = buf
 
         # -- resolve vertex data for CPU raster --
-        if isinstance(vertex_buffer, NumpyBuffer):
+        if hasattr(vertex_buffer, "_array"):
             verts_arr = vertex_buffer._array
         elif hasattr(vertex_buffer, "host_view"):
             verts_arr = vertex_buffer.host_view
