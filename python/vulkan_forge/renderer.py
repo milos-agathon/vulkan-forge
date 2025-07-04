@@ -34,6 +34,23 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Default colour used when a material lacks a valid base_color
+_DEFAULT_BASE_COLOR = np.array([0.7, 0.7, 0.7, 1.0], dtype=np.float32)
+
+
+def _extract_base_color(material: "Material") -> Tuple[np.ndarray, float]:
+    """Return RGB array and alpha from material, falling back to defaults."""
+    try:
+        base = np.asarray(getattr(material, "base_color"), dtype=np.float32).ravel()
+        if base.size < 3:
+            raise ValueError
+        rgb = base[:3]
+        alpha = float(base[3]) if base.size > 3 else 1.0
+    except Exception:
+        rgb = _DEFAULT_BASE_COLOR[:3]
+        alpha = float(_DEFAULT_BASE_COLOR[3])
+    return rgb, alpha
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility dataclasses
@@ -712,93 +729,93 @@ class VulkanRenderer(Renderer):
         w, h = self.render_target.width, self.render_target.height
         fb = np.zeros((h, w, 4), dtype=np.float32)
         depth_buffer = np.full((h, w), np.inf, dtype=np.float32)
-        
+
         # Transform matrices
-        mvp = projection_matrix @ view_matrix
-        
-        # Rasterize each mesh
+        mvp = (projection_matrix @ view_matrix).data
+
         for mesh_idx, mesh in enumerate(meshes):
             if mesh_idx >= len(materials):
                 continue
-                
-            material = materials[mesh_idx]
-            
-            # Transform vertices
-            vertices_4d = np.hstack([mesh.vertices, np.ones((len(mesh.vertices), 1))])
-            transformed = vertices_4d @ mvp.data.T
-            
-            # Perspective division
-            w_vals = transformed[:, 3:4]
-            w_vals = np.where(np.abs(w_vals) < 1e-6, 1e-6, w_vals)
-            ndc = transformed[:, :3] / w_vals
-            
-            # Viewport transform
+
+            mat = materials[mesh_idx]
+            base_rgb, alpha = _extract_base_color(mat)
+
+            verts = np.hstack([mesh.vertices, np.ones((len(mesh.vertices), 1), dtype=np.float32)])
+            clip = verts @ mvp.T
+            w_vals = np.where(np.abs(clip[:, 3:4]) < 1e-6, 1e-6, clip[:, 3:4])
+            ndc = clip[:, :3] / w_vals
+
             screen_x = (ndc[:, 0] + 1) * w / 2
             screen_y = (1 - ndc[:, 1]) * h / 2
-            
-            # Rasterize triangles
+
             indices = np.ascontiguousarray(mesh.indices, dtype=np.int32)
             for tri in indices.reshape(-1, 3):
                 i0, i1, i2 = map(int, tri)
-                
-                # Triangle vertices in screen space
-                # Ensure indices are valid
                 if i0 >= len(screen_x) or i1 >= len(screen_x) or i2 >= len(screen_x):
                     continue
-                    
+
                 x0, y0, z0 = screen_x[i0], screen_y[i0], ndc[i0, 2]
                 x1, y1, z1 = screen_x[i1], screen_y[i1], ndc[i1, 2]
                 x2, y2, z2 = screen_x[i2], screen_y[i2], ndc[i2, 2]
-                
-                # Bounding box
+
                 min_x = max(0, int(np.floor(min(x0, x1, x2))))
                 max_x = min(w - 1, int(np.ceil(max(x0, x1, x2))))
                 min_y = max(0, int(np.floor(min(y0, y1, y2))))
                 max_y = min(h - 1, int(np.ceil(max(y0, y1, y2))))
-                
                 if min_x > max_x or min_y > max_y:
                     continue
-                
-                # Calculate edge function coefficients
+
                 area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
                 if abs(area) < 1e-6:
                     continue
 
-                # Rasterize pixels
-                for yi in range(min_y, max_y + 1):
-                    for xi in range(min_x, max_x + 1):
-                        # Barycentric coordinates
-                        w0 = ((x1 - xi) * (y2 - yi) - (y1 - yi) * (x2 - xi)) / area
-                        w1 = ((x2 - xi) * (y0 - yi) - (y2 - yi) * (x0 - xi)) / area
-                        w2 = 1 - w0 - w1
+                xs = np.arange(min_x, max_x + 1)
+                ys = np.arange(min_y, max_y + 1)
+                xi, yi = np.meshgrid(xs, ys)
 
-                        if w0 >= 0 and w1 >= 0 and w2 >= 0:
-                            # Interpolate depth
-                            z = w0 * z0 + w1 * z1 + w2 * z2
-                            
-                            # Depth test
-                            if z < depth_buffer[yi, xi]:
-                                depth_buffer[yi, xi] = z
-                                
-                                # Interpolate normal
-                                normal = np.array([0, 0, 1])  # Default normal
-                                if i0 < len(mesh.normals) and i1 < len(mesh.normals) and i2 < len(mesh.normals):
-                                    normal = mesh.normals[i0] * w0 + mesh.normals[i1] * w1 + mesh.normals[i2] * w2
-                                    norm_len = np.linalg.norm(normal)
-                                    if norm_len > 1e-10:
-                                        normal = normal / norm_len
-                                
-                                # Basic lighting
-                                color = np.array(material.base_color[:3]) * 0.3  # Ambient
-                                for light in lights:
-                                    light_dir = np.array(light.position)
-                                    light_dir = light_dir / (np.linalg.norm(light_dir) + 1e-10)
-                                    diffuse = max(0, np.dot(normal, light_dir))
-                                    color = color + np.array(material.base_color[:3]) * diffuse * 0.7
-                                
-                                fb[yi, xi, :3] = np.clip(color, 0, 1)
-                                fb[yi, xi, 3] = material.base_color[3]
-        
+                w0 = ((x1 - xi) * (y2 - yi) - (y1 - yi) * (x2 - xi)) / area
+                w1 = ((x2 - xi) * (y0 - yi) - (y2 - yi) * (x0 - xi)) / area
+                w2 = 1.0 - w0 - w1
+                mask = (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
+                if not np.any(mask):
+                    continue
+
+                z = w0 * z0 + w1 * z1 + w2 * z2
+                depth = depth_buffer[min_y:max_y + 1, min_x:max_x + 1]
+                depth_mask = mask & (z < depth)
+                if not np.any(depth_mask):
+                    continue
+                depth[depth_mask] = z[depth_mask]
+
+                if len(mesh.normals):
+                    n0 = mesh.normals[i0]
+                    n1 = mesh.normals[i1]
+                    n2 = mesh.normals[i2]
+                    normal = n0 * w0[..., None] + n1 * w1[..., None] + n2 * w2[..., None]
+                    nlen = np.linalg.norm(normal, axis=2, keepdims=True)
+                    normal = np.divide(normal, nlen, out=np.zeros_like(normal), where=nlen > 1e-10)
+                else:
+                    normal = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+                    normal = np.broadcast_to(normal, (*w0.shape, 3))
+
+                if not lights:
+                    color = np.broadcast_to(base_rgb, (*w0.shape, 3)).astype(np.float32)
+                else:
+                    color = base_rgb * 0.3
+                    color = np.broadcast_to(color, (*w0.shape, 3)).astype(np.float32)
+                    for light in lights:
+                        ldir = np.array(light.position, dtype=np.float32)
+                        lnorm = np.linalg.norm(ldir)
+                        if lnorm > 1e-10:
+                            ldir = ldir / lnorm
+                            diffuse = np.maximum(0.0, np.sum(normal * ldir, axis=2))
+                            color += base_rgb * diffuse[..., None] * 0.7
+
+                fb_slice = fb[min_y:max_y + 1, min_x:max_x + 1]
+                color = np.clip(color, 0, 1)
+                fb_slice[depth_mask, :3] = color[depth_mask]
+                fb_slice[depth_mask, 3] = alpha
+
         return (fb * 255).astype(np.uint8)
 
     # ─────────────────────────────────────────────────────────────────────
@@ -844,89 +861,92 @@ class CPURenderer(Renderer):
         w, h = self.render_target.width, self.render_target.height
         fb = np.zeros((h, w, 4), dtype=np.float32)
         depth_buffer = np.full((h, w), np.inf, dtype=np.float32)
-        
-        # Transform matrices
-        mvp = projection_matrix @ view_matrix
-        
-        # Simple rasterization for each mesh
+
+        mvp = (projection_matrix @ view_matrix).data
+
         for mesh_idx, mesh in enumerate(meshes):
             if mesh_idx >= len(materials):
                 continue
-                
-            material = materials[mesh_idx]
-            
-            # Transform vertices
-            vertices_4d = np.hstack([mesh.vertices, np.ones((len(mesh.vertices), 1))])
-            transformed = vertices_4d @ mvp.data.T
-            
-            # Perspective division
-            w_vals = transformed[:, 3:4]
-            w_vals = np.where(np.abs(w_vals) < 1e-6, 1e-6, w_vals)
-            ndc = transformed[:, :3] / w_vals
-            
-            # Viewport transform
+
+            mat = materials[mesh_idx]
+            base_rgb, alpha = _extract_base_color(mat)
+
+            verts = np.hstack([mesh.vertices, np.ones((len(mesh.vertices), 1), dtype=np.float32)])
+            clip = verts @ mvp.T
+            w_vals = np.where(np.abs(clip[:, 3:4]) < 1e-6, 1e-6, clip[:, 3:4])
+            ndc = clip[:, :3] / w_vals
+
             screen_x = (ndc[:, 0] + 1) * w / 2
             screen_y = (1 - ndc[:, 1]) * h / 2
-            
-            # Rasterize triangles
+
             indices = np.ascontiguousarray(mesh.indices, dtype=np.int32)
             for tri in indices.reshape(-1, 3):
                 i0, i1, i2 = map(int, tri)
-                
-                # Triangle vertices in screen space
+                if i0 >= len(screen_x) or i1 >= len(screen_x) or i2 >= len(screen_x):
+                    continue
+
                 x0, y0, z0 = screen_x[i0], screen_y[i0], ndc[i0, 2]
                 x1, y1, z1 = screen_x[i1], screen_y[i1], ndc[i1, 2]
                 x2, y2, z2 = screen_x[i2], screen_y[i2], ndc[i2, 2]
-                
-                # Bounding box
+
                 min_x = max(0, int(np.floor(min(x0, x1, x2))))
                 max_x = min(w - 1, int(np.ceil(max(x0, x1, x2))))
                 min_y = max(0, int(np.floor(min(y0, y1, y2))))
                 max_y = min(h - 1, int(np.ceil(max(y0, y1, y2))))
-                
                 if min_x > max_x or min_y > max_y:
                     continue
-                
-                # Calculate edge function coefficients
+
                 area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
                 if abs(area) < 1e-6:
                     continue
-                
-                # Rasterize pixels
-                for yi in range(min_y, max_y + 1):
-                    for xi in range(min_x, max_x + 1):
-                        # Barycentric coordinates
-                        w0 = ((x1 - xi) * (y2 - yi) - (y1 - yi) * (x2 - xi)) / area
-                        w1 = ((x2 - xi) * (y0 - yi) - (y2 - yi) * (x0 - xi)) / area
-                        w2 = 1 - w0 - w1
 
-                        if w0 >= 0 and w1 >= 0 and w2 >= 0:
-                            # Interpolate depth
-                            z = w0 * z0 + w1 * z1 + w2 * z2
-                            
-                            # Depth test
-                            if z < depth_buffer[yi, xi]:
-                                depth_buffer[yi, xi] = z
-                                
-                                # Simple shading
-                                normal = np.array([0, 0, 1])  # Default normal
-                                if i0 < len(mesh.normals) and i1 < len(mesh.normals) and i2 < len(mesh.normals):
-                                    normal = mesh.normals[i0] * w0 + mesh.normals[i1] * w1 + mesh.normals[i2] * w2
-                                    norm_len = np.linalg.norm(normal)
-                                    if norm_len > 1e-10:
-                                        normal = normal / norm_len
-                                
-                                # Basic lighting
-                                color = np.array(material.base_color[:3]) * 0.3  # Ambient
-                                for light in lights:
-                                    light_dir = np.array(light.position)
-                                    light_dir = light_dir / (np.linalg.norm(light_dir) + 1e-10)
-                                    diffuse = max(0, np.dot(normal, light_dir))
-                                    color = color + np.array(material.base_color[:3]) * diffuse * 0.7
-                                
-                                fb[yi, xi, :3] = np.clip(color, 0, 1)
-                                fb[yi, xi, 3] = material.base_color[3]
-        
+                xs = np.arange(min_x, max_x + 1)
+                ys = np.arange(min_y, max_y + 1)
+                xi, yi = np.meshgrid(xs, ys)
+
+                w0 = ((x1 - xi) * (y2 - yi) - (y1 - yi) * (x2 - xi)) / area
+                w1 = ((x2 - xi) * (y0 - yi) - (y2 - yi) * (x0 - xi)) / area
+                w2 = 1.0 - w0 - w1
+                mask = (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
+                if not np.any(mask):
+                    continue
+
+                z = w0 * z0 + w1 * z1 + w2 * z2
+                depth = depth_buffer[min_y:max_y + 1, min_x:max_x + 1]
+                depth_mask = mask & (z < depth)
+                if not np.any(depth_mask):
+                    continue
+                depth[depth_mask] = z[depth_mask]
+
+                if len(mesh.normals):
+                    n0 = mesh.normals[i0]
+                    n1 = mesh.normals[i1]
+                    n2 = mesh.normals[i2]
+                    normal = n0 * w0[..., None] + n1 * w1[..., None] + n2 * w2[..., None]
+                    nlen = np.linalg.norm(normal, axis=2, keepdims=True)
+                    normal = np.divide(normal, nlen, out=np.zeros_like(normal), where=nlen > 1e-10)
+                else:
+                    normal = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+                    normal = np.broadcast_to(normal, (*w0.shape, 3))
+
+                if not lights:
+                    color = np.broadcast_to(base_rgb, (*w0.shape, 3)).astype(np.float32)
+                else:
+                    color = base_rgb * 0.3
+                    color = np.broadcast_to(color, (*w0.shape, 3)).astype(np.float32)
+                    for light in lights:
+                        ldir = np.array(light.position, dtype=np.float32)
+                        lnorm = np.linalg.norm(ldir)
+                        if lnorm > 1e-10:
+                            ldir = ldir / lnorm
+                            diffuse = np.maximum(0.0, np.sum(normal * ldir, axis=2))
+                            color += base_rgb * diffuse[..., None] * 0.7
+
+                fb_slice = fb[min_y:max_y + 1, min_x:max_x + 1]
+                color = np.clip(color, 0, 1)
+                fb_slice[depth_mask, :3] = color[depth_mask]
+                fb_slice[depth_mask, 3] = alpha
+
         return (fb * 255).astype(np.uint8)
 
     def cleanup(self) -> None:
