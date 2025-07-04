@@ -6,7 +6,7 @@ from vulkan_forge.numpy_buffer import numpy_buffer
 import time
 
 
-def generate_point_cloud(n_points=1_000_000):
+def generate_point_cloud(n_points=10_000):
     """Generate a random 3D point cloud."""
     # Generate random points in a sphere
     # Using spherical coordinates for better distribution
@@ -42,7 +42,7 @@ def main():
     # Generate point cloud
     print(f"Generating 1 million points...")
     start_time = time.perf_counter()
-    points, colors = generate_point_cloud(1_000_000)
+    points, colors = generate_point_cloud(10_000)
     generation_time = (time.perf_counter() - start_time) * 1000
     print(f"Generation time: {generation_time:.2f}ms")
     

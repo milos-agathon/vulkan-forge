@@ -143,7 +143,7 @@ def main():
     update_times = []
     sync_times = []
     
-    for frame in range(600):  # 20 seconds at 30 FPS
+    for frame in range(120):  # 20 seconds at 30 FPS
         frame_start = time.perf_counter()
         
         # Update simulation
