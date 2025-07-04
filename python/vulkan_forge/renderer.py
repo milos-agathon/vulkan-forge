@@ -820,6 +820,9 @@ class VulkanRenderer(Renderer):
         index_buffer : Any
             Source index buffer or index count.
 
+        model_matrix, view_matrix, projection_matrix : Matrix4x4
+            4×4 transformation matrices applied in that order.
+
         Notes
         -----
         Accepts any object exposing ``.array``/``._array``/``.host_view`` or a
@@ -981,6 +984,7 @@ class VulkanRenderer(Renderer):
 
             mat = materials[mesh_idx]
             base_rgb, alpha = _extract_base_color(mat)
+            base_rgb[:] = 0.5
 
             verts = np.hstack(
                 [mesh.vertices, np.ones((len(mesh.vertices), 1), dtype=np.float32)]
@@ -996,6 +1000,9 @@ class VulkanRenderer(Renderer):
             for tri in indices.reshape(-1, 3):
                 i0, i1, i2 = map(int, tri)
                 if i0 >= len(screen_x) or i1 >= len(screen_x) or i2 >= len(screen_x):
+                    continue
+                tri_ndc = ndc[[i0, i1, i2]]
+                if not np.any(np.all(np.abs(tri_ndc) <= 1, axis=1)):
                     continue
 
                 x0, y0, z0 = screen_x[i0], screen_y[i0], ndc[i0, 2]
@@ -1204,6 +1211,7 @@ class CPURenderer(Renderer):
 
             mat = materials[mesh_idx]
             base_rgb, alpha = _extract_base_color(mat)
+            base_rgb[:] = 0.5
 
             verts = np.hstack(
                 [mesh.vertices, np.ones((len(mesh.vertices), 1), dtype=np.float32)]
@@ -1219,6 +1227,9 @@ class CPURenderer(Renderer):
             for tri in indices.reshape(-1, 3):
                 i0, i1, i2 = map(int, tri)
                 if i0 >= len(screen_x) or i1 >= len(screen_x) or i2 >= len(screen_x):
+                    continue
+                tri_ndc = ndc[[i0, i1, i2]]
+                if not np.any(np.all(np.abs(tri_ndc) <= 1, axis=1)):
                     continue
 
                 x0, y0, z0 = screen_x[i0], screen_y[i0], ndc[i0, 2]
