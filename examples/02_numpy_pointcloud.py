@@ -42,7 +42,7 @@ def main():
     # Generate point cloud
     print(f"Generating 1 million points...")
     start_time = time.perf_counter()
-    points, colors = generate_point_cloud(10_000)
+    points, colors = generate_point_cloud(1_000_000)
     generation_time = (time.perf_counter() - start_time) * 1000
     print(f"Generation time: {generation_time:.2f}ms")
 
