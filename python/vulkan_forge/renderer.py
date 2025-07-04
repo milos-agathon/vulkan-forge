@@ -737,15 +737,9 @@ class VulkanRenderer(Renderer):
             screen_y = (1 - ndc[:, 1]) * h / 2
             
             # Rasterize triangles
-            for i in range(0, len(mesh.indices), 3):
-                if i + 2 >= len(mesh.indices):
-                    break
-                    
-                # Convert indices to integers
-                indices = mesh.indices[i:i+3]
-                i0 = int(indices[0])
-                i1 = int(indices[1])
-                i2 = int(indices[2])
+            indices = np.ascontiguousarray(mesh.indices, dtype=np.int32)
+            for tri in indices.reshape(-1, 3):
+                i0, i1, i2 = map(int, tri)
                 
                 # Triangle vertices in screen space
                 # Ensure indices are valid
@@ -875,11 +869,9 @@ class CPURenderer(Renderer):
             screen_y = (1 - ndc[:, 1]) * h / 2
             
             # Rasterize triangles
-            for i in range(0, len(mesh.indices), 3):
-                if i + 2 >= len(mesh.indices):
-                    break
-                    
-                i0, i1, i2 = mesh.indices[i:i+3]
+            indices = np.ascontiguousarray(mesh.indices, dtype=np.int32)
+            for tri in indices.reshape(-1, 3):
+                i0, i1, i2 = map(int, tri)
                 
                 # Triangle vertices in screen space
                 x0, y0, z0 = screen_x[i0], screen_y[i0], ndc[i0, 2]
