@@ -770,14 +770,12 @@ class VulkanRenderer(Renderer):
         projection_matrix: Optional[Matrix4x4] = None,
         wireframe: bool = False,
     ) -> np.ndarray:
-        """Render indexed geometry from buffers.
+        """Render indexed geometry.
 
-        Parameters
-        ----------
-        vertex_buffer : Any
-            Vertex data as ``NumpyBuffer`` or ``np.ndarray``.
-        index_buffer : NumpyBuffer | np.ndarray | int
-            Index data or raw element count when already bound on GPU.
+        Accepts ``NumpyBuffer`` objects, ``MultiBuffer`` wrappers exposing a
+        ``host_view`` or ``array`` attribute, or plain ``numpy.ndarray``. If a
+        raw GPU handle is provided, CPU fallback is unavailable and a
+        ``TypeError`` is raised.
         """
         if model_matrix is None:
             model_matrix = Matrix4x4.identity()
@@ -791,6 +789,9 @@ class VulkanRenderer(Renderer):
         if isinstance(index_buffer, NumpyBuffer):
             index_count = index_buffer.count
             idx_ptr = index_buffer.gpu_buffer or None
+        elif hasattr(index_buffer, "host_view"):
+            index_count = getattr(index_buffer.host_view, "size", 0)
+            idx_ptr = getattr(index_buffer, "gpu_buffer", None)
         elif isinstance(index_buffer, np.ndarray):
             index_count = index_buffer.size
             idx_ptr = None
@@ -827,15 +828,29 @@ class VulkanRenderer(Renderer):
             except Exception as e:
                 logger.error("GPU indexed draw failed: %s", e)
 
-        vertices = np.asarray(
-            getattr(vertex_buffer, "_array", vertex_buffer), dtype=np.float32
-        )
-        if isinstance(index_buffer, int):
-            indices = np.arange(index_count, dtype=np.int32)
+        if isinstance(vertex_buffer, NumpyBuffer):
+            verts_arr = vertex_buffer._array
+        elif hasattr(vertex_buffer, "host_view"):
+            verts_arr = vertex_buffer.host_view
+        elif isinstance(vertex_buffer, np.ndarray):
+            verts_arr = vertex_buffer
         else:
-            indices = np.asarray(
-                getattr(index_buffer, "_array", index_buffer), dtype=np.int32
-            )
+            raise TypeError("Unsupported vertex_buffer type for CPU rendering")
+
+        vertices = np.asarray(verts_arr, dtype=np.float32, order="C", copy=False)
+
+        if isinstance(index_buffer, NumpyBuffer):
+            idx_arr = index_buffer._array
+        elif hasattr(index_buffer, "host_view"):
+            idx_arr = index_buffer.host_view
+        elif isinstance(index_buffer, np.ndarray):
+            idx_arr = index_buffer
+        elif isinstance(index_buffer, int):
+            idx_arr = np.arange(index_count, dtype=np.int32)
+        else:
+            raise TypeError("index_buffer must be NumpyBuffer, numpy.ndarray or int")
+
+        indices = np.asarray(idx_arr, dtype=np.int32, order="C", copy=False)
         verts = np.hstack([vertices, np.ones((len(vertices), 1), dtype=np.float32)])
         world = verts @ model_matrix.data.T
         mesh = Mesh(
@@ -1048,17 +1063,33 @@ class CPURenderer(Renderer):
             ):
                 index_buffer = buf
 
-        vertices = np.asarray(
-            getattr(vertex_buffer, "_array", vertex_buffer), dtype=np.float32
-        )
-        if isinstance(index_buffer, int):
-            index_count = index_buffer
-            indices = np.arange(index_count, dtype=np.int32)
+        if isinstance(vertex_buffer, NumpyBuffer):
+            verts_arr = vertex_buffer._array
+        elif hasattr(vertex_buffer, "host_view"):
+            verts_arr = vertex_buffer.host_view
+        elif isinstance(vertex_buffer, np.ndarray):
+            verts_arr = vertex_buffer
         else:
-            index_count = len(getattr(index_buffer, "_array", index_buffer))
-            indices = np.asarray(
-                getattr(index_buffer, "_array", index_buffer), dtype=np.int32
-            )
+            raise TypeError("Unsupported vertex_buffer type for CPU rendering")
+
+        vertices = np.asarray(verts_arr, dtype=np.float32, order="C", copy=False)
+
+        if isinstance(index_buffer, NumpyBuffer):
+            idx_arr = index_buffer._array
+            index_count = len(idx_arr)
+        elif hasattr(index_buffer, "host_view"):
+            idx_arr = index_buffer.host_view
+            index_count = len(idx_arr)
+        elif isinstance(index_buffer, np.ndarray):
+            idx_arr = index_buffer
+            index_count = len(idx_arr)
+        elif isinstance(index_buffer, int):
+            index_count = index_buffer
+            idx_arr = np.arange(index_count, dtype=np.int32)
+        else:
+            raise TypeError("index_buffer must be NumpyBuffer, numpy.ndarray or int")
+
+        indices = np.asarray(idx_arr, dtype=np.int32, order="C", copy=False)
 
         verts = np.hstack([vertices, np.ones((len(vertices), 1), dtype=np.float32)])
         world = verts @ model_matrix.data.T
