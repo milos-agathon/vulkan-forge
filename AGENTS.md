@@ -1,157 +1,182 @@
 # AGENTS.md
 
-## Project Scope & Architecture
+<!--
+AGENTS.md ────────────────────────────────────────────────────────────────────
+This file is parsed automatically by AI coding agents (e.g. OpenAI Codex,
+GitHub Copilot Agents). Keep it **authoritative & current**. A stale
+AGENTS.md ⇒ stale AI output.
+-->
 
-* **Purpose** *Vulkan-Forge* provides a high-performance Vulkan GPU backend for
-  ray-tracing and real-time rendering, with a Pythonic front-end and C++20 core.
-* **High-level data-flow**
+# 🛠️ Vulkan‑Forge — Machine‑Readable Developer Manual 
+
+## 1  Project Scope & Architecture
+
+* **Purpose**  A high‑performance Vulkan backend for ray‑tracing and real‑time
+  rendering, with a Pythonic façade and a C++20 core.
+* **High‑level data‑flow**
 
 ```
-Python API (python/vulkan_forge)
-     │  ⤷ pybind11 bindings ↔ C++ core (cpp/src, cpp/include/vf)
-     │
-examples/    → user demos / benchmarks
-tests/       → pytest suite (CPU + GPU)
-assets/      → pre-compiled SPIR-V shaders
+python/vulkan_forge                 ← public API, helper glue
+   │   ⤷ pybind11 ↔ cpp/src, cpp/include/vf
+   │
+examples/        → user demos / perf benchmarks
+assets/          → pre‑compiled SPIR‑V shaders
+ tests/          → pytest suite (CPU + GPU)
 ```
 
-* **When to edit where**
-
-  | Task type                           | Primary location(s)                             |
-  | ----------------------------------- | ----------------------------------------------- |
-  | New Python-side utility             | `python/vulkan_forge/*.py`                      |
-  | Perf-critical feature / Vulkan call | `cpp/src/*.cpp` + `*.hpp`                       |
-  | Shader tweak                        | `cpp/shaders/*.glsl` → run `compile_shaders.py` |
-  | Example / docs                      | `examples/*.py` / `README.md`                   |
-  | Unit / perf test                    | `tests/` (pytest)                               |
-
-## Setup & Dependencies
-
-1. **System** Windows 10/11 64-bit (tested), Visual Studio 2022 Build Tools.
-   Linux ≥ GLIBC 2.34 + `clang 15` also supported (CI matrix).
-2. **Required SDKs**
-
-   ```bash
-   # Vulkan SDK 1.3.x – set env var
-   choco install vulkan-sdk
-   setx VULKAN_SDK "C:\VulkanSDK\1.3.xxx.x"
-   ```
-3. **Python 3.9 – 3.12** with pip ≥ 23.
-4. **Build & install (editable)**
-
-   ```bash
-   # From repo root
-   pip install -e .[dev]        # compiles C++ extension via CMake
-   python python/vulkan_forge/compile_shaders.py
-   ```
-
-   *Installs pytest, flake8, mypy, black, and clang-format hooks.*
-
-## Build / Run / Test Commands
-
-| Purpose            | Command (run from repo root)                                                  |
-| ------------------ | ----------------------------------------------------------------------------- |
-| **Full build**     | `pip install -e .`                                                            |
-| **Run unit tests** | `pytest -q` (GPU tests auto-skip if no device)                                |
-| **Lint (Python)**  | `flake8 python tests`                                                         |
-| **Type-check**     | `mypy python/vulkan_forge`                                                    |
-| **Format**         | `black python tests`  ·  `clang-format -i cpp/src/*.cpp cpp/include/vf/*.hpp` |
-| **Perf suite**     | `pytest -m performance -q`                                                    |
-
-Agents **must** run **all** commands above and fix any failures before considering a task complete.
-
-## Coding Conventions
-
-### Python
-
-* PEP 8 via **Black** (line ≤ 120, 4-space indent).
-* Snake\_case for functions & variables; PascalCase for classes.
-* Use `typing` throughout; public APIs require full type hints.
-* Docstrings → Google style.
-
-### C++20
-
-* Classes & structs → PascalCase (`HeightFieldRenderer`).
-* Methods & free functions → snake\_case (`set_vertex_buffer`).
-* Member variables prefix `m_`.
-* RAII required: manage all Vulkan handles via helper wrappers in
-  `vk_common.hpp` / `vma_util.hpp`.
-* Do **not** throw across the C++/Python boundary—return error codes or
-  raise in bindings.
-
-### Git Hygiene
-
-* Commit message prefix `[Fix]`, `[Feat]`, `[Refactor]`, `[Docs]`, `[Tests]`.
-* One logical change per PR; reference issues (`Fixes #123`).
-
-## Performance Guidelines
-
-* Heavy math → NumPy or C++ (`numpy_bridge.hpp`)—**never** Python loops for
-
-  > 1 k elements.
-* Minimise GPU ↔ CPU transfers inside render loops.
-* Re-use Vulkan pipelines & descriptor sets; avoid per-frame recreation.
-* If adding new GPU memory allocations, route through **VulkanMemoryAllocator
-  (VMA)** abstractions in `vma_util.*`.
-* Use staging buffers for large resource uploads > 8 MiB.
-
-## Known Pitfalls & Tips
-
-* Always call `vkDeviceWaitIdle` **before** destroying swapchain resources.
-* Coordinate system is **Y-up** (shader code assumes this).
-* `renderer.render()` auto-falls back to CPU if device init fails—do **not**
-  remove fallback path.
-* Shaders live in `cpp/shaders/`; after editing GLSL, run
-  `python python/vulkan_forge/compile_shaders.py` to regenerate SPIR-V.
-
-## Pull-Request Checklist
-
-1. Code builds (`pip install -e .` succeeds)
-2. `pytest -q` passes, no skips introduced
-3. `flake8` + `mypy` clean
-4. GPU code tested on at least one Vulkan 1.3 device (use `examples/`)
-5. Docs & CHANGELOG updated where relevant
-6. AGENTS.md updated **if** build/test/style/workflow rules changed
-
-## Frequently Used Symbols
-
-| Python Constant        | Meaning                                 |
-| ---------------------- | --------------------------------------- |
-| `BUFFER_USAGE_VERTEX`  | `vk.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT`  |
-| `BUFFER_USAGE_INDEX`   | `vk.VK_BUFFER_USAGE_INDEX_BUFFER_BIT`   |
-| `BUFFER_USAGE_STORAGE` | `vk.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT` |
-
-## Command Snippets & Examples
-
-<details><summary>Compile & run a demo (GPU)</summary>
-
-```bash
-# Create virtualenv, install deps, and run cube demo
-python -m venv vforge-env
-.\vforge-env\Scripts\activate
-pip install -e .[dev]
-python examples/01_render_cube.py --frames 120
-```
-
-</details>
-
-<details><summary>Create a new C++ feature and expose it to Python</summary>
-
-1. Implement in `cpp/src/my_feature.cpp` + header.
-2. Bind via `bindings.cpp` with pybind11.
-3. Re-run `pip install -e .` (wheel rebuilds).
-4. Add Python wrapper in `python/vulkan_forge/my_feature.py`.
-5. Write tests in `tests/test_my_feature.py`.
-
-</details>
+| Task type                           | Touch these files                               |
+| ----------------------------------- | ----------------------------------------------- |
+| Python utility / helper             | `python/vulkan_forge/*.py`                      |
+| Perf‑critical feature / Vulkan call | `cpp/src/*.cpp`, `cpp/include/vf/*.hpp`         |
+| Shader tweak                        | `cpp/shaders/*.glsl` → run `compile_shaders.py` |
+| Docs / examples                     | `examples/*.py`, `README.md`                    |
+| Unit or perf test                   | `tests/` (pytest ‑m performance)                |
 
 ---
 
-### How to Update This File
+## 2  Setup & Dependencies
 
-* **Edit in the same PR** that changes build/tests/conventions.
-* Keep bullet points concise; reference external docs for long explanations.
+> Agents **must** replicate these steps in CI containers or devboxes.
+
+1. **System**  Windows 10/11 x64 (Visual Studio 2022) or Linux (GLIBC ≥ 2.34,
+   `clang 15`).  GPU driver ≥ Vulkan 1.3.
+2. **SDKs / Tooling**
+
+   ```bash
+   # Vulkan SDK
+   choco install vulkan-sdk  # Windows
+   # or
+   sudo apt install vulkan-sdk             # Linux
+
+   # Optional: RenderDoc + Nsight for GPU debugging
+   ```
+3. **Python 3.9 – 3.12** + pip ≥ 23.
+4. **Editable install & shader build**
+
+   ```bash
+   pip install -e .[dev]          # builds native extension via CMake
+   python python/vulkan_forge/compile_shaders.py  # regenerates SPIR‑V
+   ```
+
+   Installs: pytest, mypy, ruff, black, clang‑format pre‑commit hooks.
+
+---
+
+## 3  Build / Run / Test Commands
+
+| Purpose            | Command                                                         |
+| ------------------ | --------------------------------------------------------------- |
+| Full build         | `pip install -e .`                                              |
+| Unit tests         | `pytest -q`  (GPU tests auto‑skip)                              |
+| Lint (Python)      | `ruff check python tests`                                       |
+| Type‑check         | `mypy python/vulkan_forge`                                      |
+| Format             | `black python tests` · `clang-format -i cpp/src cpp/include/vf` |
+| Perf suite         | `pytest -m performance -q`                                      |
+| Flamegraph (Linux) | `scripts/profile_flamegraph.sh render_demo`                     |
+
+Agents **must** run every command above and resolve failures **before** closing a task.
+
+---
+
+## 4  Coding Conventions
+
+### 4.1 Python
+
+* Black‑formatted, line ≤ 120.
+* snake\_case for funcs/vars; PascalCase for classes.
+* Full `typing` on all publiс APIs.
+* Docstrings → **Google style**.
+* Prefer `loguru` logger wrappers in `python/vulkan_forge/log.py`.
+
+### 4.2 C++20
+
+* Header‑only helpers in `vf/detail/*.hpp` where practical.
+* RAII mandatory for all Vulkan handles—use wrappers in `vk_common.hpp` / `vma_util.hpp`.
+* Avoid throwing across C++/Python boundary—return error codes and raise on Python side.
+* Optimisation flags: `-O3 -march=native -flto` (MSVC `/O2 /GL`).
+
+### 4.3 Git Hygiene
+
+* Prefix commits with `[Fix]`, `[Feat]`, `[Refactor]`, `[Perf]`, `[Docs]`, `[Tests]`.
+* One logical change per PR; reference issues (`Fixes #123`).
+
+---
+
+## 5  AI Agent Playbook  🚀
+
+| Scenario             | Recommended prompt snippet                                                          |
+| -------------------- | ----------------------------------------------------------------------------------- |
+| Generate new feature | "Add a function `foo_bar` in `python/vulkan_forge/…` that … — follow style guide."  |
+| Debug failing test   | "`pytest -q` fails at `test_allocator` with … — propose patch and update tests."    |
+| Optimise hot loop    | "Profile shows `transfer_vertices` dominates — refactor in C++ with pybind11."      |
+| Remove duplication   | "Find funcs with identical bodies in `*.py`; consolidate and update imports/tests." |
+
+When creating patches the agent **must**:
+
+1. Include **context lines** for reliable patching.
+2. Update/append **unit tests**.
+3. Run **all** build + test commands (section 3).
+4. Mention changed files in PR description.
+
+---
+
+## 6  Debugging & Profiling Cheatsheet
+
+### 6.1 GPU / Vulkan
+
+* Enable validation layers: `set VF_ENABLE_VALIDATION=1` or `export VF_ENABLE_VALIDATION=1`.
+* Capture a frame: `render_demo.py --capture my.rdc` and open in **RenderDoc**.
+* Memory leaks: run with `VK_INSTANCE_LAYERS=VK_LAYER_LUNARG_device_simulation` + `vktrace`.
+
+### 6.2 Native Extension
+
+* Rebuild in **Debug**: `pip install -e . --config-settings build_type=Debug`.
+* Check missing symbols with `dumpbin /exports _vulkan_forge_native.pyd` (Win) or `nm -g` (Linux).
+
+### 6.3 CPU Profiling
+
+* Linux: `perf record -g -- python examples/…` → `perf script | flamegraph.pl > flame.svg`.
+* Windows: **VTune** project template in `scripts/vtune/tpl.vproj`.
+
+---
+
+## 7  Performance Guidelines
+
+* Heavy math → NumPy vectorised or C++ (never Python loops > 1k).
+* Re‑use pipelines & descriptor sets; avoid per‑frame recreation.
+* All GPU allocations through **VMA** wrappers.
+* Use **staging buffers** for uploads > 8 MiB.
+* Batch `vkCmdPipelineBarrier` calls.
+
+---
+
+## 8  Known Pitfalls & Quick Fixes
+
+| Symptom                               | Likely cause / fix                                               |
+| ------------------------------------- | ---------------------------------------------------------------- |
+| `create_allocator unavailable`        | Native module built without VMA; rebuild with `-DVF_WITH_VMA=ON` |
+| `VK_ERROR_DEVICE_LOST` on laptop GPUs | Discrete GPU selected while on battery – force `--integrated`.   |
+| Blank window on first frame           | Forgot to `vkDeviceWaitIdle` before swapchain rebuild.           |
+
+---
+
+## 9  Pull‑Request Checklist
+
+1. Build & install succeeds (`pip install -e .`).
+2. `pytest -q` passes—no new skips.
+3. `ruff`, `mypy` clean.
+4. GPU path tested on at least one Vulkan 1.3 device.
+5. Docs & CHANGELOG updated.
+6. **AGENTS.md** updated if workflow, build, or style rules changed.
+
+---
+
+## 10  How to Update This File
+
+* Edit in the **same PR** that changes build/tests/workflow.
+* Keep bullets concise; external links for deep dives.
 * Run `markdownlint-cli2 AGENTS.md` before commit.
+
 
 ---
 
