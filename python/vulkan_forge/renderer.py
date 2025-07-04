@@ -783,6 +783,7 @@ class VulkanRenderer(Renderer):
         -----
         Accepts any object exposing ``.array``/``._array``/``.host_view`` or a
         ``numpy.ndarray``.
+        Compatible with NumPy 1.x / 2.x; uses ``copy='if_needed'``.
         """
         if model_matrix is None:
             model_matrix = Matrix4x4.identity()
@@ -856,7 +857,7 @@ class VulkanRenderer(Renderer):
                 "MultiBuffer, NumpyBufferCtx, or ndarray."
             )
 
-        verts_arr = np.asarray(verts_arr, dtype=np.float32, order="C", copy=False)
+        verts_arr = np.asarray(verts_arr, dtype=np.float32, order="C", copy="if_needed")
         vertices = verts_arr
 
         if isinstance(index_buffer, NumpyBuffer):
@@ -880,7 +881,7 @@ class VulkanRenderer(Renderer):
         else:
             raise TypeError("index_buffer must be NumpyBuffer, numpy.ndarray or int")
 
-        indices = np.asarray(idx_arr, dtype=np.int32, order="C", copy=False)
+        indices = np.asarray(idx_arr, dtype=np.int32, order="C", copy="if_needed")
         verts = np.hstack([vertices, np.ones((len(vertices), 1), dtype=np.float32)])
         world = verts @ model_matrix.data.T
         mesh = Mesh(
@@ -1115,7 +1116,7 @@ class CPURenderer(Renderer):
                 "MultiBuffer, NumpyBufferCtx, or ndarray."
             )
 
-        verts_arr = np.asarray(verts_arr, dtype=np.float32, order="C", copy=False)
+        verts_arr = np.asarray(verts_arr, dtype=np.float32, order="C", copy="if_needed")
         vertices = verts_arr
 
         if isinstance(index_buffer, NumpyBuffer):
@@ -1133,7 +1134,7 @@ class CPURenderer(Renderer):
         else:
             raise TypeError("index_buffer must be NumpyBuffer, numpy.ndarray or int")
 
-        indices = np.asarray(idx_arr, dtype=np.int32, order="C", copy=False)
+        indices = np.asarray(idx_arr, dtype=np.int32, order="C", copy="if_needed")
 
         verts = np.hstack([vertices, np.ones((len(vertices), 1), dtype=np.float32)])
         world = verts @ model_matrix.data.T
