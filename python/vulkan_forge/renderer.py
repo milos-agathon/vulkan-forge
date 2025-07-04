@@ -781,9 +781,8 @@ class VulkanRenderer(Renderer):
 
         Notes
         -----
-        CPU fallback accepts ``NumpyBuffer`` (``._array``), ``NumpyBufferCtx``
-        (``.array``), ``MultiBuffer`` via ``.host_view``, or plain
-        ``numpy.ndarray``.
+        Accepted ``vertex_buffer`` types: ``NumpyBuffer``, ``NumpyBufferCtx``,
+        ``MultiBuffer``, or ``numpy.ndarray``.
         """
         if model_matrix is None:
             model_matrix = Matrix4x4.identity()
@@ -836,6 +835,7 @@ class VulkanRenderer(Renderer):
             except Exception as e:
                 logger.error("GPU indexed draw failed: %s", e)
 
+        # -- resolve vertex data for CPU raster --
         if isinstance(vertex_buffer, NumpyBuffer):
             verts_arr = vertex_buffer._array
         elif hasattr(vertex_buffer, "host_view"):
@@ -845,7 +845,10 @@ class VulkanRenderer(Renderer):
         elif isinstance(vertex_buffer, np.ndarray):
             verts_arr = vertex_buffer
         else:
-            raise TypeError("Unsupported vertex_buffer type for CPU path.")
+            raise TypeError(
+                "Unsupported vertex_buffer type; expected NumpyBuffer, "
+                "MultiBuffer, NumpyBufferCtx, or ndarray."
+            )
 
         verts_arr = np.asarray(verts_arr, dtype=np.float32, order="C", copy=False)
         vertices = verts_arr
@@ -1073,6 +1076,7 @@ class CPURenderer(Renderer):
             ):
                 index_buffer = buf
 
+        # -- resolve vertex data for CPU raster --
         if isinstance(vertex_buffer, NumpyBuffer):
             verts_arr = vertex_buffer._array
         elif hasattr(vertex_buffer, "host_view"):
@@ -1082,7 +1086,10 @@ class CPURenderer(Renderer):
         elif isinstance(vertex_buffer, np.ndarray):
             verts_arr = vertex_buffer
         else:
-            raise TypeError("Unsupported vertex_buffer type for CPU path.")
+            raise TypeError(
+                "Unsupported vertex_buffer type; expected NumpyBuffer, "
+                "MultiBuffer, NumpyBufferCtx, or ndarray."
+            )
 
         verts_arr = np.asarray(verts_arr, dtype=np.float32, order="C", copy=False)
         vertices = verts_arr
