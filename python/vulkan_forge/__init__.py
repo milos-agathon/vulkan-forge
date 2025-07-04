@@ -145,7 +145,7 @@ if create_renderer is not None:
     __all__.extend([
         'create_renderer', 'RenderTarget', 'Mesh', 'Material', 'Light',
         'Transform', 'Renderer', 'VulkanRenderer', 'CPURenderer',
-        'set_vertex_buffer', 'save_image'
+        'render_indexed', 'set_vertex_buffer', 'save_image'
     ])
     
 if DeviceManager is not None:

@@ -695,6 +695,51 @@ class VulkanRenderer(Renderer):
         self._framebuffer = fb
         return fb
 
+    def render_indexed(
+        self,
+        vertex_buffer: Any,
+        index_buffer: Any,
+        model_matrix: Matrix4x4,
+        view_matrix: Matrix4x4,
+        projection_matrix: Matrix4x4,
+        wireframe: bool = False,
+    ) -> np.ndarray:
+        """Render indexed geometry from buffers."""
+        if not self.render_target:
+            raise VulkanForgeError("Render target not set")
+
+        index_count = len(getattr(index_buffer, "_array", index_buffer))
+
+        if self.gpu_active and hasattr(vk, "vkCmdDrawIndexed"):
+            try:
+                cmd_buf = getattr(self, "command_buffer", None)
+                if cmd_buf is not None:
+                    vb_handle = int(getattr(vertex_buffer, "gpu_buffer", 0))
+                    buffers = (ctypes.c_uint64 * 1)(ctypes.c_uint64(vb_handle))
+                    offsets = (ctypes.c_ulonglong * 1)(0)
+                    vk.vkCmdBindVertexBuffers(cmd_buf, 0, 1, buffers, offsets)
+
+                    ib_handle = int(getattr(index_buffer, "gpu_buffer", 0))
+                    dtype = getattr(getattr(index_buffer, "_array", index_buffer), "dtype", np.uint32)
+                    index_type = vk.VK_INDEX_TYPE_UINT16 if dtype == np.uint16 else vk.VK_INDEX_TYPE_UINT32
+                    vk.vkCmdBindIndexBuffer(cmd_buf, ib_handle, 0, index_type)
+                    vk.vkCmdDrawIndexed(cmd_buf, index_count, 1, 0, 0, 0)
+            except Exception as e:
+                logger.error("GPU indexed draw failed: %s", e)
+
+        vertices = np.asarray(getattr(vertex_buffer, "_array", vertex_buffer), dtype=np.float32)
+        indices = np.asarray(getattr(index_buffer, "_array", index_buffer), dtype=np.int32)
+        verts = np.hstack([vertices, np.ones((len(vertices), 1), dtype=np.float32)])
+        world = verts @ model_matrix.data.T
+        mesh = Mesh(
+            vertices=world[:, :3],
+            normals=np.zeros_like(world[:, :3]),
+            uvs=np.zeros((len(vertices), 2), dtype=np.float32),
+            indices=indices,
+        )
+        material = Material()
+        return self.render_cpu_fallback([mesh], [material], [], view_matrix, projection_matrix)
+
     # ─────────────────────────────────────────────────────────────────────
     # Main render entry
     # ─────────────────────────────────────────────────────────────────────
@@ -989,6 +1034,7 @@ __all__ = [
     "VulkanRenderer",
     "CPURenderer",
     "create_renderer",
+    "render_indexed",
     "set_vertex_buffer",
     "save_image",
 ]
