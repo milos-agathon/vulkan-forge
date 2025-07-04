@@ -2,7 +2,6 @@
 """Main Vulkan renderer with automatic GPU/CPU backend selection."""
 
 import logging
-import struct
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 from abc import ABC, abstractmethod
@@ -782,8 +781,9 @@ class VulkanRenderer(Renderer):
 
         Notes
         -----
-        CPU fallback accepts ``NumpyBuffer`` (uses ``._array``), ``MultiBuffer``
-        via ``.host_view``, or plain ``numpy.ndarray``.
+        CPU fallback accepts ``NumpyBuffer`` (``._array``), ``NumpyBufferCtx``
+        (``.array``), ``MultiBuffer`` via ``.host_view``, or plain
+        ``numpy.ndarray``.
         """
         if model_matrix is None:
             model_matrix = Matrix4x4.identity()
@@ -840,12 +840,12 @@ class VulkanRenderer(Renderer):
             verts_arr = vertex_buffer._array
         elif hasattr(vertex_buffer, "host_view"):
             verts_arr = vertex_buffer.host_view
+        elif hasattr(vertex_buffer, "array"):
+            verts_arr = vertex_buffer.array
         elif isinstance(vertex_buffer, np.ndarray):
             verts_arr = vertex_buffer
         else:
-            raise TypeError(
-                "Unsupported vertex_buffer type; expected NumpyBuffer, MultiBuffer, or ndarray."
-            )
+            raise TypeError("Unsupported vertex_buffer type for CPU path.")
 
         verts_arr = np.asarray(verts_arr, dtype=np.float32, order="C", copy=False)
         vertices = verts_arr
@@ -890,7 +890,6 @@ class VulkanRenderer(Renderer):
             raise VulkanForgeError("Render target not set")
 
         w, h = self.render_target.width, self.render_target.height
-        fb = np.zeros((h, w, 4), dtype=np.float32)
         # Since GPU rendering isn't fully implemented, use CPU fallback
         return self.render_cpu_fallback(
             meshes, materials, lights, view_matrix, projection_matrix
@@ -1078,12 +1077,12 @@ class CPURenderer(Renderer):
             verts_arr = vertex_buffer._array
         elif hasattr(vertex_buffer, "host_view"):
             verts_arr = vertex_buffer.host_view
+        elif hasattr(vertex_buffer, "array"):
+            verts_arr = vertex_buffer.array
         elif isinstance(vertex_buffer, np.ndarray):
             verts_arr = vertex_buffer
         else:
-            raise TypeError(
-                "Unsupported vertex_buffer type; expected NumpyBuffer, MultiBuffer, or ndarray."
-            )
+            raise TypeError("Unsupported vertex_buffer type for CPU path.")
 
         verts_arr = np.asarray(verts_arr, dtype=np.float32, order="C", copy=False)
         vertices = verts_arr
@@ -1266,7 +1265,6 @@ __all__ = [
     "VulkanRenderer",
     "CPURenderer",
     "create_renderer",
-    "render_indexed",
     "set_vertex_buffer",
     "save_image",
 ]
