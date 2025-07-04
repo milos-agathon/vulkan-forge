@@ -699,12 +699,18 @@ class VulkanRenderer(Renderer):
         self,
         vertex_buffer: Any,
         index_buffer: Any,
-        model_matrix: Matrix4x4,
-        view_matrix: Matrix4x4,
-        projection_matrix: Matrix4x4,
+        model_matrix: Optional[Matrix4x4] = None,
+        view_matrix: Optional[Matrix4x4] = None,
+        projection_matrix: Optional[Matrix4x4] = None,
         wireframe: bool = False,
     ) -> np.ndarray:
         """Render indexed geometry from buffers."""
+        if model_matrix is None:
+            model_matrix = Matrix4x4.identity()
+        if view_matrix is None:
+            view_matrix = Matrix4x4.identity()
+        if projection_matrix is None:
+            projection_matrix = Matrix4x4.identity()
         if not self.render_target:
             raise VulkanForgeError("Render target not set")
 
