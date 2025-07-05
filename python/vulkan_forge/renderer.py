@@ -1580,8 +1580,6 @@ class VulkanRenderer(Renderer):
             vertex_buffer, model_matrix, view_matrix, projection_matrix, color
         )
         
-    # Add the CPU rendering method from VulkanRenderer
-    _render_points_cpu = VulkanRenderer._render_points_cpu
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CPU-only renderer (stub)
@@ -1789,6 +1787,11 @@ class CPURenderer(Renderer):
 
     def cleanup(self) -> None:
         pass
+
+# Backwards-compat alias (set after class fully defined)
+VulkanRenderer._render_points_cpu_alias = (
+    VulkanRenderer._render_points_cpu
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

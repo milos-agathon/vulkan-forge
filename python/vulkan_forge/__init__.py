@@ -9,6 +9,11 @@ import sys
 import os
 import importlib
 
+try:
+    import _vulkan_forge_editable  # pylint: disable=unused-import
+except ModuleNotFoundError:
+    pass
+
 # Set up module logger
 logger = logging.getLogger(__name__)
 
