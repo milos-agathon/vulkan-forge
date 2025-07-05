@@ -201,6 +201,7 @@ class Renderer(ABC):
 # ─────────────────────────────────────────────────────────────────────────────
 # Vulkan (GPU) renderer
 # ─────────────────────────────────────────────────────────────────────────────
+# Around line 217 in VulkanRenderer.__init__, add this attribute:
 class VulkanRenderer(Renderer):
     """GPU backend with automatic graceful CPU fallback."""
 
@@ -222,6 +223,7 @@ class VulkanRenderer(Renderer):
         self.render_target: Optional[RenderTarget] = None
         self._render_pass: Optional[int] = None
         self._framebuffer: Optional[np.ndarray] = None
+        self._enable_runtime_compilation = False
 
         self.swapchain_format = (
             vk.VK_FORMAT_B8G8R8A8_UNORM if VULKAN_AVAILABLE else None
@@ -230,10 +232,14 @@ class VulkanRenderer(Renderer):
         self.gpu_active = False
 
         self.pipelines: List[Any] = []
+        self.point_pipelines: List[Any] = []
         self.render_passes: List[Any] = []
         self._compiled_shaders: Dict[str, bytes] = {}
         self.pipeline_layouts: List[Any] = []
+        self.point_pipeline_layouts: List[Any] = []
         self.descriptor_set_layouts: List[Any] = []
+        self.point_descriptor_set_layouts: List[Any] = []
+        self.vertex_buffers: Dict[int, Any] = {}
 
         if VULKAN_AVAILABLE and self.logical_devices:
             try:
@@ -243,7 +249,11 @@ class VulkanRenderer(Renderer):
                     self.render_passes.append(rp)
                     self.pipelines.append(pl)
                     # Add layouts if created inside pipeline creation
+                    # Create point rendering pipeline
+                    point_pl = self._create_point_pipeline(dev, rp)
+                    self.point_pipelines.append(point_pl)
                 self.gpu_active = any(self.pipelines)
+                self.gpu_point_active = any(self.point_pipelines)
                 logger.info(
                     "GPU rendering enabled"
                     if self.gpu_active
@@ -277,6 +287,19 @@ class VulkanRenderer(Renderer):
     
         # Strategy 1: Try pre-compiled .spv file
         spv_path = os.path.join(shader_dir, f"{shader_name}.spv")
+        if not os.path.exists(spv_path):
+            # Try without .glsl extension if present
+            base_name = shader_name.replace('.glsl', '')
+            spv_path = os.path.join(shader_dir, f"{base_name}.spv")
+            
+        # Also check in python/vulkan_forge/shaders
+        if not os.path.exists(spv_path):
+            alt_shader_dir = os.path.join(os.path.dirname(__file__), "..", "..", "python", "vulkan_forge", "shaders")
+            spv_path = os.path.join(alt_shader_dir, f"{shader_name}.spv")
+            if not os.path.exists(spv_path):
+                base_name = shader_name.replace('.glsl', '')
+                spv_path = os.path.join(alt_shader_dir, f"{base_name}.spv")
+                
         if os.path.exists(spv_path):
             try:
                 with open(spv_path, 'rb') as f:
@@ -293,16 +316,27 @@ class VulkanRenderer(Renderer):
     
         # Strategy 2: Try embedded SPIR-V
         try:
-            from .shaders import embedded_spirv
-        
-            if embedded_spirv.has_shader(shader_name):
-                data = embedded_spirv.get_shader(shader_name)
+            from .shaders.embedded_spirv import get_shader, has_shader
+            base_name = shader_name.replace('.glsl', '')
+            if has_shader(base_name):
+                data = get_shader(base_name)
                 if data:
                     self._compiled_shaders[shader_name] = data
-                    logger.debug(f"Loaded embedded shader: {shader_name}")
+                    logger.debug(f"Loaded embedded shader: {base_name}")
                     return data
         except ImportError:
             logger.debug("No embedded_spirv module available")
+        except Exception as e:
+            logger.debug(f"Failed to load embedded shader: {e}")
+            
+        # Additional check: try loading from current directory shaders
+        try:
+            direct_spv = os.path.join(shader_dir, f"{shader_name.replace('.glsl', '')}.spv")
+            if os.path.exists(direct_spv):
+                with open(direct_spv, 'rb') as f:
+                    return f.read()
+        except:
+            pass
     
         # Strategy 3: Try runtime compilation (development only)
         if self._enable_runtime_compilation:
@@ -315,6 +349,12 @@ class VulkanRenderer(Renderer):
         # Strategy 4: Final fallback - minimal valid SPIR-V
         logger.warning(f"All strategies failed for shader: {shader_name}")
         return self._get_minimal_spirv(stage)
+         
+        # For point shaders that don't exist, return None instead of minimal SPIR-V
+        if "point" in shader_name:
+            logger.info(f"Point shader {shader_name} not found, will use regular shaders")
+            return None
+            
 
     def _get_minimal_spirv(self, stage: str) -> bytes:
         """Get minimal valid SPIR-V for testing."""
@@ -361,16 +401,37 @@ class VulkanRenderer(Renderer):
             return None
     
         try:
+            # Convert bytes to ctypes array of uint32
+            # Ensure spirv_code is properly aligned and in the right format
+            # SPIR-V requires 32-bit words
+            if len(spirv_code) % 4 != 0:
+                logger.error("SPIR-V bytecode size not aligned to 4 bytes")
+                return None
+            
+            # Convert bytes to ctypes array of uint32
+            num_words = len(spirv_code) // 4
+            uint32_array = (ctypes.c_uint32 * num_words)()
+
+            # Use memmove for efficient copying
+            ctypes.memmove(
+                ctypes.addressof(uint32_array),
+                spirv_code,
+                len(spirv_code)
+            )
+            
             create_info = vk.VkShaderModuleCreateInfo(
-            sType=vk.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-            codeSize=len(spirv_code),
-            pCode=spirv_code
-        )
-        return vk.vkCreateShaderModule(device.device, create_info, None)
+                sType=vk.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                codeSize=len(spirv_code),
+                pCode=ctypes.cast(uint32_array, ctypes.POINTER(ctypes.c_uint32))
+            )
+            
+            return vk.vkCreateShaderModule(device.device, create_info, None)
         except Exception as e:
             logger.error(f"Failed to create shader module: {e}")
             return None
-
+        
     # ─────────────────────────────────────────────────────────────────────
     # Render-pass / pipeline
     # ─────────────────────────────────────────────────────────────────────
@@ -490,16 +551,25 @@ class VulkanRenderer(Renderer):
             if not vert_code or not frag_code:
                 logger.warning("Shader compilation failed - skipping pipeline creation")
                 return None
+            
+                
+            # Validate SPIR-V magic number before creating modules
+            if len(vert_code) < 4 or vert_code[:4] != b'\x03\x02\x23\x07':
+                logger.warning("Invalid vertex shader SPIR-V")
+                return None
+                
+            if len(frag_code) < 4 or frag_code[:4] != b'\x03\x02\x23\x07':
+                logger.warning("Invalid fragment shader SPIR-V")
+                return None
 
             vert_module = self._create_shader_module(dev, vert_code)
             frag_module = self._create_shader_module(dev, frag_code)
 
             # If shader modules couldn't be created, we can't create pipeline
             if not vert_module or not frag_module:
-                logger.warning(
-                    "Shader modules not available - falling back to CPU rendering"
-                )
+                logger.warning("Shader modules not available - falling back to CPU rendering")
                 return None
+
 
             # Shader stages
             vert_stage = vk.VkPipelineShaderStageCreateInfo(
@@ -767,6 +837,314 @@ class VulkanRenderer(Renderer):
             if hasattr(self, "descriptor_set_layouts") and self.descriptor_set_layouts:
                 self.descriptor_set_layouts.pop()  # Remove the failed layout
             return None
+        
+    def _create_point_pipeline(self, dev: LogicalDevice, render_pass: Any) -> Any:
+        """Create a pipeline specifically for point rendering."""
+        if not VULKAN_AVAILABLE or render_pass is None:
+            return None
+
+        try:
+            # Compile point shaders
+            shader_dir = Path(__file__).with_name("shaders")
+            
+            # Try pre-compiled first
+            vert_spv = shader_dir / "point_vertex.spv"
+            if vert_spv.is_file():
+                vert_code = vert_spv.read_bytes()
+            else:
+                logger.debug("Point vertex shader not found, using regular vertex shader")
+                vert_code = self._compile_shader("vertex", "vertex")
+            
+            frag_spv = shader_dir / "point_fragment.spv"
+            if frag_spv.is_file():
+                frag_code = frag_spv.read_bytes()
+            else:
+                logger.debug("Point fragment shader not found, using regular fragment shader")
+                frag_code = self._compile_shader("fragment", "fragment")
+
+            if not vert_code or not frag_code:
+                logger.warning("Shader compilation failed - skipping point pipeline")
+                return None
+
+            vert_module = self._create_shader_module(dev, vert_code)
+            frag_module = self._create_shader_module(dev, frag_code)
+
+            if not vert_module or not frag_module:
+                logger.warning("Shader modules not available")
+                return None
+
+            # Shader stages
+            vert_stage = vk.VkPipelineShaderStageCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                stage=vk.VK_SHADER_STAGE_VERTEX_BIT,
+                module=vert_module,
+                pName="main",
+                pSpecializationInfo=None,
+            )
+
+            frag_stage = vk.VkPipelineShaderStageCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                stage=vk.VK_SHADER_STAGE_FRAGMENT_BIT,
+                module=frag_module,
+                pName="main",
+                pSpecializationInfo=None,
+            )
+
+            shader_stages = [vert_stage, frag_stage]
+
+            # Vertex input for points (position + color)
+            binding_descs = [
+                vk.VkVertexInputBindingDescription(
+                    binding=0,
+                    stride=12,  # 3 floats for position
+                    inputRate=vk.VK_VERTEX_INPUT_RATE_VERTEX,
+                ),
+                vk.VkVertexInputBindingDescription(
+                    binding=1,
+                    stride=16,  # 4 floats for color
+                    inputRate=vk.VK_VERTEX_INPUT_RATE_VERTEX,
+                ),
+            ]
+
+            attr_descs = [
+                vk.VkVertexInputAttributeDescription(
+                    location=0,
+                    binding=0,
+                    format=vk.VK_FORMAT_R32G32B32_SFLOAT,
+                    offset=0,
+                ),
+                vk.VkVertexInputAttributeDescription(
+                    location=1,
+                    binding=1,
+                    format=vk.VK_FORMAT_R32G32B32A32_SFLOAT,
+                    offset=0,
+                ),
+            ]
+
+            vertex_input = vk.VkPipelineVertexInputStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                vertexBindingDescriptionCount=len(binding_descs),
+                pVertexBindingDescriptions=(
+                    vk.VkVertexInputBindingDescription * len(binding_descs)
+                )(*binding_descs),
+                vertexAttributeDescriptionCount=len(attr_descs),
+                pVertexAttributeDescriptions=(
+                    vk.VkVertexInputAttributeDescription * len(attr_descs)
+                )(*attr_descs),
+            )
+
+            # Input assembly - POINT_LIST topology
+            input_assembly = vk.VkPipelineInputAssemblyStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                topology=vk.VK_PRIMITIVE_TOPOLOGY_POINT_LIST,
+                primitiveRestartEnable=vk.VK_FALSE,
+            )
+
+            # Viewport state
+            viewport = vk.VkViewport(
+                x=0.0,
+                y=0.0,
+                width=float(self.swapchain_extent[0]),
+                height=float(self.swapchain_extent[1]),
+                minDepth=0.0,
+                maxDepth=1.0,
+            )
+
+            scissor = vk.VkRect2D(
+                offset=vk.VkOffset2D(x=0, y=0),
+                extent=vk.VkExtent2D(
+                    width=self.swapchain_extent[0], 
+                    height=self.swapchain_extent[1]
+                ),
+            )
+
+            viewport_state = vk.VkPipelineViewportStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                viewportCount=1,
+                pViewports=ctypes.pointer(viewport),
+                scissorCount=1,
+                pScissors=ctypes.pointer(scissor),
+            )
+
+            # Rasterizer with point size enabled
+            rasterizer = vk.VkPipelineRasterizationStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                depthClampEnable=vk.VK_FALSE,
+                rasterizerDiscardEnable=vk.VK_FALSE,
+                polygonMode=vk.VK_POLYGON_MODE_FILL,
+                lineWidth=1.0,
+                cullMode=vk.VK_CULL_MODE_NONE,  # No culling for points
+                frontFace=vk.VK_FRONT_FACE_COUNTER_CLOCKWISE,
+                depthBiasEnable=vk.VK_FALSE,
+                depthBiasConstantFactor=0.0,
+                depthBiasClamp=0.0,
+                depthBiasSlopeFactor=0.0,
+            )
+
+            # Multisampling
+            multisampling = vk.VkPipelineMultisampleStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                sampleShadingEnable=vk.VK_FALSE,
+                rasterizationSamples=vk.VK_SAMPLE_COUNT_1_BIT,
+                minSampleShading=1.0,
+                pSampleMask=None,
+                alphaToCoverageEnable=vk.VK_FALSE,
+                alphaToOneEnable=vk.VK_FALSE,
+            )
+
+            # Depth stencil
+            depth_stencil = vk.VkPipelineDepthStencilStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                depthTestEnable=vk.VK_TRUE,
+                depthWriteEnable=vk.VK_TRUE,
+                depthCompareOp=vk.VK_COMPARE_OP_LESS,
+                depthBoundsTestEnable=vk.VK_FALSE,
+                stencilTestEnable=vk.VK_FALSE,
+                front=vk.VkStencilOpState(),
+                back=vk.VkStencilOpState(),
+                minDepthBounds=0.0,
+                maxDepthBounds=1.0,
+            )
+
+            # Color blending
+            color_blend_attachment = vk.VkPipelineColorBlendAttachmentState(
+                colorWriteMask=vk.VK_COLOR_COMPONENT_R_BIT
+                | vk.VK_COLOR_COMPONENT_G_BIT
+                | vk.VK_COLOR_COMPONENT_B_BIT
+                | vk.VK_COLOR_COMPONENT_A_BIT,
+                blendEnable=vk.VK_TRUE,
+                srcColorBlendFactor=vk.VK_BLEND_FACTOR_SRC_ALPHA,
+                dstColorBlendFactor=vk.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                colorBlendOp=vk.VK_BLEND_OP_ADD,
+                srcAlphaBlendFactor=vk.VK_BLEND_FACTOR_ONE,
+                dstAlphaBlendFactor=vk.VK_BLEND_FACTOR_ZERO,
+                alphaBlendOp=vk.VK_BLEND_OP_ADD,
+            )
+
+            color_blending = vk.VkPipelineColorBlendStateCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                logicOpEnable=vk.VK_FALSE,
+                logicOp=vk.VK_LOGIC_OP_COPY,
+                attachmentCount=1,
+                pAttachments=ctypes.pointer(color_blend_attachment),
+                blendConstants=[0.0, 0.0, 0.0, 0.0],
+            )
+
+            # Create descriptor set layout for uniform buffer
+            ubo_layout_binding = vk.VkDescriptorSetLayoutBinding(
+                binding=0,
+                descriptorType=vk.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                descriptorCount=1,
+                stageFlags=vk.VK_SHADER_STAGE_VERTEX_BIT,
+                pImmutableSamplers=None,
+            )
+
+            layout_info = vk.VkDescriptorSetLayoutCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                bindingCount=1,
+                pBindings=ctypes.pointer(ubo_layout_binding),
+            )
+
+            desc_layout = vk.vkCreateDescriptorSetLayout(
+                dev.device.value if hasattr(dev.device, "value") else dev.device,
+                layout_info,
+                None,
+            )
+            self.point_descriptor_set_layouts.append(desc_layout)
+
+            # Pipeline layout
+            pipeline_layout_info = vk.VkPipelineLayoutCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                setLayoutCount=1,
+                pSetLayouts=ctypes.pointer(desc_layout),
+                pushConstantRangeCount=0,
+                pPushConstantRanges=None,
+            )
+
+            pipeline_layout = vk.vkCreatePipelineLayout(
+                dev.device.value if hasattr(dev.device, "value") else dev.device,
+                pipeline_layout_info,
+                None,
+            )
+            self.point_pipeline_layouts.append(pipeline_layout)
+
+            # Create pipeline
+            pipeline_info = vk.VkGraphicsPipelineCreateInfo(
+                sType=vk.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+                pNext=None,
+                flags=0,
+                stageCount=len(shader_stages),
+                pStages=(vk.VkPipelineShaderStageCreateInfo * len(shader_stages))(
+                    *shader_stages
+                ),
+                pVertexInputState=ctypes.pointer(vertex_input),
+                pInputAssemblyState=ctypes.pointer(input_assembly),
+                pTessellationState=None,
+                pViewportState=ctypes.pointer(viewport_state),
+                pRasterizationState=ctypes.pointer(rasterizer),
+                pMultisampleState=ctypes.pointer(multisampling),
+                pDepthStencilState=ctypes.pointer(depth_stencil),
+                pColorBlendState=ctypes.pointer(color_blending),
+                pDynamicState=None,
+                layout=pipeline_layout,
+                renderPass=render_pass,
+                subpass=0,
+                basePipelineHandle=None,
+                basePipelineIndex=-1,
+            )
+
+            pipelines = vk.vkCreateGraphicsPipelines(
+                dev.device.value if hasattr(dev.device, "value") else dev.device,
+                None,
+                1,
+                ctypes.pointer(pipeline_info),
+                None,
+            )
+
+            # Clean up shader modules
+            vk.vkDestroyShaderModule(
+                dev.device.value if hasattr(dev.device, "value") else dev.device,
+                vert_module,
+                None,
+            )
+            vk.vkDestroyShaderModule(
+                dev.device.value if hasattr(dev.device, "value") else dev.device,
+                frag_module,
+                None,
+            )
+
+            return pipelines[0] if pipelines else None
+
+        except Exception as e:
+            logger.error(f"Failed to create point pipeline: {e}")
+            if hasattr(self, "point_descriptor_set_layouts") and self.point_descriptor_set_layouts:
+                self.point_descriptor_set_layouts.pop()
+            if hasattr(self, "point_pipeline_layouts") and self.point_pipeline_layouts:
+                self.point_pipeline_layouts.pop()
+            return None
+
 
     def set_render_target(self, target: RenderTarget) -> None:
         self.render_target = target
@@ -803,7 +1181,7 @@ class VulkanRenderer(Renderer):
         if projection_matrix is None:
             projection_matrix = Matrix4x4.identity()
 
-        if self.gpu_active and self.pipelines:
+        if self.gpu_active and self.point_pipelines and any(self.point_pipelines):
             # GPU path not yet implemented
             try:
                 return self._render_points_gpu(
@@ -820,6 +1198,7 @@ class VulkanRenderer(Renderer):
         return self._render_points_cpu(
             vertex_buffer, model_matrix, view_matrix, projection_matrix, color
         )
+    
 
     def _render_points_cpu(
         self,
@@ -1158,6 +1537,15 @@ class VulkanRenderer(Renderer):
                 vk.vkDestroyRenderPass(dev.device, self.render_passes[idx], None)
             if idx < len(self.pipeline_layouts) and self.pipeline_layouts[idx]:
                 vk.vkDestroyPipelineLayout(dev.device, self.pipeline_layouts[idx], None)
+            # Clean up point pipeline resources
+            if idx < len(self.point_pipelines) and self.point_pipelines[idx]:
+                vk.vkDestroyPipeline(dev.device, self.point_pipelines[idx], None)
+            if idx < len(self.point_pipeline_layouts) and self.point_pipeline_layouts[idx]:
+                vk.vkDestroyPipelineLayout(dev.device, self.point_pipeline_layouts[idx], None)
+            if idx < len(self.point_descriptor_set_layouts) and self.point_descriptor_set_layouts[idx]:
+                vk.vkDestroyDescriptorSetLayout(
+                    dev.device, self.point_descriptor_set_layouts[idx], None
+                )                
             if (
                 idx < len(self.descriptor_set_layouts)
                 and self.descriptor_set_layouts[idx]
@@ -1167,6 +1555,33 @@ class VulkanRenderer(Renderer):
                 )
         self.device_manager.cleanup()
 
+    def render_points(
+        self,
+        vertex_buffer: Any,
+        model_matrix: Optional[Matrix4x4] = None,
+        view_matrix: Optional[Matrix4x4] = None,
+        projection_matrix: Optional[Matrix4x4] = None,
+        point_size: int = 2,
+        color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
+    ) -> np.ndarray:
+        """Render points using CPU rasterization."""
+        if model_matrix is None:
+            model_matrix = Matrix4x4.identity()
+        if view_matrix is None:
+            view_matrix = Matrix4x4.identity()
+        if projection_matrix is None:
+            projection_matrix = Matrix4x4.identity()
+            
+        if not self.render_target:
+            self.set_render_target(RenderTarget(800, 600))
+            
+        # Use the same CPU rendering logic as VulkanRenderer
+        return self._render_points_cpu(
+            vertex_buffer, model_matrix, view_matrix, projection_matrix, color
+        )
+        
+    # Add the CPU rendering method from VulkanRenderer
+    _render_points_cpu = VulkanRenderer._render_points_cpu
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CPU-only renderer (stub)

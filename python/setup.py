@@ -121,11 +121,18 @@ class CompileShadersMixin:
         """Generate Python file with embedded SPIR-V data."""
         shader_dir = Path(shader_dir)
         output_file = shader_dir / 'embedded_spirv.py'
-        
+
+                
         spv_files = list(shader_dir.glob('*.spv'))
         if not spv_files:
             print(f"No .spv files found in {shader_dir}")
             return
+        
+        valid_files.append(spv_file)
+            
+        for spv_file in valid_files:
+            with open(spv_file, 'rb') as spv:
+                data = spv.read()
         
         print(f"Generating embedded SPIR-V: {output_file}")
         
@@ -135,14 +142,22 @@ class CompileShadersMixin:
             f.write('from typing import Dict\n\n')
             f.write('# Embedded SPIR-V bytecode for each shader\n')
             f.write('EMBEDDED_SPIRV: Dict[str, bytes] = {\n')
-            
-            for spv_file in sorted(spv_files):
-                with open(spv_file, 'rb') as spv:
-                    data = spv.read()
-                
-                # Use shader name without extension as key
+        # Only include valid SPIR-V files
+        valid_files = []
+        for spv_file in sorted(spv_files):
+             with open(spv_file, 'rb') as spv:
+                data = spv.read()
                 shader_name = spv_file.stem
                 f.write(f'    "{shader_name}": (\n')
+                f.write('def get_shader(name: str) -> Optional[bytes]:\n')
+                f.write('    """Get embedded shader by name (without extension)."""\n')
+                f.write('    return EMBEDDED_SPIRV.get(name)\n')
+                f.write('\n')
+                f.write('def has_shader(name: str) -> bool:\n')
+                f.write('    """Check if shader exists in embedded data."""\n')
+                f.write('    return name in EMBEDDED_SPIRV\n')
+                f.write('\n')
+                f.write("__all__ = ['get_shader', 'has_shader', 'EMBEDDED_SPIRV']\n")
                 
                 # Write bytes in readable chunks
                 for i in range(0, len(data), 16):

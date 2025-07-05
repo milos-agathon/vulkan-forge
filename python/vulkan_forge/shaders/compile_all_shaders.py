@@ -1,219 +1,202 @@
 #!/usr/bin/env python3
-"""Compile all GLSL shaders to SPIR-V format."""
+"""
+Compile GLSL shaders to SPIR-V for Vulkan
+Requires Vulkan SDK to be installed (provides glslc compiler)
+"""
 
+import subprocess
 import os
 import sys
-import subprocess
-import hashlib
 from pathlib import Path
-from typing import Dict, Tuple, Optional
 
-# Shader stage mappings
-SHADER_STAGES = {
-    '.vert': 'vertex',
-    '.frag': 'fragment',
-    '.comp': 'compute',
-    '.geom': 'geometry',
-    '.tesc': 'tess_control',
-    '.tese': 'tess_eval'
-}
 
-def get_file_hash(filepath: Path) -> str:
-    """Get SHA256 hash of a file."""
-    with open(filepath, 'rb') as f:
-        return hashlib.sha256(f.read()).hexdigest()
-
-def find_glslc() -> Optional[str]:
-    """Find glslc compiler in system PATH or common locations."""
-    # Try system PATH first
-    try:
-        result = subprocess.run(['glslc', '--version'], 
-                              capture_output=True, text=True)
-        if result.returncode == 0:
-            return 'glslc'
-    except FileNotFoundError:
-        pass
-    
-    # Common installation paths
-    common_paths = [
-        # Vulkan SDK paths
-        os.path.join(os.environ.get('VULKAN_SDK', ''), 'bin', 'glslc'),
-        os.path.join(os.environ.get('VULKAN_SDK', ''), 'bin', 'glslc.exe'),
-        # Common Linux paths
-        '/usr/bin/glslc',
-        '/usr/local/bin/glslc',
-        # Common Windows paths
-        'C:\\VulkanSDK\\*\\Bin\\glslc.exe',
-        'C:\\Program Files\\VulkanSDK\\*\\Bin\\glslc.exe',
+def find_glslc():
+    """Find the glslc compiler from Vulkan SDK"""
+    # Common locations for glslc
+    possible_paths = [
+        # Windows
+        r"C:\VulkanSDK\*\Bin\glslc.exe",
+        r"C:\VulkanSDK\*\Bin32\glslc.exe",
+        # Linux
+        "/usr/bin/glslc",
+        "/usr/local/bin/glslc",
+        # macOS
+        "/usr/local/bin/glslc",
     ]
     
-    for path in common_paths:
-        if '*' in path:
-            # Handle wildcard paths
-            import glob
-            matches = glob.glob(path)
-            if matches:
-                return matches[0]
-        elif os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
+    # Check environment variable
+    vulkan_sdk = os.environ.get('VULKAN_SDK')
+    if vulkan_sdk:
+        possible_paths.insert(0, os.path.join(vulkan_sdk, 'Bin', 'glslc.exe'))
+        possible_paths.insert(1, os.path.join(vulkan_sdk, 'Bin', 'glslc'))
+    
+    # Try to find glslc
+    for path_pattern in possible_paths:
+        from glob import glob
+        matches = glob(path_pattern)
+        if matches and os.path.exists(matches[0]):
+            return matches[0]
+    
+    # Try running glslc directly (if it's in PATH)
+    try:
+        subprocess.run(['glslc', '--version'], capture_output=True, check=True)
+        return 'glslc'
+    except:
+        pass
     
     return None
 
-def compile_shader(glsl_path: Path, spv_path: Path, 
-                  stage: str, glslc_path: str) -> bool:
-    """Compile a single GLSL shader to SPIR-V."""
+
+def compile_shader(glslc_path, input_file, output_file):
+    """Compile a single shader file"""
+    print(f"Compiling {input_file} -> {output_file}")
+    
     try:
-        cmd = [
-            glslc_path,
-            '-fshader-stage=' + stage,
-            '-o', str(spv_path),
-            str(glsl_path)
-        ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        if result.returncode != 0:
-            print(f"Error compiling {glsl_path}:")
-            print(result.stderr)
-            return False
-        
-        print(f"Successfully compiled: {glsl_path} -> {spv_path}")
+        result = subprocess.run(
+            [glslc_path, '-o', output_file, input_file],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        print(f"  ✓ Success")
         return True
-        
-    except Exception as e:
-        print(f"Exception compiling {glsl_path}: {e}")
+    except subprocess.CalledProcessError as e:
+        print(f"  ✗ Failed:")
+        print(f"    {e.stderr}")
         return False
 
-def get_shader_stage(filename: str) -> Optional[str]:
-    """Determine shader stage from filename."""
-    # Check explicit extensions first
-    for ext, stage in SHADER_STAGES.items():
-        if filename.endswith(ext + '.glsl') or filename.endswith(ext):
-            return stage
-    
-    # Check generic .glsl files
-    if filename.endswith('.glsl'):
-        # Try to infer from filename
-        lower = filename.lower()
-        if 'vert' in lower:
-            return 'vertex'
-        elif 'frag' in lower:
-            return 'fragment'
-        elif 'comp' in lower:
-            return 'compute'
-    
-    return None
 
-def compile_all_shaders(shader_dir: Path, force: bool = False) -> Dict[str, bool]:
-    """Compile all GLSL shaders in directory to SPIR-V."""
-    glslc = find_glslc()
-    if not glslc:
-        print("ERROR: glslc compiler not found!")
-        print("Please install Vulkan SDK or ensure glslc is in PATH")
-        return {}
+def convert_spirv_to_header(spirv_file, header_file, array_name):
+    """Convert SPIR-V binary to C++ header file"""
+    print(f"Converting {spirv_file} -> {header_file}")
     
-    print(f"Using glslc: {glslc}")
+    with open(spirv_file, 'rb') as f:
+        spirv_data = f.read()
     
-    results = {}
+    # Convert to uint32_t array
+    uint32_values = []
+    for i in range(0, len(spirv_data), 4):
+        # Little-endian uint32
+        value = int.from_bytes(spirv_data[i:i+4], byteorder='little')
+        uint32_values.append(value)
     
-    # Find all GLSL files
-    glsl_files = list(shader_dir.glob('*.glsl'))
-    glsl_files.extend(shader_dir.glob('*.vert'))
-    glsl_files.extend(shader_dir.glob('*.frag'))
-    glsl_files.extend(shader_dir.glob('*.comp'))
+    # Write header file
+    with open(header_file, 'w') as f:
+        f.write(f"// Auto-generated from {spirv_file}\n")
+        f.write(f"// Do not edit manually\n\n")
+        f.write(f"static const uint32_t {array_name}[] = {{\n")
+        
+        # Write values in rows of 8
+        for i in range(0, len(uint32_values), 8):
+            row = uint32_values[i:i+8]
+            hex_values = [f"0x{v:08x}" for v in row]
+            f.write("    " + ", ".join(hex_values))
+            if i + 8 < len(uint32_values):
+                f.write(",")
+            f.write("\n")
+        
+        f.write("};\n\n")
+        f.write(f"static const size_t {array_name}_size = sizeof({array_name});\n")
+        f.write(f"static const size_t {array_name}_count = sizeof({array_name}) / sizeof(uint32_t);\n")
     
-    for glsl_file in glsl_files:
-        # Skip if already has .spv in name
-        if '.spv' in glsl_file.name:
-            continue
-            
-        # Determine output name
-        if glsl_file.suffix == '.glsl':
-            spv_name = glsl_file.stem + '.spv'
-        else:
-            spv_name = glsl_file.name + '.spv'
-        
-        spv_file = glsl_file.parent / spv_name
-        
-        # Check if compilation needed
-        compile_needed = force or not spv_file.exists()
-        
-        if not compile_needed and spv_file.exists():
-            # Check if source is newer than compiled
-            if glsl_file.stat().st_mtime > spv_file.stat().st_mtime:
-                compile_needed = True
-        
-        if not compile_needed:
-            print(f"Skipping {glsl_file.name} (up to date)")
-            results[str(glsl_file)] = True
-            continue
-        
-        # Determine shader stage
-        stage = get_shader_stage(glsl_file.name)
-        if not stage:
-            print(f"WARNING: Cannot determine shader stage for {glsl_file.name}")
-            continue
-        
-        # Compile shader
-        success = compile_shader(glsl_file, spv_file, stage, glslc)
-        results[str(glsl_file)] = success
-    
-    return results
+    print(f"  ✓ Generated header with {len(uint32_values)} uint32_t values")
 
-def generate_embedded_spirv(shader_dir: Path, output_file: Path):
-    """Generate Python file with embedded SPIR-V bytecode."""
-    spv_files = list(shader_dir.glob('*.spv'))
-    
-    with open(output_file, 'w') as f:
-        f.write('"""Embedded SPIR-V shader bytecode for fallback."""\n\n')
-        f.write('# This file is auto-generated by compile_all_shaders.py\n')
-        f.write('# DO NOT EDIT MANUALLY\n\n')
-        f.write('from typing import Dict\n\n')
-        f.write('EMBEDDED_SPIRV: Dict[str, bytes] = {\n')
-        
-        for spv_file in spv_files:
-            # Read SPIR-V bytes
-            with open(spv_file, 'rb') as spv:
-                data = spv.read()
-            
-            # Write as Python bytes literal
-            f.write(f'    "{spv_file.stem}": (\n')
-            
-            # Write bytes in chunks for readability
-            for i in range(0, len(data), 16):
-                chunk = data[i:i+16]
-                hex_str = ' '.join(f'\\x{b:02x}' for b in chunk)
-                f.write(f'        b"{hex_str}"\n')
-            
-            f.write('    ),\n')
-        
-        f.write('}\n')
-    
-    print(f"Generated embedded SPIR-V: {output_file}")
 
 def main():
-    """Main entry point."""
-    # Get shader directory
-    script_dir = Path(__file__).parent
-    shader_dir = script_dir
+    # Find shader files
+    shader_dir = Path("shaders")
+    if not shader_dir.exists():
+        shader_dir = Path("cpp/shaders")
     
-    print(f"Compiling shaders in: {shader_dir}")
+    if not shader_dir.exists():
+        print(f"Error: Shader directory not found")
+        print(f"Please run this script from the project root")
+        return 1
     
-    # Parse arguments
-    force = '--force' in sys.argv or '-f' in sys.argv
+    # Find glslc compiler
+    glslc = find_glslc()
+    if not glslc:
+        print("Error: Could not find glslc compiler")
+        print("Please install Vulkan SDK and ensure glslc is in your PATH")
+        print("Download from: https://vulkan.lunarg.com/")
+        return 1
     
-    # Compile all shaders
-    results = compile_all_shaders(shader_dir, force=force)
+    print(f"Using glslc: {glslc}\n")
     
-    # Generate embedded SPIR-V file
-    embedded_file = shader_dir / 'embedded_spirv.py'
-    generate_embedded_spirv(shader_dir, embedded_file)
+    # Create output directory
+    output_dir = Path("build/shaders")
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Print summary
-    success_count = sum(1 for v in results.values() if v)
-    print(f"\nCompilation summary: {success_count}/{len(results)} successful")
+    include_dir = Path("cpp/include/shaders")
+    include_dir.mkdir(parents=True, exist_ok=True)
     
-    return 0 if all(results.values()) else 1
+    # Compile shaders
+    shaders = [
+        ("height_field.vert", "vertexShaderSpirv"),
+        ("height_field.frag", "fragmentShaderSpirv"),
+        ("vertex.glsl", "vertexShaderSpirv"),
+        ("fragment.glsl", "fragmentShaderSpirv"),
+    ]
+
+    # Additional point shaders (if they exist)
+    point_shaders = [
+        ("point_vertex.glsl", "pointVertexShaderSpirv"),
+        ("point_fragment.glsl", "pointFragmentShaderSpirv"),
+    ]
+    
+    
+    success = True
+    for shader_file, array_name in shaders:
+        input_path = shader_dir / shader_file
+        spirv_path = output_dir / f"{shader_file}.spv"
+        header_path = include_dir / f"{shader_file}.h"
+        
+        if not input_path.exists():
+            print(f"Error: Shader file not found: {input_path}")
+            success = False
+            continue
+        
+        # Compile to SPIR-V
+        if compile_shader(glslc, str(input_path), str(spirv_path)):
+            # Convert to header
+            convert_spirv_to_header(str(spirv_path), str(header_path), array_name)
+        else:
+            success = False
+           
+    # Try to compile point shaders but don't fail if they don't exist
+    for shader_file, array_name in point_shaders:
+        input_path = shader_dir / shader_file
+        if input_path.exists():
+            spirv_path = output_dir / f"{shader_file}.spv"
+            header_path = include_dir / f"{shader_file}.h"
+            
+            if compile_shader(glslc, str(input_path), str(spirv_path)):
+                convert_spirv_to_header(str(spirv_path), str(header_path), array_name)
+            else:
+                print(f"Warning: Failed to compile optional shader: {shader_file}")
+        else:
+            print(f"Info: Optional shader not found: {shader_file}")
+    
+    if success:
+        print("\n✓ All shaders compiled successfully!")
+        print(f"  SPIR-V files in: {output_dir}")
+        print(f"  Header files in: {include_dir}")
+    else:
+        print("\n✗ Some shaders failed to compile")
+        return 1
+    
+    # Also create a combined header
+    combined_header = include_dir / "all_shaders.h"
+    with open(combined_header, 'w') as f:
+        f.write("// Combined shader header\n")
+        f.write("#pragma once\n\n")
+        for shader_file, _ in shaders:
+            f.write(f'#include "{shader_file}.h"\n')
+    
+    print(f"\n  Combined header: {combined_header}")
+    
+    return 0
+
 
 if __name__ == '__main__':
     sys.exit(main())

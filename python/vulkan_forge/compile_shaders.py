@@ -153,6 +153,20 @@ def main():
             convert_spirv_to_header(str(spirv_path), str(header_path), array_name)
         else:
             success = False
+            
+    # Try to compile point shaders but don't fail if they don't exist
+    for shader_file, array_name in point_shaders:
+        input_path = shader_dir / shader_file
+        if input_path.exists():
+            spirv_path = output_dir / f"{shader_file}.spv"
+            header_path = include_dir / f"{shader_file}.h"
+            
+            if compile_shader(glslc, str(input_path), str(spirv_path)):
+                convert_spirv_to_header(str(spirv_path), str(header_path), array_name)
+            else:
+                print(f"Warning: Failed to compile optional shader: {shader_file}")
+        else:
+            print(f"Info: Optional shader not found: {shader_file}")
     
     if success:
         print("\n✓ All shaders compiled successfully!")
