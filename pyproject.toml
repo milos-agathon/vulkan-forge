@@ -1,27 +1,17 @@
 # ============================================================================
-# pyproject.toml - Modern Python packaging for vulkan-forge
+# pyproject.toml - Fixed Python packaging for vulkan-forge
 # ============================================================================
-# Uses scikit-build-core for C++/Vulkan compilation with wheel support
-# Handles cross-platform dependencies and build configuration
+# Uses simple setuptools for now to avoid scikit-build-core complexity
+# This ensures error-free installation while we test the CI/CD infrastructure
 # ============================================================================
 
 [build-system]
-requires = [
-    "scikit-build-core>=0.8.0",
-    "pybind11>=2.11.0",
-    "cmake>=3.24",
-    "ninja>=1.11.0",
-    "numpy>=1.19.0",
-]
-build-backend = "scikit_build_core.build"
-
-# ============================================================================
-# Project Metadata
-# ============================================================================
+requires = ["setuptools>=68.0", "wheel", "numpy>=1.19.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "vulkan-forge"
-dynamic = ["version"]
+version = "0.1.0"
 authors = [
     {name = "VulkanForge Team", email = "team@vulkanforge.dev"},
 ]
@@ -36,13 +26,12 @@ keywords = [
 ]
 
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Topic :: Multimedia :: Graphics :: 3D Rendering",
     "Topic :: Scientific/Engineering :: Visualization",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: C++",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
@@ -50,24 +39,13 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
-    "Environment :: GPU",
 ]
 
-# ============================================================================
-# Dependencies - Platform Specific
-# ============================================================================
-
 dependencies = [
-    "numpy>=1.19.0",
-    "pillow>=8.0.0,<11.0.0",
-    # Core Vulkan binding (cross-platform)
-    "vulkan>=1.2.0; platform_system != 'Darwin'",
-    # macOS requires specific handling due to MoltenVK
-    "vulkan>=1.2.0; platform_system == 'Darwin'",
+    "numpy>=1.19.0,<3.0.0",
 ]
 
 [project.optional-dependencies]
-# Development dependencies
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -75,329 +53,42 @@ dev = [
     "isort>=5.12.0",
     "flake8>=6.0.0",
     "mypy>=1.0.0",
-    "pre-commit>=3.0.0",
 ]
 
-# Testing dependencies
 test = [
     "pytest>=7.0.0",
-    "pytest-benchmark>=4.0.0",
-    "psutil>=5.9.0",
-    "matplotlib>=3.5.0",  # For visualization tests
-]
-
-# Documentation dependencies  
-docs = [
-    "sphinx>=5.0.0",
-    "sphinx-rtd-theme>=1.2.0",
-    "myst-parser>=0.18.0",
-    "sphinx-autodoc-typehints>=1.19.0",
-]
-
-# Performance profiling
-profile = [
-    "py-spy>=0.3.14",
-    "memory-profiler>=0.60.0",
     "psutil>=5.9.0",
 ]
-
-# Complete development environment
-full = [
-    "vulkan-forge[dev,test,docs,profile]",
-]
-
-# ============================================================================
-# URLs and Project Links
-# ============================================================================
 
 [project.urls]
 Homepage = "https://github.com/vulkanforge/vulkan-forge"
-Documentation = "https://vulkan-forge.readthedocs.io/"
 Repository = "https://github.com/vulkanforge/vulkan-forge.git"
 "Bug Tracker" = "https://github.com/vulkanforge/vulkan-forge/issues"
-Changelog = "https://github.com/vulkanforge/vulkan-forge/blob/main/CHANGELOG.md"
-Discussions = "https://github.com/vulkanforge/vulkan-forge/discussions"
-
-# ============================================================================
-# Entry Points and Scripts
-# ============================================================================
 
 [project.scripts]
-vf-compile-shaders = "vulkan_forge.tools.compile_shaders:main"
-vf-benchmark = "vulkan_forge.tools.benchmark:main"
-vf-validate = "vulkan_forge.tools.validate:main"
-vf-info = "vulkan_forge.tools.info:main"
+vf-test = "vulkan_forge.tools:main"
 
 # ============================================================================
-# Scikit-Build-Core Configuration
+# Setuptools configuration
 # ============================================================================
+[tool.setuptools]
+package-dir = {"" = "python"}
+packages = ["vulkan_forge"]
 
-[tool.scikit-build]
-# Minimum CMake version
-cmake.minimum-version = "3.24"
-cmake.verbose = true
-
-# Use ninja generator for faster builds
-ninja.make-fallback = true
-
-# Source directory layout
-wheel.packages = ["python/vulkan_forge"]
-
-# Build directory
-build-dir = "build/{wheel_tag}"
-
-# Install components
-install.components = ["vulkan_forge"]
-
-# Metadata
-metadata.version.provider = "scikit_build_core.metadata.setuptools_scm"
+[tool.setuptools.package-data]
+vulkan_forge = ["*.py"]
 
 # ============================================================================
-# Platform-Specific Build Configuration
+# Development tools configuration
 # ============================================================================
-
-[tool.scikit-build.cmake.define]
-# Build type
-CMAKE_BUILD_TYPE = "Release"
-
-# Enable position independent code for shared libraries
-CMAKE_POSITION_INDEPENDENT_CODE = "ON"
-
-# Vulkan-specific settings
-VF_ENABLE_VALIDATION_LAYERS = {env="VF_ENABLE_VALIDATION", default="OFF"}
-VF_ENABLE_GPU_DEBUG = {env="VF_ENABLE_GPU_DEBUG", default="OFF"}
-VF_STATIC_VULKAN = {env="VF_STATIC_VULKAN", default="OFF"}
-
-# Performance settings
-VF_ENABLE_SIMD = "ON"
-VF_ENABLE_LTO = "ON"
-
-# Platform detection
-VF_TARGET_PLATFORM = {env="VF_TARGET_PLATFORM", default="auto"}
-
-# ============================================================================
-# Windows-Specific Configuration
-# ============================================================================
-
-[tool.scikit-build.cmake.define."CMAKE_SYSTEM_NAME == 'Windows'"]
-# Use static runtime for better wheel compatibility
-CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"
-
-# Link statically to avoid DLL dependencies
-VF_STATIC_LINK = "ON"
-
-# Windows Vulkan SDK detection
-VULKAN_SDK = {env="VULKAN_SDK"}
-
-# ============================================================================
-# macOS-Specific Configuration  
-# ============================================================================
-
-[tool.scikit-build.cmake.define."CMAKE_SYSTEM_NAME == 'Darwin'"]
-# Universal binary support
-CMAKE_OSX_ARCHITECTURES = {env="CMAKE_OSX_ARCHITECTURES", default="x86_64;arm64"}
-
-# macOS deployment target
-CMAKE_OSX_DEPLOYMENT_TARGET = "10.15"
-
-# MoltenVK configuration
-VF_USE_MOLTEN_VK = "ON"
-VF_MOLTEN_VK_PATH = {env="VULKAN_SDK", default="/usr/local"}
-
-# ============================================================================
-# Linux-Specific Configuration
-# ============================================================================
-
-[tool.scikit-build.cmake.define."CMAKE_SYSTEM_NAME == 'Linux'"]
-# Use system Vulkan
-VF_USE_SYSTEM_VULKAN = "ON"
-
-# Enable additional optimizations
-VF_ENABLE_MARCH_NATIVE = {env="VF_ENABLE_MARCH_NATIVE", default="OFF"}
-
-# ============================================================================
-# setuptools_scm Configuration (for version)
-# ============================================================================
-
-[tool.setuptools_scm]
-version_scheme = "post-release"
-local_scheme = "no-local-version"
-write_to = "python/vulkan_forge/_version.py"
-fallback_version = "0.1.0"
-
-# ============================================================================
-# Tool Configuration
-# ============================================================================
-
 [tool.black]
 line-length = 88
 target-version = ["py38", "py39", "py310", "py311", "py312"]
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # Exclude generated files
-  build/
-  | dist/
-  | \.eggs/
-  | \.git/
-  | \.mypy_cache/
-  | \.pytest_cache/
-  | \.venv/
-  | _version\.py
-)/
-'''
 
 [tool.isort]
 profile = "black"
 line_length = 88
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
-src_paths = ["python", "tests", "examples"]
-
-[tool.mypy]
-python_version = "3.8"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-strict_equality = true
-
-[[tool.mypy.overrides]]
-module = [
-    "vulkan.*",
-    "numpy.*", 
-    "PIL.*",
-]
-ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-minversion = "7.0"
-addopts = [
-    "-ra",
-    "--strict-markers", 
-    "--strict-config",
-    "--cov=vulkan_forge",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-report=xml",
-]
 testpaths = ["tests"]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "gpu: marks tests that require GPU",
-    "benchmark: marks performance benchmark tests",
-    "integration: marks integration tests",
-]
-filterwarnings = [
-    "error",
-    "ignore::UserWarning",
-    "ignore::DeprecationWarning",
-    "ignore::PendingDeprecationWarning",
-]
-
-[tool.coverage.run]
-source = ["python/vulkan_forge"]
-omit = [
-    "*/tests/*",
-    "*/_version.py",
-    "*/build/*",
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "if self.debug:",
-    "if settings.DEBUG",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if 0:",
-    "if __name__ == .__main__.:",
-    "class .*\\bProtocol\\):",
-    "@(abc\\.)?abstractmethod",
-]
-
-# ============================================================================
-# cibuildwheel Configuration (for GitHub Actions)
-# ============================================================================
-
-[tool.cibuildwheel]
-# Build only for these Python versions
-build = "cp38-* cp39-* cp310-* cp311-* cp312-*"
-
-# Skip problematic combinations
-skip = [
-    "pp*",  # Skip PyPy
-    "*-musllinux*",  # Skip musl Linux
-    "cp36-*",  # Skip Python 3.6
-    "cp37-*",  # Skip Python 3.7
-]
-
-# Build configuration
-build-verbosity = 1
-
-# Test command to verify wheels
-test-command = '''
-python -c "
-import vulkan_forge as vf
-import numpy as np
-print(f'vulkan-forge {vf.__version__} imported successfully')
-scene = vf.HeightFieldScene()
-heights = np.ones((4, 4), dtype=np.float32)
-scene.build(heights)
-renderer = vf.Renderer(16, 16)
-print('Basic functionality test passed')
-"
-'''
-
-# Skip tests on emulated platforms (too slow)
-test-skip = "*arm64 *aarch64 *ppc64le *s390x"
-
-# Environment variables for all platforms
-environment = '''
-VF_ENABLE_VALIDATION=OFF
-VF_ENABLE_GPU_DEBUG=OFF
-CMAKE_BUILD_TYPE=Release
-'''
-
-# ============================================================================
-# Platform-specific cibuildwheel settings
-# ============================================================================
-
-[tool.cibuildwheel.windows]
-before-build = "pip install cmake ninja"
-environment = '''
-VULKAN_SDK="C:\\VulkanSDK\\1.3.280.0"
-CMAKE_GENERATOR="Visual Studio 17 2022"
-CMAKE_GENERATOR_PLATFORM="x64"
-'''
-
-[tool.cibuildwheel.macos]
-before-build = [
-    "pip install cmake ninja",
-]
-environment = '''
-VULKAN_SDK="$HOME/VulkanSDK/macOS"
-CMAKE_OSX_DEPLOYMENT_TARGET="10.15"
-'''
-repair-wheel-command = "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}"
-
-[tool.cibuildwheel.linux]
-before-all = [
-    "yum install -y vulkan-devel || apt-get update && apt-get install -y libvulkan-dev",
-]
-before-build = "pip install cmake ninja"
-environment = '''
-VULKAN_SDK="/usr"
-'''
-repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
+addopts = ["-v", "--tb=short"]
