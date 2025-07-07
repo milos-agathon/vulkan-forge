@@ -1,19 +1,19 @@
 /**
  * @file vulkan_forge_tracy.cpp
- * @brief Implementation of Vulkan-Forge Tracy integration
+ * @brief Implementation of Vulkan-Forge Tracy integration (CPU only)
  */
 
 #include "vulkan_forge_tracy.hpp"
 
 namespace vulkan_forge::profiling {
 
-// Global Tracy context instance
+// Global Tracy context instance (stub for now)
 VulkanTracyContext g_tracy_context;
 
 const char* get_config_string() {
 #if defined(VULKAN_FORGE_PROFILING_ENABLED) && VULKAN_FORGE_PROFILING_ENABLED
     static const char* config = 
-        "Tracy Profiling: ENABLED\n"
+        "Tracy Profiling: ENABLED (CPU Only)\n"
         #if defined(TRACY_ON_DEMAND)
         "Mode: On-demand\n"
         #else
@@ -24,11 +24,7 @@ const char* get_config_string() {
         #else
         "Callstacks: Disabled\n"  
         #endif
-        #if defined(TRACY_NO_VULKAN)
-        "Vulkan GPU Profiling: Disabled\n"
-        #else
-        "Vulkan GPU Profiling: Enabled\n"
-        #endif
+        "Vulkan GPU Profiling: Not implemented yet\n"
         #if defined(TRACY_NO_SAMPLING)
         "Sampling: Disabled\n"
         #else  

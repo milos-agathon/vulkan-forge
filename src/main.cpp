@@ -6,7 +6,7 @@
  * Eventually this will become the main Vulkan renderer.
  */
 
-#include "third_party/tracy/vulkan_forge_tracy.hpp"
+#include "../third_party/tracy/vulkan_forge_tracy.hpp"
 #include <iostream>
 #include <chrono>
 #include <thread>
