@@ -78,6 +78,14 @@ except ImportError as e:
     load_obj = ObjLoader = Mesh = MeshData = Vertex = None
     VertexFormat = IndexFormat = create_test_mesh = None
 
+# Import simplified mesh API
+try:
+    from .mesh import Mesh
+    from .vertex_format import VertexFormat
+    _successful_imports.append("mesh_simple")
+except Exception as e:  # pragma: no cover
+    _import_errors.append(f"mesh_simple: {e}")
+
 # Import core utilities
 try:
     from .core import (
