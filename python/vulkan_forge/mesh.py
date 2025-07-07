@@ -17,9 +17,9 @@ class Mesh:
     uvs: Optional[np.ndarray] = None
     indices: Optional[np.ndarray] = None
     vertex_format: Optional[VertexFormat] = None
-    _bounding_box: Optional[
-        Tuple[Tuple[float, float, float], Tuple[float, float, float]]
-    ] = field(default=None, init=False)
+    _bounding_box: Optional[Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = field(
+        default=None, init=False
+    )
 
     def __post_init__(self) -> None:
         self.vertices = np.asarray(self.vertices, dtype=np.float32)
@@ -38,9 +38,7 @@ class Mesh:
         if self.normals is not None:
             self.normals = np.asarray(self.normals, dtype=np.float32)
             if self.normals.shape != (self.vertices.shape[0], 3):
-                raise ValueError(
-                    "normals must match vertex count and have 3 components"
-                )
+                raise ValueError("normals must match vertex count and have 3 components")
 
         if self.uvs is not None:
             self.uvs = np.asarray(self.uvs, dtype=np.float32)
@@ -65,6 +63,7 @@ class Mesh:
 
     @property
     def vertex_count(self) -> int:
+        """Number of vertices (legacy-compat)."""
         return int(self.vertices.shape[0])
 
     @property
@@ -84,6 +83,7 @@ class Mesh:
 
     @property
     def triangle_count(self) -> int:
+        """Number of triangles (legacy-compat)."""
         return self.index_count // 3
 
     @property
