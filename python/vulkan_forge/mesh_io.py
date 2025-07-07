@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
+import ctypes
+
 import numpy as np
 
 from .mesh import Mesh
@@ -75,3 +77,41 @@ def load_obj(path: Union[str, Path]) -> Mesh:
     idx_arr = np.array(indices, dtype=np.int32)
 
     return Mesh(pos_arr, normals=norm_arr, uvs=uv_arr, indices=idx_arr)
+
+
+class MeshLoader:
+    """Minimal mesh loader for uploading to GPU buffers."""
+
+    def to_vertex_buffer(
+        self, mesh: Mesh, allocator
+    ) -> Tuple[Optional[ctypes.c_void_p], np.ndarray]:
+        """Convert ``mesh`` to an interleaved GPU vertex buffer."""
+
+        arrays = [np.ascontiguousarray(mesh.vertices[:, :3], dtype=np.float32)]
+        if mesh.normals is not None:
+            arrays.append(np.ascontiguousarray(mesh.normals, dtype=np.float32))
+        if mesh.uvs is not None:
+            arrays.append(np.ascontiguousarray(mesh.uvs, dtype=np.float32))
+
+        verts = np.hstack(arrays)
+
+        from .backend import allocate_buffer, BUFFER_USAGE_VERTEX
+
+        buf, alloc = allocate_buffer(allocator, verts.nbytes, BUFFER_USAGE_VERTEX)
+
+        if buf is not None:
+            try:
+                from . import vulkan_forge_native as native  # type: ignore
+
+                if hasattr(native, "upload_buffer"):
+                    native.upload_buffer(int(buf), verts)
+                elif hasattr(native, "map_allocation") and hasattr(
+                    native, "unmap_allocation"
+                ):
+                    ptr = native.map_allocation(int(alloc))
+                    ctypes.memmove(ptr, verts.ctypes.data, verts.nbytes)
+                    native.unmap_allocation(int(alloc))
+            except Exception:
+                pass
+
+        return buf, verts
