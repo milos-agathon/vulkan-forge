@@ -2,7 +2,8 @@
     "python.defaultInterpreterPath": "%LOCALAPPDATA%/r-miniconda/python.exe",
     "files.associations": {
         "*.rmd": "markdown",
-        "cstdint": "cpp"
+        "cstdint": "cpp",
+        "vector": "cpp"
     },
     "cmake.sourceDirectory": "C:/Users/milos/vulkan-forge/cpp"
 }

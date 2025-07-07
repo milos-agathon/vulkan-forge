@@ -5,6 +5,9 @@
 
 #include "vf/renderer.hpp"
 #include "vf/heightfield_scene.hpp"
+#include "vf/mesh_loader.hpp"
+#include "vf/mesh_pipeline.hpp"
+#include "vf/vertex_buffer.hpp"
 #include "vf/vma_util.hpp"
 #include "vf/vk_common.hpp"
 #include <unordered_map>
@@ -14,6 +17,11 @@ namespace py = pybind11;
 using vf::HeightFieldScene;
 using vf::Renderer;
 using vf::MappedBuffer;
+using vf::MeshLoader;
+using vf::MeshHandle;
+using vf::MeshPipeline;
+using vf::VertexBuffer;
+using vf::VertexLayout;
 
 /* -------------------------------------------------------------------------
    NumPy format to Vulkan format mapping
@@ -128,16 +136,44 @@ numpyToVector(py::array_t<float, py::array::c_style | py::array::forcecast> arr)
     return { src, src + n };
 }
 
+/* -------------------------------------------------------------------------
+   Convert vertex format string to enum
+   --------------------------------------------------------------------- */
+static vf::VertexLayout string_to_vertex_layout(const std::string& format) {
+    if (format == "position_3f") return vf::VertexLayouts::position3D();
+    if (format == "position_uv") return vf::VertexLayouts::positionUV();
+    if (format == "position_normal") return vf::VertexLayouts::positionNormal();
+    if (format == "position_normal_uv") return vf::VertexLayouts::positionNormalUV();
+    if (format == "position_color") return vf::VertexLayouts::positionColor();
+    throw std::runtime_error("Unsupported vertex format: " + format);
+}
+
 /* --------------------------------------------------------------------- */
 PYBIND11_MODULE(_vulkan_forge_native, m)
 {
-    m.doc() = "Minimal Vulkan height-field renderer";
+    m.doc() = "Vulkan-Forge: High-performance mesh rendering with Vulkan";
 
     py::register_exception<vf::VulkanForgeError>(m, "VulkanForgeError");
 
-    py::register_exception<vf::VulkanForgeError>(m, "VulkanForgeError");
+    /* ------------------------- VertexLayout ---------------------- */
+    py::class_<vf::VertexAttribute>(m, "VertexAttribute")
+        .def(py::init<uint32_t, VkFormat, uint32_t>(),
+             py::arg("location"), py::arg("format"), py::arg("offset"))
+        .def_readonly("location", &vf::VertexAttribute::location)
+        .def_readonly("format", &vf::VertexAttribute::format)
+        .def_readonly("offset", &vf::VertexAttribute::offset);
 
-    +    /* ------------------------- NumpyBuffer ---------------------- */
+    py::class_<vf::VertexLayout>(m, "VertexLayout")
+        .def(py::init<uint32_t, VkVertexInputRate>(),
+             py::arg("stride"), py::arg("input_rate") = VK_VERTEX_INPUT_RATE_VERTEX)
+        .def_readonly("stride", &vf::VertexLayout::stride)
+        .def("add_attribute", &vf::VertexLayout::addAttribute,
+             py::arg("location"), py::arg("format"), py::arg("offset"))
+        .def_property_readonly("attributes", [](const vf::VertexLayout& self) {
+            return self.attributes;
+        });
+
+    /* ------------------------- NumpyBuffer ---------------------- */
     py::class_<NumpyBuffer, std::shared_ptr<NumpyBuffer>>(m, "NumpyBuffer")
         .def(py::init([](std::uintptr_t allocator_ptr, py::buffer buf, uint32_t usage) {
             auto allocator = reinterpret_cast<VmaAllocator>(allocator_ptr);
@@ -155,6 +191,134 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
         .def("sync_from_gpu", &NumpyBuffer::sync_from_gpu)
         .def("__enter__", [](std::shared_ptr<NumpyBuffer> self) { return self; })
         .def("__exit__", [](NumpyBuffer& self, py::args) { });
+
+    /* ------------------------- MeshHandle ---------------------- */
+    py::class_<vf::MeshHandle, std::shared_ptr<vf::MeshHandle>>(m, "MeshHandle")
+        .def("bind", &vf::MeshHandle::bind, py::arg("command_buffer"))
+        .def("draw", &vf::MeshHandle::draw, 
+             py::arg("command_buffer"), py::arg("instance_count") = 1)
+        .def("destroy", &vf::MeshHandle::destroy)
+        .def_property_readonly("name", &vf::MeshHandle::getName)
+        .def_property_readonly("vertex_count", &vf::MeshHandle::getVertexCount)
+        .def_property_readonly("triangle_count", &vf::MeshHandle::getTriangleCount)
+        .def_property_readonly("vertex_layout", &vf::MeshHandle::getVertexLayout)
+        .def_property_readonly("is_valid", &vf::MeshHandle::isValid)
+        .def("get_info", &vf::MeshHandle::getInfo)
+        .def("__str__", &vf::MeshHandle::getInfo)
+        .def("__repr__", [](const vf::MeshHandle& self) {
+            return "<MeshHandle '" + self.getName() + "'>";
+        });
+
+    /* ------------------------- MeshLoader ---------------------- */
+    py::class_<vf::MeshLoader>(m, "MeshLoader")
+        .def(py::init<>())
+        .def("initialize", 
+             [](vf::MeshLoader& self, std::uintptr_t device, std::uintptr_t allocator,
+                std::uintptr_t command_pool, std::uintptr_t queue) {
+                 VkResult result = self.initialize(
+                     reinterpret_cast<VkDevice>(device),
+                     reinterpret_cast<VmaAllocator>(allocator),
+                     reinterpret_cast<VkCommandPool>(command_pool),
+                     reinterpret_cast<VkQueue>(queue)
+                 );
+                 if (result != VK_SUCCESS) {
+                     throw std::runtime_error("Failed to initialize MeshLoader: " + 
+                                            std::to_string(result));
+                 }
+             },
+             py::arg("device"), py::arg("allocator"), 
+             py::arg("command_pool"), py::arg("queue"))
+        .def("upload_mesh",
+             [](vf::MeshLoader& self, py::array_t<float> vertices, 
+                py::array_t<uint32_t> indices, const std::string& vertex_format,
+                const std::string& name) {
+                 
+                 py::buffer_info vertex_info = vertices.request();
+                 py::buffer_info index_info = indices.request();
+                 
+                 if (vertex_info.ndim != 2) {
+                     throw std::runtime_error("Vertices must be 2D array (N, components)");
+                 }
+                 if (index_info.ndim != 1) {
+                     throw std::runtime_error("Indices must be 1D array");
+                 }
+                 
+                 uint32_t vertex_count = static_cast<uint32_t>(vertex_info.shape[0]);
+                 uint32_t vertex_stride = static_cast<uint32_t>(vertex_info.shape[1] * sizeof(float));
+                 uint32_t index_count = static_cast<uint32_t>(index_info.shape[0]);
+                 
+                 vf::VertexLayout layout = string_to_vertex_layout(vertex_format);
+                 
+                 std::shared_ptr<vf::MeshHandle> handle;
+                 VkResult result = self.uploadMesh(
+                     vertex_info.ptr, vertex_count, vertex_stride,
+                     index_info.ptr, index_count, VK_INDEX_TYPE_UINT32,
+                     layout, name, handle
+                 );
+                 
+                 if (result != VK_SUCCESS) {
+                     throw std::runtime_error("Failed to upload mesh: " + 
+                                            std::to_string(result));
+                 }
+                 
+                 return handle;
+             },
+             py::arg("vertices"), py::arg("indices"), 
+             py::arg("vertex_format"), py::arg("name"))
+        .def("upload_mesh_auto",
+             [](vf::MeshLoader& self, py::array_t<float> vertices, 
+                py::array_t<uint32_t> indices, const std::string& name) {
+                 
+                 py::buffer_info vertex_info = vertices.request();
+                 py::buffer_info index_info = indices.request();
+                 
+                 if (vertex_info.ndim != 2) {
+                     throw std::runtime_error("Vertices must be 2D array (N, components)");
+                 }
+                 if (index_info.ndim != 1) {
+                     throw std::runtime_error("Indices must be 1D array");
+                 }
+                 
+                 uint32_t vertex_count = static_cast<uint32_t>(vertex_info.shape[0]);
+                 uint32_t vertex_stride = static_cast<uint32_t>(vertex_info.shape[1] * sizeof(float));
+                 uint32_t index_count = static_cast<uint32_t>(index_info.shape[0]);
+                 
+                 std::shared_ptr<vf::MeshHandle> handle;
+                 VkResult result = self.uploadMeshAuto(
+                     vertex_info.ptr, vertex_count, vertex_stride,
+                     index_info.ptr, index_count, VK_INDEX_TYPE_UINT32,
+                     name, handle
+                 );
+                 
+                 if (result != VK_SUCCESS) {
+                     throw std::runtime_error("Failed to upload mesh: " + 
+                                            std::to_string(result));
+                 }
+                 
+                 return handle;
+             },
+             py::arg("vertices"), py::arg("indices"), py::arg("name"))
+        .def("create_primitive",
+             [](vf::MeshLoader& self, const std::string& primitive_type,
+                float size, uint32_t subdivisions, const std::string& name) {
+                 
+                 std::shared_ptr<vf::MeshHandle> handle;
+                 VkResult result = self.createPrimitive(
+                     primitive_type, size, subdivisions, name, handle
+                 );
+                 
+                 if (result != VK_SUCCESS) {
+                     throw std::runtime_error("Failed to create primitive: " + 
+                                            std::to_string(result));
+                 }
+                 
+                 return handle;
+             },
+             py::arg("primitive_type"), py::arg("size"), 
+             py::arg("subdivisions") = 16, py::arg("name") = "primitive")
+        .def("remove_mesh", &vf::MeshLoader::removeMesh, py::arg("handle"))
+        .def("get_stats", &vf::MeshLoader::getStats)
+        .def("destroy", &vf::MeshLoader::destroy);
 
     /* ------------------------- HeightFieldScene ---------------------- */
     py::class_<HeightFieldScene>(m, "HeightFieldScene")
@@ -196,7 +360,6 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
         .def_property_readonly("width",  &Renderer::width)
         .def_property_readonly("height", &Renderer::height)
 
-        
         .def("set_vertex_buffer", [](Renderer& r, std::shared_ptr<NumpyBuffer> buffer, uint32_t binding) {
             r.set_vertex_buffer(buffer->get_buffer(), binding);
         },
@@ -224,6 +387,7 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
              py::arg("scene"),
              py::arg("spp") = 1);
 
+    /* ----------------------------- Utility Functions -------------------------- */
     m.def(
         "create_allocator",
         [](std::uintptr_t inst, std::uintptr_t phys, std::uintptr_t dev) {
@@ -269,6 +433,13 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
         },
         py::arg("allocator"));
 
+    /* Vertex layout factory functions */
+    m.def("vertex_layout_position_3d", &vf::VertexLayouts::position3D);
+    m.def("vertex_layout_position_uv", &vf::VertexLayouts::positionUV);
+    m.def("vertex_layout_position_normal", &vf::VertexLayouts::positionNormal);
+    m.def("vertex_layout_position_normal_uv", &vf::VertexLayouts::positionNormalUV);
+    m.def("vertex_layout_position_color", &vf::VertexLayouts::positionColor);
+
     /* Buffer usage flags */
     m.attr("BUFFER_USAGE_VERTEX_BUFFER") = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     m.attr("BUFFER_USAGE_INDEX_BUFFER") = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
@@ -276,4 +447,13 @@ PYBIND11_MODULE(_vulkan_forge_native, m)
     m.attr("BUFFER_USAGE_STORAGE_BUFFER") = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     m.attr("BUFFER_USAGE_TRANSFER_SRC") = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     m.attr("BUFFER_USAGE_TRANSFER_DST") = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+    /* Vulkan format constants */
+    m.attr("FORMAT_R32G32B32_SFLOAT") = VK_FORMAT_R32G32B32_SFLOAT;
+    m.attr("FORMAT_R32G32_SFLOAT") = VK_FORMAT_R32G32_SFLOAT;
+    m.attr("FORMAT_R32G32B32A32_SFLOAT") = VK_FORMAT_R32G32B32A32_SFLOAT;
+
+    /* Index types */
+    m.attr("INDEX_TYPE_UINT16") = VK_INDEX_TYPE_UINT16;
+    m.attr("INDEX_TYPE_UINT32") = VK_INDEX_TYPE_UINT32;
 }

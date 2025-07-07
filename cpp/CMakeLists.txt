@@ -1,4 +1,4 @@
-# CMakeLists.txt - Complete build configuration for Vulkan height field renderer
+# CMakeLists.txt - Complete build configuration for Vulkan-Forge mesh renderer
 cmake_minimum_required(VERSION 3.24)
 project(vulkan_forge LANGUAGES CXX)
 
@@ -32,7 +32,7 @@ if (NOT glm_FOUND)
     # Pull GLM 1.0.1 (latest stable) — header-only, no build step needed
     FetchContent_Declare(
         glm_headers
-        URL https://github.com/g-truc/glm/archive/refs/tags/1.0.1.zip        # ← new
+        URL https://github.com/g-truc/glm/archive/refs/tags/1.0.1.zip
     )
     FetchContent_Populate(glm_headers)
 
@@ -42,89 +42,190 @@ if (NOT glm_FOUND)
     add_library(glm::glm ALIAS glm_interface)
 endif()
 
-# Generate shader includes (simplified - in production use glslangValidator)
+# Shader compilation setup
 set(SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-# Vertex shader GLSL
-file(WRITE "${SHADER_DIR}/height_field.vert" "
+# Find glslc compiler
+find_program(GLSLC_EXECUTABLE NAMES glslc
+    HINTS 
+        $ENV{VULKAN_SDK}/bin
+        $ENV{VULKAN_SDK}/Bin
+    PATHS
+        /usr/bin
+        /usr/local/bin
+)
+
+if(GLSLC_EXECUTABLE)
+    message(STATUS "Found glslc: ${GLSLC_EXECUTABLE}")
+else()
+    message(WARNING "glslc not found. Shaders will use embedded fallbacks.")
+endif()
+
+# Create shader directory
+file(MAKE_DIRECTORY "${SHADER_DIR}")
+
+# Basic mesh vertex shader
+file(WRITE "${SHADER_DIR}/mesh.vert" "
 #version 450
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
-layout(location = 2) in vec4 inColor;
+layout(location = 2) in vec2 inTexCoord;
 
 layout(location = 0) out vec3 fragNormal;
-layout(location = 1) out vec4 fragColor;
+layout(location = 1) out vec2 fragTexCoord;
 layout(location = 2) out vec3 fragPos;
 
 layout(push_constant) uniform PushConstants {
-    mat4 mvp;
+    mat4 model;
+    mat4 view;
+    mat4 projection;
     vec3 lightDir;
     float time;
 } pc;
 
 void main() {
-    gl_Position = pc.mvp * vec4(inPosition, 1.0);
-    fragNormal = inNormal;
-    fragColor = inColor;
-    fragPos = inPosition;
+    vec4 worldPos = pc.model * vec4(inPosition, 1.0);
+    gl_Position = pc.projection * pc.view * worldPos;
+    
+    fragNormal = mat3(transpose(inverse(pc.model))) * inNormal;
+    fragTexCoord = inTexCoord;
+    fragPos = worldPos.xyz;
 }
 ")
 
-# Fragment shader GLSL
-file(WRITE "${SHADER_DIR}/height_field.frag" "
+# Basic mesh fragment shader
+file(WRITE "${SHADER_DIR}/mesh.frag" "
 #version 450
 
 layout(location = 0) in vec3 fragNormal;
-layout(location = 1) in vec4 fragColor;
+layout(location = 1) in vec2 fragTexCoord;
 layout(location = 2) in vec3 fragPos;
 
 layout(location = 0) out vec4 outColor;
 
 layout(push_constant) uniform PushConstants {
-    mat4 mvp;
+    mat4 model;
+    mat4 view;
+    mat4 projection;
     vec3 lightDir;
     float time;
 } pc;
 
 void main() {
     vec3 normal = normalize(fragNormal);
-    vec3 lightDir = normalize(pc.lightDir);
+    vec3 lightDir = normalize(-pc.lightDir);
     
     // Simple Phong shading
-    float ambient = 0.3;
-    float diffuse = max(dot(normal, -lightDir), 0.0) * 0.7;
+    float ambient = 0.2;
+    float diffuse = max(dot(normal, lightDir), 0.0) * 0.8;
     
-    vec3 viewDir = normalize(vec3(0, 0, 1) - fragPos);
-    vec3 reflectDir = reflect(lightDir, normal);
-    float specular = pow(max(dot(viewDir, reflectDir), 0.0), 32) * 0.5;
+    // Basic material color (can be replaced with textures later)
+    vec3 baseColor = vec3(0.7, 0.6, 0.8);
     
-    vec3 lighting = vec3(ambient + diffuse + specular);
-    outColor = vec4(fragColor.rgb * lighting, fragColor.a);
+    vec3 color = baseColor * (ambient + diffuse);
+    outColor = vec4(color, 1.0);
 }
 ")
 
-# Compile shaders to SPIR-V (simplified - using pre-compiled for example)
-# In production, you would use glslangValidator or similar
-file(WRITE "${GENERATED_DIR}/vertex_shader.inc" "
-// Placeholder - in production, compile vertex shader to SPIR-V
-0x07230203, 0x00010000, 0x00080001, 0x00000001, // ... rest of SPIR-V data
+# Wireframe fragment shader
+file(WRITE "${SHADER_DIR}/wireframe.frag" "
+#version 450
+
+layout(location = 0) in vec3 fragNormal;
+layout(location = 1) in vec2 fragTexCoord;
+layout(location = 2) in vec3 fragPos;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    // Simple wireframe color
+    outColor = vec4(0.0, 1.0, 0.0, 1.0);  // Green wireframe
+}
 ")
 
-file(WRITE "${GENERATED_DIR}/fragment_shader.inc" "
-// Placeholder - in production, compile fragment shader to SPIR-V
-0x07230203, 0x00010000, 0x00080001, 0x00000001, // ... rest of SPIR-V data
+# Compile shaders if glslc is available
+set(COMPILED_SHADERS)
+if(GLSLC_EXECUTABLE)
+    set(SHADER_SOURCES
+        "${SHADER_DIR}/mesh.vert"
+        "${SHADER_DIR}/mesh.frag"
+        "${SHADER_DIR}/wireframe.frag"
+    )
+    
+    foreach(SHADER_SOURCE ${SHADER_SOURCES})
+        get_filename_component(SHADER_NAME ${SHADER_SOURCE} NAME)
+        set(SHADER_OUTPUT "${GENERATED_DIR}/${SHADER_NAME}.spv")
+        
+        add_custom_command(
+            OUTPUT ${SHADER_OUTPUT}
+            COMMAND ${GLSLC_EXECUTABLE} ${SHADER_SOURCE} -o ${SHADER_OUTPUT}
+            DEPENDS ${SHADER_SOURCE}
+            COMMENT "Compiling ${SHADER_NAME}"
+        )
+        
+        list(APPEND COMPILED_SHADERS ${SHADER_OUTPUT})
+    endforeach()
+    
+    # Create custom target for shader compilation
+    add_custom_target(compile_shaders ALL DEPENDS ${COMPILED_SHADERS})
+endif()
+
+# Generate embedded shader headers
+file(WRITE "${GENERATED_DIR}/embedded_shaders.hpp" "
+#pragma once
+#include <vector>
+#include <cstdint>
+
+namespace vf {
+namespace EmbeddedShaders {
+    // Placeholder SPIR-V data - replace with actual compiled shaders
+    extern const std::vector<uint32_t> mesh_vert_spv;
+    extern const std::vector<uint32_t> mesh_frag_spv;
+    extern const std::vector<uint32_t> wireframe_frag_spv;
+}
+}
+")
+
+file(WRITE "${GENERATED_DIR}/embedded_shaders.cpp" "
+#include \"embedded_shaders.hpp\"
+
+namespace vf {
+namespace EmbeddedShaders {
+    // Minimal valid SPIR-V headers - replace with actual compiled shaders
+    const std::vector<uint32_t> mesh_vert_spv = {
+        0x07230203, 0x00010000, 0x00080001, 0x00000006, 0x00000000
+    };
+    
+    const std::vector<uint32_t> mesh_frag_spv = {
+        0x07230203, 0x00010000, 0x00080001, 0x00000006, 0x00000000
+    };
+    
+    const std::vector<uint32_t> wireframe_frag_spv = {
+        0x07230203, 0x00010000, 0x00080001, 0x00000006, 0x00000000
+    };
+}
+}
 ")
 
 # Create the Python extension module
 pybind11_add_module(_vulkan_forge_native
+    # Core source files
     src/bindings.cpp
     src/vk_common.cpp
     src/heightfield_scene.cpp
     src/renderer.cpp
     src/vma_util.cpp
+    
+    # New mesh pipeline source files
+    src/vertex_buffer.cpp
+    src/mesh_loader.cpp
+    src/mesh_pipeline.cpp
+    
+    # Generated embedded shaders
+    ${GENERATED_DIR}/embedded_shaders.cpp
 )
 
 # Set include directories
@@ -144,13 +245,23 @@ target_link_libraries(_vulkan_forge_native PRIVATE
 # Set compile definitions
 target_compile_definitions(_vulkan_forge_native PRIVATE
     VERSION_INFO=${PROJECT_VERSION}
+    VMA_IMPLEMENTATION
 )
 
 # Platform-specific settings
 if(MSVC)
     target_compile_options(_vulkan_forge_native PRIVATE /W4 /bigobj)
+    # Disable specific MSVC warnings for VMA
+    target_compile_options(_vulkan_forge_native PRIVATE /wd4127 /wd4100)
 else()
     target_compile_options(_vulkan_forge_native PRIVATE -Wall -Wextra -Wpedantic)
+    # Disable specific warnings for VMA
+    target_compile_options(_vulkan_forge_native PRIVATE -Wno-unused-parameter -Wno-missing-field-initializers)
+endif()
+
+# Add shader compilation dependency
+if(GLSLC_EXECUTABLE)
+    add_dependencies(_vulkan_forge_native compile_shaders)
 endif()
 
 # Installation rules
@@ -158,6 +269,12 @@ install(TARGETS _vulkan_forge_native
     LIBRARY DESTINATION lib/vulkan_forge
     ARCHIVE DESTINATION lib/vulkan_forge
     RUNTIME DESTINATION lib/vulkan_forge
+)
+
+# Install shader files
+install(DIRECTORY ${SHADER_DIR}/
+    DESTINATION share/vulkan_forge/shaders
+    FILES_MATCHING PATTERN "*.vert" PATTERN "*.frag" PATTERN "*.spv"
 )
 
 # Install Python files
@@ -172,10 +289,12 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/vulkan_forge/__init__.py")
 endif()
 
 # Print configuration summary
-message(STATUS "==== Vulkan Forge Configuration ====")
+message(STATUS "==== Vulkan-Forge Configuration ====")
 message(STATUS "Vulkan found: ${Vulkan_FOUND}")
 message(STATUS "Vulkan include: ${Vulkan_INCLUDE_DIRS}")
 message(STATUS "Vulkan library: ${Vulkan_LIBRARIES}")
 message(STATUS "GLM found: ${glm_FOUND}")
-message(STATUS "Python: ${PYTHON_EXECUTABLE}")
-message(STATUS "=====================================")
+message(STATUS "GLSLC found: ${GLSLC_EXECUTABLE}")
+message(STATUS "VMA headers: ${vma_headers_SOURCE_DIR}")
+message(STATUS "Python: ${Python_EXECUTABLE}")
+message(STATUS "======================================")

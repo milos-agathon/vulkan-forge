@@ -1,33 +1,156 @@
+# MANIFEST.in - Package data files for Vulkan-Forge
+# This file specifies which additional files to include in the source distribution
+
 # Include documentation
 include README.md
 include LICENSE
-include AGENTS.md
+include CHANGELOG.md
+recursive-include docs *.md *.rst *.txt
 
-# Include all shader files
+# Include project configuration
+include pyproject.toml
+include setup.cfg
+include requirements*.txt
+include tox.ini
+include .gitignore
+
+# Include C++ source code and headers
+recursive-include cpp *.hpp *.cpp *.h *.c
+recursive-include cpp/include *.hpp *.h
+recursive-include cpp/src *.cpp *.c
+recursive-include cpp/cmake *.cmake *.txt
+include cpp/CMakeLists.txt
+
+# Include shader files
+recursive-include cpp/shaders *.glsl *.vert *.frag *.comp *.geom *.tesc *.tese
 recursive-include python/vulkan_forge/shaders *.glsl *.vert *.frag *.comp *.spv
+recursive-include python/vulkan_forge/shaders *.py
+
+# Include Python package data
+recursive-include python/vulkan_forge *.py
+recursive-include python/vulkan_forge/loaders *.py
 include python/vulkan_forge/shaders/embedded_spirv.py
 
-# Include C++ source files if needed for source distributions
-recursive-include cpp *.cpp *.hpp *.h
-recursive-include cpp/shaders *.glsl *.vert *.frag
-
-# Include build configuration
-include setup.py
-include setup.cfg
-include pyproject.toml
-include build.py
-
-# Include tests
+# Include examples and test files
+recursive-include examples *.py *.md
 recursive-include tests *.py
 
-# Include examples
-recursive-include examples *.py
+# Include assets for examples and testing
+recursive-include assets *.obj *.ply *.png *.jpg *.jpeg *.tga
+recursive-include assets/models *.obj *.ply *.gltf *.glb
+recursive-include assets/textures *.png *.jpg *.jpeg *.tga *.dds
+recursive-include assets/shaders *.glsl *.vert *.frag *.spv
 
-# Exclude build artifacts
+# Include build tools and scripts
+include build.py
+include compile_shaders.py
+recursive-include scripts *.py *.sh *.bat
+
+# Include CI/CD configuration
+recursive-include .github *.yml *.yaml
+include .github/workflows/*.yml
+
+# Include development tools configuration
+include .vscode/settings.json
+include .vscode/tasks.json
+include .pytest_cache/CACHEDIR.TAG
+
+# Exclude development and build artifacts
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
 global-exclude __pycache__
-global-exclude *.py[co]
 global-exclude .git*
+global-exclude .DS_Store
 global-exclude *.so
 global-exclude *.dylib
 global-exclude *.dll
-global-exclude *.pyd
+global-exclude *.exe
+global-exclude .pytest_cache/*
+global-exclude build/*
+global-exclude dist/*
+global-exclude *.egg-info/*
+
+# Exclude IDE and editor files
+global-exclude .idea/*
+global-exclude .vscode/launch.json
+global-exclude *.swp
+global-exclude *.swo
+global-exclude *~
+
+# Exclude OS-specific files
+global-exclude Thumbs.db
+global-exclude .DS_Store
+global-exclude desktop.ini
+
+# Include specific build outputs that should be distributed
+include python/vulkan_forge/shaders/*.spv
+include cpp/include/shaders/*.h
+include cpp/include/shaders/*.hpp
+
+# Include version and build information
+include VERSION
+include BUILD_INFO.txt
+
+# Include package metadata
+include PKG-INFO
+include *.cfg
+
+# Special handling for editable installs
+include python/_vulkan_forge_editable.py
+
+# Include roadmap and development documentation
+include ROADMAP.md
+include AGENTS.md
+include CONTRIBUTING.md
+
+# Include performance benchmarks and test data
+recursive-include benchmarks *.py *.json *.md
+recursive-include test_data *.obj *.ply *.json
+
+# Include mesh pipeline specific files
+recursive-include python/vulkan_forge/loaders *.py
+include examples/*mesh*.py
+include examples/*obj*.py
+include examples/*bunny*.py
+
+# Include Stanford bunny and other test models
+include assets/models/bunny.obj
+include assets/models/cube.obj
+include assets/models/sphere.obj
+include assets/models/test_*.obj
+
+# Include shader compilation tools
+include python/vulkan_forge/shaders/compile_all_shaders.py
+include cpp/cmake/SpirvToHeader.cmake
+
+# Include performance test results and baselines
+include performance_baselines.json
+include benchmark_results.json
+
+# Documentation images and figures
+recursive-include man/figures *.png *.jpg *.svg
+include *.png
+include *.jpg
+
+# Include CMake find modules and toolchain files
+recursive-include cmake *.cmake
+recursive-include cmake/modules *.cmake
+
+# Version control and project management
+include .gitattributes
+include .gitmodules
+
+# Include platform-specific build files
+include vs_buildtools.exe
+include vs_community.exe
+
+# Include development environment setup
+include requirements-dev.txt
+include requirements-test.txt
+include environment.yml
+
+# Mesh pipeline deliverable specific inclusions
+include roadmap_delivery_*.md
+include MESH_PIPELINE_STATUS.md
+include PERFORMANCE_TARGETS.json
