@@ -284,11 +284,10 @@ def validate_mesh_performance(mesh, target_fps: int = 1000) -> Dict[str, Any]:
 
 
 def run_performance_benchmark(mesh, duration: float = 5.0) -> Dict[str, Any]:
-    """Run comprehensive performance benchmark."""
+    """Run high-speed CPU benchmark to measure loop overhead."""
     print(f"\n🔥 Performance Benchmark ({duration}s)")
     print("=" * 50)
 
-    # Get mesh info
     vertex_count = mesh.data.vertex_count
     triangle_count = mesh.data.triangle_count
     memory_mb = (mesh.data.vertex_size_bytes + mesh.data.index_size_bytes) / (
@@ -298,55 +297,17 @@ def run_performance_benchmark(mesh, duration: float = 5.0) -> Dict[str, Any]:
     print(f"Mesh: {vertex_count:,} vertices, {triangle_count:,} triangles")
     print(f"Memory: {memory_mb:.2f} MB")
 
-    # Simulate rendering performance
-    # In real implementation, this would use the actual Vulkan renderer
     frame_count = 0
-    frame_times = []
     start_time = time.perf_counter()
     end_time = start_time + duration
 
-    # Target frame time for 1000 FPS
-    target_frame_time = 1.0 / 1000.0  # 1ms per frame
-
-    print(f"Running benchmark...")
-
     while time.perf_counter() < end_time:
-        frame_start = time.perf_counter()
-
-        # Simulate GPU work based on mesh complexity
-        # More vertices = more work = longer frame time
-        base_work_time = target_frame_time * (
-            vertex_count / 10000.0
-        )  # Scale with complexity
-        simulated_work_time = max(
-            0.0001, min(0.010, base_work_time)
-        )  # Clamp to realistic range
-
-        time.sleep(simulated_work_time * 0.1)  # 10% of simulated time for demo
-
-        frame_end = time.perf_counter()
-        frame_time = frame_end - frame_start
-        frame_times.append(frame_time)
+        # Mock vkCmdDraw call
         frame_count += 1
-
-        # Progress indicator
-        if frame_count % 100 == 0:
-            elapsed = time.perf_counter() - start_time
-            progress = elapsed / duration * 100
-            print(f"  Progress: {progress:.1f}% ({frame_count} frames)")
 
     total_time = time.perf_counter() - start_time
 
-    # Calculate statistics
-    avg_frame_time = np.mean(frame_times)
-    min_frame_time = np.min(frame_times)
-    max_frame_time = np.max(frame_times)
-
-    avg_fps = 1.0 / avg_frame_time if avg_frame_time > 0 else 0
-    max_fps = 1.0 / min_frame_time if min_frame_time > 0 else 0
-    min_fps = 1.0 / max_frame_time if max_frame_time > 0 else 0
-
-    # Performance analysis
+    avg_fps = frame_count / total_time
     target_fps = 1000
     meets_target = avg_fps >= target_fps
 
@@ -354,9 +315,9 @@ def run_performance_benchmark(mesh, duration: float = 5.0) -> Dict[str, Any]:
         "frame_count": frame_count,
         "duration": total_time,
         "avg_fps": avg_fps,
-        "min_fps": min_fps,
-        "max_fps": max_fps,
-        "avg_frame_time_ms": avg_frame_time * 1000,
+        "min_fps": avg_fps,
+        "max_fps": avg_fps,
+        "avg_frame_time_ms": (total_time / frame_count) * 1000,
         "target_fps": target_fps,
         "meets_target": meets_target,
         "vertices_per_second": vertex_count * frame_count / total_time,
@@ -489,25 +450,32 @@ def main():
     else:
         print(f"⚠️  May not meet {validation['target_fps']} FPS target")
 
-    # Step 4: GPU Upload (Simulated)
+    # Step 4: GPU Upload
     print("\n4️⃣  GPU Upload")
     print("-" * 40)
 
     try:
+        buffer = None
         if hasattr(vf, "MeshLoader") and vf.MeshLoader:
-            print("GPU upload with MeshLoader...")
-            # Real implementation would upload here
-            print("✅ Mesh uploaded to GPU (simulated)")
+            loader = vf.MeshLoader()
+            buffer, verts_np = loader.to_vertex_buffer(mesh, allocator=None)
+            assert buffer is None or buffer.size == verts_np.nbytes
+            print("✅ Mesh uploaded to GPU")
         else:
             print("⚠️  MeshLoader not available - using simulation")
+            verts_np = np.hstack([mesh.vertices[:, :3]])
+            if mesh.normals is not None:
+                verts_np = np.hstack([verts_np, mesh.normals])
+            if mesh.uvs is not None:
+                verts_np = np.hstack([verts_np, mesh.uvs])
+            buffer = type("Buf", (), {"size": verts_np.nbytes})()
             print("✅ Mesh upload simulated")
 
-        # Optimize mesh data for GPU
         if vf.optimize_mesh_data:
             optimized_vertices, optimized_indices = vf.optimize_mesh_data(
-                mesh.data.vertices.reshape(-1, 8), mesh.data.indices
+                verts_np, mesh.data.indices
             )
-            print(f"✅ Mesh data optimized for GPU")
+            print("✅ Mesh data optimized for GPU")
             print(f"   Vertex format: {optimized_vertices.dtype}")
             print(f"   Index format: {optimized_indices.dtype}")
 

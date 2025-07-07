@@ -65,13 +65,14 @@ _successful_imports = []
 
 # Import mesh loading components (pure Python)
 try:
-    from .mesh_io import load_obj
+    from .mesh_io import load_obj, MeshLoader
 
     MESH_LOADING_AVAILABLE = True
     _successful_imports.append("mesh_io")
 except Exception as e:  # pragma: no cover - optional feature
     _import_errors.append(f"mesh_io: {e}")
     load_obj = None
+    MeshLoader = None
     MESH_LOADING_AVAILABLE = False
 
 # Import simplified mesh API
@@ -437,7 +438,7 @@ __all__ = [
 
 # Add mesh loading components
 if MESH_LOADING_AVAILABLE:
-    __all__.append("load_obj")
+    __all__.extend(["load_obj", "MeshLoader"])
 
 # Add convenience functions
 __all__.extend(["create_cube", "create_sphere", "benchmark_mesh_rendering"])
