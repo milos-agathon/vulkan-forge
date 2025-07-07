@@ -1,0 +1,472 @@
+# ============================================================================
+# cibuildwheel.toml - Cross-platform wheel building configuration
+# ============================================================================
+# Comprehensive configuration for building vulkan-forge wheels across
+# Windows, macOS (x64/arm64), and Linux (x64/aarch64) with proper
+# Vulkan SDK installation and platform-specific optimizations
+# ============================================================================
+
+[tool.cibuildwheel]
+# ============================================================================
+# Global Configuration
+# ============================================================================
+
+# Python versions to build wheels for
+build = [
+    "cp38-*",
+    "cp39-*", 
+    "cp310-*",
+    "cp311-*",
+    "cp312-*"
+]
+
+# Skip problematic combinations
+skip = [
+    "pp*",              # Skip PyPy (not compatible with our C++ extensions)
+    "*-musllinux*",     # Skip musl Linux (Vulkan compatibility issues)
+    "cp36-*",           # Python 3.6 EOL
+    "cp37-*",           # Python 3.7 EOL
+    "*-win32",          # Skip 32-bit Windows
+    "*-manylinux_i686", # Skip 32-bit Linux
+]
+
+# Build verbosity (0=minimal, 1=normal, 2=verbose)
+build-verbosity = 1
+
+# Free-threaded Python builds (skip for now)
+free-threaded-support = false
+
+# ============================================================================
+# Global Environment Variables
+# ============================================================================
+
+# Environment variables for all platforms
+environment = { 
+    CMAKE_BUILD_TYPE = "Release",
+    VF_ENABLE_VALIDATION = "OFF",
+    VF_ENABLE_GPU_DEBUG = "OFF", 
+    VF_ENABLE_LTO = "ON",
+    VF_ENABLE_SIMD = "ON",
+    CMAKE_BUILD_PARALLEL_LEVEL = "2",
+    MACOSX_DEPLOYMENT_TARGET = "10.15"
+}
+
+# ============================================================================
+# Testing Configuration
+# ============================================================================
+
+# Test command to verify wheels work correctly
+test-command = '''
+python -c "
+import sys
+import time
+import numpy as np
+
+print(f'🧪 Testing vulkan-forge wheel on {sys.platform}')
+print(f'Python: {sys.version}')
+print('-' * 60)
+
+try:
+    import vulkan_forge as vf
+    print(f'✓ vulkan-forge {vf.__version__} imported successfully')
+    
+    # Test 1: Basic functionality
+    scene = vf.HeightFieldScene()
+    heights = np.ones((8, 8), dtype=np.float32)
+    scene.build(heights, zscale=1.0)
+    print(f'✓ Scene created with {scene.n_indices} indices')
+    
+    # Test 2: Renderer creation
+    renderer = vf.Renderer(32, 32)
+    print('✓ Renderer created successfully')
+    
+    # Test 3: Performance test
+    start_time = time.time()
+    n_builds = 50
+    for i in range(n_builds):
+        test_heights = np.random.rand(16, 16).astype(np.float32)
+        test_scene = vf.HeightFieldScene()
+        test_scene.build(test_heights)
+    elapsed = time.time() - start_time
+    builds_per_sec = n_builds / elapsed
+    print(f'✓ Performance: {builds_per_sec:.1f} scene builds/sec')
+    
+    # Test 4: Memory handling
+    large_heights = np.random.rand(128, 128).astype(np.float32)
+    large_scene = vf.HeightFieldScene()
+    large_scene.build(large_heights)
+    print(f'✓ Large scene: {large_scene.n_indices} indices')
+    
+    # Test 5: Multiple data types
+    for dtype in [np.float32, np.float64]:
+        typed_heights = np.ones((4, 4), dtype=dtype)
+        typed_scene = vf.HeightFieldScene()
+        typed_scene.build(typed_heights)
+    print('✓ Multiple NumPy dtypes supported')
+    
+    print('🎉 All tests passed!')
+    
+except ImportError as e:
+    print(f'❌ Import failed: {e}')
+    sys.exit(1)
+except Exception as e:
+    print(f'❌ Test failed: {e}')
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+"
+'''
+
+# Skip tests on emulated platforms (too slow and unreliable)
+test-skip = [
+    "*-macosx_arm64",   # Skip ARM64 macOS when running on x64 
+    "*-linux_aarch64",  # Skip ARM64 Linux (emulated)
+    "*-linux_ppc64le",  # Skip PowerPC
+    "*-linux_s390x",    # Skip IBM Z
+]
+
+# Only test every 3rd wheel to save time (tests are comprehensive)
+test-extras = "test"
+
+# ============================================================================
+# Windows Configuration
+# ============================================================================
+
+[tool.cibuildwheel.windows]
+# Architecture to build for
+archs = ["AMD64"]
+
+# Windows-specific environment variables
+environment = { 
+    CMAKE_GENERATOR = "Visual Studio 17 2022",
+    CMAKE_GENERATOR_PLATFORM = "x64",
+    CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded",
+    VF_STATIC_LINK = "ON",
+    VF_USE_SYSTEM_VULKAN = "OFF"
+}
+
+# Before building: install dependencies and Vulkan SDK
+before-all = '''
+echo "Setting up Windows build environment..."
+
+REM Install Vulkan SDK
+echo "Installing Vulkan SDK..."
+set VULKAN_VERSION=1.3.280.0
+set INSTALLER_URL=https://sdk.lunarg.com/sdk/download/%VULKAN_VERSION%/windows/VulkanSDK-%VULKAN_VERSION%-Installer.exe
+set INSTALLER_PATH=%TEMP%\VulkanSDK-Installer.exe
+
+echo "Downloading Vulkan SDK from %INSTALLER_URL%"
+powershell -Command "Invoke-WebRequest -Uri '%INSTALLER_URL%' -OutFile '%INSTALLER_PATH%'"
+
+echo "Installing Vulkan SDK silently..."
+start /wait "" "%INSTALLER_PATH%" /S
+
+REM Find and set Vulkan SDK path
+for /f "delims=" %%i in ('dir /b /ad "C:\VulkanSDK\*" 2^>nul ^| sort /r') do (
+    set VULKAN_SDK=C:\VulkanSDK\%%i
+    goto :vulkan_found
+)
+
+echo "ERROR: Vulkan SDK installation not found!"
+exit /b 1
+
+:vulkan_found
+echo "Vulkan SDK found at: %VULKAN_SDK%"
+echo VULKAN_SDK=%VULKAN_SDK%>> %GITHUB_ENV%
+echo %VULKAN_SDK%\Bin>> %GITHUB_PATH%
+
+REM Verify installation
+"%VULKAN_SDK%\Bin\vulkaninfo.exe" --summary
+if errorlevel 1 (
+    echo "WARNING: vulkaninfo failed, but continuing..."
+)
+
+echo "Windows environment setup complete"
+'''
+
+# Before each build: install Python build dependencies
+before-build = [
+    "python -m pip install --upgrade pip setuptools wheel",
+    "python -m pip install cmake ninja pybind11 numpy",
+    "python -m pip install setuptools-scm",  # For version detection
+]
+
+# Repair wheels to bundle dependencies
+repair-wheel-command = "delvewheel repair --add-path {delocate_archs} -w {dest_dir} {wheel}"
+
+# ============================================================================
+# macOS Configuration
+# ============================================================================
+
+[tool.cibuildwheel.macos]
+# Build for both architectures
+archs = ["x86_64", "arm64"]
+
+# macOS-specific environment variables
+environment = { 
+    CMAKE_OSX_DEPLOYMENT_TARGET = "10.15",
+    VF_USE_MOLTEN_VK = "ON",
+    VF_USE_SYSTEM_VULKAN = "OFF",
+    CMAKE_BUILD_TYPE = "Release"
+}
+
+# Before all builds: install Vulkan SDK with MoltenVK
+before-all = '''
+echo "Setting up macOS build environment..."
+
+# Install Vulkan SDK
+VULKAN_VERSION="1.3.280.1"
+DMG_URL="https://sdk.lunarg.com/sdk/download/${VULKAN_VERSION}/mac/vulkansdk-macos-${VULKAN_VERSION}.dmg"
+DMG_FILE="vulkansdk.dmg"
+
+echo "Downloading Vulkan SDK from: $DMG_URL"
+curl -L "$DMG_URL" -o "$DMG_FILE"
+
+echo "Mounting Vulkan SDK DMG..."
+hdiutil attach "$DMG_FILE"
+
+echo "Installing Vulkan SDK..."
+sudo "/Volumes/vulkansdk-macos-${VULKAN_VERSION}/InstallVulkan.app/Contents/MacOS/InstallVulkan" \
+    --root "$HOME/VulkanSDK" \
+    --accept-licenses \
+    --default-answer \
+    --confirm-command install
+
+echo "Cleaning up DMG..."
+hdiutil detach "/Volumes/vulkansdk-macos-${VULKAN_VERSION}"
+rm -f "$DMG_FILE"
+
+# Set up environment
+export VULKAN_SDK="$HOME/VulkanSDK/macOS"
+echo "VULKAN_SDK=$VULKAN_SDK" >> $GITHUB_ENV
+echo "$VULKAN_SDK/bin" >> $GITHUB_PATH
+
+# Verify installation
+if [ -f "$VULKAN_SDK/bin/vulkaninfo" ]; then
+    "$VULKAN_SDK/bin/vulkaninfo" --summary || echo "vulkaninfo failed, but continuing..."
+else
+    echo "WARNING: vulkaninfo not found at $VULKAN_SDK/bin/vulkaninfo"
+fi
+
+# Install system dependencies
+echo "Installing system dependencies..."
+brew update
+brew install ninja
+
+echo "macOS environment setup complete"
+'''
+
+# Before each build: install Python dependencies
+before-build = [
+    "python -m pip install --upgrade pip setuptools wheel",
+    "python -m pip install cmake ninja pybind11 numpy",
+    "python -m pip install setuptools-scm",
+]
+
+# Architecture-specific environment variables
+environment-pass = ["VULKAN_SDK"]
+
+# Repair wheels with proper library linking
+repair-wheel-command = "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}"
+
+# ============================================================================
+# Linux Configuration  
+# ============================================================================
+
+[tool.cibuildwheel.linux]
+# Build for multiple architectures
+archs = ["x86_64", "aarch64"]
+
+# Use manylinux for better compatibility
+manylinux-x86_64-image = "manylinux2014"
+manylinux-aarch64-image = "manylinux2014"
+
+# Linux-specific environment variables
+environment = { 
+    VF_USE_SYSTEM_VULKAN = "ON",
+    CMAKE_BUILD_TYPE = "Release",
+    LD_LIBRARY_PATH = "/usr/local/lib:/usr/lib/x86_64-linux-gnu",
+}
+
+# Before all builds: install system dependencies
+before-all-linux = '''
+echo "Setting up Linux build environment..."
+
+# Update package lists
+if command -v yum >/dev/null 2>&1; then
+    # Red Hat/CentOS/Fedora
+    echo "Using yum package manager..."
+    yum update -y
+    
+    # Install development tools
+    yum groupinstall -y "Development Tools"
+    yum install -y cmake ninja-build
+    
+    # Install Vulkan development packages
+    yum install -y vulkan-devel vulkan-tools mesa-vulkan-devel
+    
+elif command -v apt-get >/dev/null 2>&1; then
+    # Ubuntu/Debian
+    echo "Using apt package manager..."
+    apt-get update
+    
+    # Install development tools
+    apt-get install -y build-essential cmake ninja-build pkg-config
+    
+    # Install Vulkan development packages
+    apt-get install -y libvulkan-dev vulkan-tools vulkan-validationlayers-dev
+    apt-get install -y libglfw3-dev libglm-dev
+    
+elif command -v dnf >/dev/null 2>&1; then
+    # Modern Fedora
+    echo "Using dnf package manager..."
+    dnf update -y
+    dnf groupinstall -y "Development Tools"
+    dnf install -y cmake ninja-build vulkan-devel vulkan-tools
+    
+else
+    echo "WARNING: Unknown package manager, hoping dependencies are available..."
+fi
+
+# Set Vulkan SDK environment
+export VULKAN_SDK="/usr"
+echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
+
+# Verify Vulkan installation
+if command -v vulkaninfo >/dev/null 2>&1; then
+    vulkaninfo --summary || echo "vulkaninfo failed, but continuing..."
+else
+    echo "WARNING: vulkaninfo not found"
+fi
+
+echo "Linux environment setup complete"
+'''
+
+# Before each build: install Python dependencies
+before-build = [
+    "python -m pip install --upgrade pip setuptools wheel",
+    "python -m pip install cmake ninja pybind11 numpy",
+    "python -m pip install setuptools-scm",
+]
+
+# Repair wheels for better portability
+repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --plat {platform_tag}"
+
+# ============================================================================
+# Platform-Specific Overrides
+# ============================================================================
+
+# Windows ARM64 (future support)
+[tool.cibuildwheel.windows.overrides]
+select = "*-win_arm64"
+# Skip Windows ARM64 for now (limited Vulkan driver support)
+skip = "*-win_arm64"
+
+# macOS Intel-specific settings
+[[tool.cibuildwheel.macos.overrides]]
+select = "*-macosx_x86_64"
+environment = { CMAKE_OSX_ARCHITECTURES = "x86_64" }
+
+# macOS Apple Silicon-specific settings  
+[[tool.cibuildwheel.macos.overrides]]
+select = "*-macosx_arm64"
+environment = { CMAKE_OSX_ARCHITECTURES = "arm64" }
+# Skip testing on x64 runners (cross-compilation)
+test-skip = "*-macosx_arm64"
+
+# Linux x86_64 optimizations
+[[tool.cibuildwheel.linux.overrides]]
+select = "*-linux_x86_64"
+environment = { VF_ENABLE_MARCH_NATIVE = "OFF", VF_ENABLE_SIMD = "ON" }
+
+# Linux ARM64 cross-compilation
+[[tool.cibuildwheel.linux.overrides]]
+select = "*-linux_aarch64"
+environment = { CMAKE_TOOLCHAIN_FILE = "", VF_ENABLE_MARCH_NATIVE = "OFF" }
+# Skip testing (emulated, too slow)
+test-skip = "*-linux_aarch64"
+
+# ============================================================================
+# Debugging and Development Options
+# ============================================================================
+
+# Uncomment for debugging builds
+# [tool.cibuildwheel.environment]
+# CIBW_BUILD_VERBOSITY = "3"
+# CMAKE_VERBOSE_MAKEFILE = "ON"
+# VF_ENABLE_VALIDATION = "ON"
+# VF_ENABLE_GPU_DEBUG = "ON"
+
+# ============================================================================
+# Advanced Configuration
+# ============================================================================
+
+# Container engine (for Linux builds)
+container-engine = "docker"
+
+# Dependency constraints
+dependency-constraints = "constraints.txt"
+
+# Build frontend
+build-frontend = "build"
+
+# ============================================================================
+# Platform-Specific Test Commands
+# ============================================================================
+
+# Windows-specific test refinements
+[tool.cibuildwheel.windows.config]
+test-command = '''
+python -c "
+import sys
+print(f'Windows wheel test - Python {sys.version}')
+import vulkan_forge as vf
+import numpy as np
+
+# Windows-specific tests
+scene = vf.HeightFieldScene()
+heights = np.ones((16, 16), dtype=np.float32)  
+scene.build(heights)
+
+renderer = vf.Renderer(64, 64)
+print(f'✓ Windows test passed - {scene.n_indices} indices')
+"
+'''
+
+# macOS-specific test refinements
+[tool.cibuildwheel.macos.config]  
+test-command = '''
+python -c "
+import sys
+print(f'macOS wheel test - Python {sys.version}')
+import vulkan_forge as vf
+import numpy as np
+
+# macOS MoltenVK tests
+scene = vf.HeightFieldScene()
+heights = np.ones((16, 16), dtype=np.float32)
+scene.build(heights)
+
+renderer = vf.Renderer(64, 64)  
+print(f'✓ macOS test passed - {scene.n_indices} indices')
+"
+'''
+
+# Linux-specific test refinements
+[tool.cibuildwheel.linux.config]
+test-command = '''
+python -c "
+import sys
+print(f'Linux wheel test - Python {sys.version}')
+import vulkan_forge as vf
+import numpy as np
+
+# Linux system Vulkan tests
+scene = vf.HeightFieldScene()
+heights = np.ones((16, 16), dtype=np.float32)
+scene.build(heights)
+
+renderer = vf.Renderer(64, 64)
+print(f'✓ Linux test passed - {scene.n_indices} indices')
+"
+'''

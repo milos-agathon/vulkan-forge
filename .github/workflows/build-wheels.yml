@@ -1,0 +1,658 @@
+# ============================================================================
+# Dedicated Wheel Builder for vulkan-forge
+# ============================================================================
+# Focused on cross-platform wheel generation using cibuildwheel
+# Handles complex C++ dependencies and comprehensive wheel testing
+# Can be triggered manually or automatically on releases
+# ============================================================================
+
+name: Build Wheels
+
+on:
+  # Manual trigger for wheel building
+  workflow_dispatch:
+    inputs:
+      python_versions:
+        description: 'Python versions to build (space-separated, e.g., "3.9 3.10 3.11")'
+        required: false
+        default: "3.8 3.9 3.10 3.11 3.12"
+      platforms:
+        description: 'Platforms to build for (space-separated: windows linux macos-x64 macos-arm64 linux-arm64)'
+        required: false
+        default: "windows linux macos-x64 macos-arm64 linux-arm64"
+      test_wheels:
+        description: 'Run comprehensive wheel tests'
+        type: boolean
+        default: true
+      upload_to_pypi:
+        description: 'Upload wheels to PyPI (requires PYPI_API_TOKEN)'
+        type: boolean
+        default: false
+  
+  # Automatic trigger on releases
+  release:
+    types: [published]
+  
+  # Trigger on version tags
+  push:
+    tags:
+      - 'v*'
+
+env:
+  # Vulkan SDK versions
+  VULKAN_SDK_VERSION: "1.3.280"
+  MACOS_VULKAN_SDK_VERSION: "1.3.280.1"
+  
+  # Build configuration
+  CMAKE_BUILD_TYPE: Release
+  CIBW_BUILD_VERBOSITY: 1
+
+jobs:
+  # ========================================================================
+  # Determine Build Matrix
+  # ========================================================================
+  setup:
+    name: Setup build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      python_versions: ${{ steps.matrix.outputs.python_versions }}
+      should_upload: ${{ steps.matrix.outputs.should_upload }}
+    
+    steps:
+      - name: Determine build configuration
+        id: matrix
+        run: |
+          # Parse input parameters or use defaults
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            PYTHON_VERSIONS="${{ github.event.inputs.python_versions }}"
+            PLATFORMS="${{ github.event.inputs.platforms }}"
+            UPLOAD_TO_PYPI="${{ github.event.inputs.upload_to_pypi }}"
+          else
+            # Release/tag builds - build everything
+            PYTHON_VERSIONS="3.8 3.9 3.10 3.11 3.12"
+            PLATFORMS="windows linux macos-x64 macos-arm64 linux-arm64"
+            UPLOAD_TO_PYPI="true"
+          fi
+          
+          echo "python_versions=$PYTHON_VERSIONS" >> $GITHUB_OUTPUT
+          echo "should_upload=$UPLOAD_TO_PYPI" >> $GITHUB_OUTPUT
+          
+          # Generate matrix
+          MATRIX='{"include":['
+          
+          for platform in $PLATFORMS; do
+            case $platform in
+              windows)
+                MATRIX+='{
+                  "os": "windows-latest",
+                  "arch": "x86_64",
+                  "platform_id": "win_amd64",
+                  "cibw_archs": "AMD64"
+                },'
+                ;;
+              linux)
+                MATRIX+='{
+                  "os": "ubuntu-latest", 
+                  "arch": "x86_64",
+                  "platform_id": "linux_x86_64",
+                  "cibw_archs": "x86_64"
+                },'
+                ;;
+              linux-arm64)
+                MATRIX+='{
+                  "os": "ubuntu-latest",
+                  "arch": "aarch64", 
+                  "platform_id": "linux_aarch64",
+                  "cibw_archs": "aarch64"
+                },'
+                ;;
+              macos-x64)
+                MATRIX+='{
+                  "os": "macos-13",
+                  "arch": "x86_64",
+                  "platform_id": "macosx_x86_64", 
+                  "cibw_archs": "x86_64"
+                },'
+                ;;
+              macos-arm64)
+                MATRIX+='{
+                  "os": "macos-14",
+                  "arch": "arm64",
+                  "platform_id": "macosx_arm64",
+                  "cibw_archs": "arm64"  
+                },'
+                ;;
+            esac
+          done
+          
+          # Remove trailing comma and close
+          MATRIX="${MATRIX%,}]}"
+          
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          echo "Build matrix: $MATRIX"
+
+  # ========================================================================
+  # Build Wheels Using cibuildwheel
+  # ========================================================================
+  build-wheels:
+    name: Build wheels for ${{ matrix.platform_id }}
+    needs: setup
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          
+      # ====================================================================
+      # Platform-specific Vulkan SDK Installation
+      # ====================================================================
+      
+      - name: Cache Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: C:\VulkanSDK
+          key: vulkan-sdk-windows-${{ env.VULKAN_SDK_VERSION }}
+          
+      - name: Install Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if (Test-Path "C:\VulkanSDK\$env:VULKAN_SDK_VERSION") {
+            Write-Host "Vulkan SDK already cached"
+            $env:VULKAN_SDK = "C:\VulkanSDK\$env:VULKAN_SDK_VERSION"
+          } else {
+            Write-Host "Installing Vulkan SDK $env:VULKAN_SDK_VERSION..."
+            
+            $url = "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/VulkanSDK-$env:VULKAN_SDK_VERSION-Installer.exe"
+            $installer = "$env:TEMP\VulkanSDK-Installer.exe"
+            
+            Write-Host "Downloading: $url"
+            Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+            
+            Write-Host "Installing Vulkan SDK..."
+            Start-Process -FilePath $installer -ArgumentList "/S" -Wait
+            
+            $vulkanPath = Get-ChildItem "C:\VulkanSDK" | Sort-Object Name -Descending | Select-Object -First 1
+            $env:VULKAN_SDK = $vulkanPath.FullName
+          }
+          
+          echo "VULKAN_SDK=$env:VULKAN_SDK" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "$env:VULKAN_SDK\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          
+          # Verify
+          & "$env:VULKAN_SDK\Bin\vulkaninfo.exe" --summary
+
+      - name: Cache Vulkan SDK (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        with:
+          path: ~/VulkanSDK
+          key: vulkan-sdk-macos-${{ env.MACOS_VULKAN_SDK_VERSION }}-${{ matrix.arch }}
+          
+      - name: Install Vulkan SDK (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if [[ -d "$HOME/VulkanSDK/macOS" ]]; then
+            echo "Vulkan SDK already cached"
+            export VULKAN_SDK="$HOME/VulkanSDK/macOS"
+          else
+            echo "Installing Vulkan SDK $MACOS_VULKAN_SDK_VERSION..."
+            
+            curl -L "https://sdk.lunarg.com/sdk/download/$MACOS_VULKAN_SDK_VERSION/mac/vulkansdk-macos-$MACOS_VULKAN_SDK_VERSION.dmg" -o vulkansdk.dmg
+            
+            hdiutil attach vulkansdk.dmg
+            sudo /Volumes/vulkansdk-macos-$MACOS_VULKAN_SDK_VERSION/InstallVulkan.app/Contents/MacOS/InstallVulkan \
+              --root ~/VulkanSDK --accept-licenses --default-answer --confirm-command install
+            
+            export VULKAN_SDK="$HOME/VulkanSDK/macOS"
+            hdiutil detach /Volumes/vulkansdk-macos-$MACOS_VULKAN_SDK_VERSION
+          fi
+          
+          echo "VULKAN_SDK=$VULKAN_SDK" >> $GITHUB_ENV
+          echo "$VULKAN_SDK/bin" >> $GITHUB_PATH
+          
+          # Verify
+          $VULKAN_SDK/bin/vulkaninfo --summary
+
+      - name: Install Vulkan SDK (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "Installing Vulkan SDK $VULKAN_SDK_VERSION on Linux..."
+          
+          # Use package manager for faster installation
+          sudo apt-get update
+          sudo apt-get install -y \
+            libvulkan-dev \
+            vulkan-tools \
+            vulkan-validationlayers-dev \
+            spirv-tools \
+            glslang-tools \
+            libc6-dev
+          
+          echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
+          
+          # Verify
+          vulkaninfo --summary
+
+      # ====================================================================
+      # QEMU Setup for ARM64 Emulation
+      # ====================================================================
+      
+      - name: Set up QEMU for ARM64
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      # ====================================================================
+      # Python and cibuildwheel Setup
+      # ====================================================================
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install cibuildwheel and dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install cibuildwheel==2.17.0 twine
+
+      # ====================================================================
+      # Configure cibuildwheel Environment
+      # ====================================================================
+      
+      - name: Configure cibuildwheel
+        shell: bash
+        run: |
+          # Parse Python versions from input
+          PYTHON_VERSIONS="${{ needs.setup.outputs.python_versions }}"
+          CIBW_BUILD=""
+          
+          for version in $PYTHON_VERSIONS; do
+            case $version in
+              3.8) CIBW_BUILD="$CIBW_BUILD cp38-*" ;;
+              3.9) CIBW_BUILD="$CIBW_BUILD cp39-*" ;;
+              3.10) CIBW_BUILD="$CIBW_BUILD cp310-*" ;;
+              3.11) CIBW_BUILD="$CIBW_BUILD cp311-*" ;;
+              3.12) CIBW_BUILD="$CIBW_BUILD cp312-*" ;;
+            esac
+          done
+          
+          echo "CIBW_BUILD=$CIBW_BUILD" >> $GITHUB_ENV
+          echo "CIBW_ARCHS=${{ matrix.cibw_archs }}" >> $GITHUB_ENV
+          
+          # Skip problematic combinations
+          echo "CIBW_SKIP=pp* *-musllinux*" >> $GITHUB_ENV
+          
+          # Test command
+          echo 'CIBW_TEST_COMMAND=python -c "
+            import vulkan_forge as vf
+            import numpy as np
+            print(f\"✓ vulkan-forge {vf.__version__} imported\")
+            
+            # Basic functionality test
+            scene = vf.HeightFieldScene()
+            heights = np.ones((4, 4), dtype=np.float32)
+            scene.build(heights)
+            renderer = vf.Renderer(16, 16)
+            print(\"✓ Basic functionality verified\")
+            
+            # Memory test
+            large_heights = np.random.rand(128, 128).astype(np.float32)
+            large_scene = vf.HeightFieldScene()
+            large_scene.build(large_heights)
+            print(f\"✓ Large scene test: {large_scene.n_indices} indices\")
+          "' >> $GITHUB_ENV
+          
+          # Skip tests on emulated platforms (too slow)
+          echo "CIBW_TEST_SKIP=*arm64 *aarch64" >> $GITHUB_ENV
+
+      - name: Set platform-specific environment
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            Windows)
+              echo "CIBW_ENVIRONMENT_WINDOWS=VULKAN_SDK=\"$VULKAN_SDK\" CMAKE_GENERATOR=\"Visual Studio 17 2022\" CMAKE_GENERATOR_PLATFORM=x64" >> $GITHUB_ENV
+              echo "CIBW_BEFORE_BUILD_WINDOWS=pip install cmake ninja setuptools-scm" >> $GITHUB_ENV
+              ;;
+            macOS)
+              echo "CIBW_ENVIRONMENT_MACOS=VULKAN_SDK=\"$VULKAN_SDK\" CMAKE_OSX_ARCHITECTURES=\"${{ matrix.arch }}\" CMAKE_OSX_DEPLOYMENT_TARGET=\"10.15\"" >> $GITHUB_ENV
+              echo "CIBW_BEFORE_BUILD_MACOS=pip install cmake ninja setuptools-scm" >> $GITHUB_ENV
+              echo "CIBW_REPAIR_WHEEL_COMMAND_MACOS=delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}" >> $GITHUB_ENV
+              ;;
+            Linux)
+              echo "CIBW_ENVIRONMENT_LINUX=VULKAN_SDK=\"$VULKAN_SDK\" CMAKE_BUILD_PARALLEL_LEVEL=2" >> $GITHUB_ENV
+              echo "CIBW_BEFORE_ALL_LINUX=yum install -y vulkan-devel || (apt-get update && apt-get install -y libvulkan-dev)" >> $GITHUB_ENV
+              echo "CIBW_BEFORE_BUILD_LINUX=pip install cmake ninja setuptools-scm" >> $GITHUB_ENV
+              echo "CIBW_REPAIR_WHEEL_COMMAND_LINUX=auditwheel repair -w {dest_dir} {wheel}" >> $GITHUB_ENV
+              ;;
+          esac
+          
+          # Global build settings
+          echo "CIBW_BUILD_VERBOSITY=1" >> $GITHUB_ENV
+
+      # ====================================================================
+      # Build Wheels
+      # ====================================================================
+      
+      - name: Build wheels
+        run: cibuildwheel --output-dir wheelhouse
+        env:
+          # Performance settings
+          CMAKE_BUILD_TYPE: Release
+          VF_ENABLE_LTO: "ON"
+          VF_ENABLE_SIMD: "ON"
+          
+          # Disable debugging for release builds
+          VF_ENABLE_VALIDATION: "OFF"
+          VF_ENABLE_GPU_DEBUG: "OFF"
+
+      # ====================================================================
+      # Verify and Upload Wheels
+      # ====================================================================
+      
+      - name: Verify wheels
+        run: |
+          python -m pip install twine
+          python -m twine check wheelhouse/*.whl
+          
+          echo "Built wheels:"
+          ls -la wheelhouse/
+          
+          # Check wheel contents
+          for wheel in wheelhouse/*.whl; do
+            echo ""
+            echo "Contents of $(basename $wheel):"
+            python -m zipfile -l "$wheel" | head -20
+          done
+
+      - name: Test wheel installation
+        if: matrix.arch != 'aarch64' && github.event.inputs.test_wheels != 'false'
+        run: |
+          # Test in clean environment
+          python -m venv test-env
+          
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            source test-env/Scripts/activate
+          else
+            source test-env/bin/activate
+          fi
+          
+          pip install wheelhouse/*.whl
+          
+          # Run comprehensive test
+          python -c "
+          import sys
+          import time
+          import numpy as np
+          import vulkan_forge as vf
+          
+          print(f'Testing vulkan-forge {vf.__version__} on Python {sys.version}')
+          print('=' * 60)
+          
+          # Test 1: Basic functionality
+          scene = vf.HeightFieldScene()
+          heights = np.ones((10, 10), dtype=np.float32)
+          scene.build(heights, zscale=2.0)
+          print(f'✓ Scene built: {scene.n_indices} indices')
+          
+          # Test 2: Renderer creation
+          renderer = vf.Renderer(64, 64)
+          print('✓ Renderer created')
+          
+          # Test 3: Performance test
+          start_time = time.time()
+          n_builds = 100
+          for i in range(n_builds):
+              test_heights = np.random.rand(32, 32).astype(np.float32)
+              test_scene = vf.HeightFieldScene()
+              test_scene.build(test_heights)
+          
+          elapsed = time.time() - start_time
+          builds_per_sec = n_builds / elapsed
+          print(f'✓ Performance: {builds_per_sec:.1f} scene builds/sec')
+          
+          # Test 4: Memory handling
+          large_heights = np.random.rand(512, 512).astype(np.float32)
+          large_scene = vf.HeightFieldScene()
+          large_scene.build(large_heights)
+          print(f'✓ Large scene: {large_scene.n_indices} indices')
+          
+          print('✅ All tests passed!')
+          "
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform_id }}
+          path: wheelhouse/*.whl
+          retention-days: 30
+
+      - name: Generate wheel report
+        run: |
+          echo "# Wheel Build Report for ${{ matrix.platform_id }}" > wheel-report.md
+          echo "" >> wheel-report.md
+          echo "**Platform:** ${{ matrix.platform_id }}" >> wheel-report.md
+          echo "**Architecture:** ${{ matrix.arch }}" >> wheel-report.md
+          echo "**Python Versions:** ${{ needs.setup.outputs.python_versions }}" >> wheel-report.md
+          echo "**Build Date:** $(date)" >> wheel-report.md
+          echo "**Vulkan SDK:** $VULKAN_SDK_VERSION" >> wheel-report.md
+          echo "" >> wheel-report.md
+          echo "## Built Wheels" >> wheel-report.md
+          echo "" >> wheel-report.md
+          echo "\`\`\`" >> wheel-report.md
+          ls -la wheelhouse/ >> wheel-report.md
+          echo "\`\`\`" >> wheel-report.md
+          
+        continue-on-error: true
+
+      - name: Upload build report
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-${{ matrix.platform_id }}
+          path: wheel-report.md
+        continue-on-error: true
+
+  # ========================================================================
+  # Comprehensive Wheel Testing
+  # ========================================================================
+  test-all-wheels:
+    name: Test all wheels
+    needs: [setup, build-wheels]
+    if: github.event.inputs.test_wheels != 'false'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest  
+            platform: windows
+          - os: macos-13
+            platform: macos
+    
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: wheelhouse/
+          
+      - name: Test platform wheels
+        run: |
+          echo "Testing wheels for ${{ matrix.platform }}..."
+          
+          # Find wheels for this platform
+          case "${{ matrix.platform }}" in
+            linux)
+              pattern="*linux_x86_64.whl"
+              ;;
+            windows)
+              pattern="*win_amd64.whl"
+              ;;
+            macos)
+              pattern="*macosx*.whl"
+              ;;
+          esac
+          
+          echo "Looking for wheels matching: $pattern"
+          wheels=(wheelhouse/$pattern)
+          
+          if [[ ${#wheels[@]} -eq 0 ]]; then
+            echo "No wheels found for ${{ matrix.platform }}"
+            exit 1
+          fi
+          
+          # Test each wheel
+          for wheel in "${wheels[@]}"; do
+            if [[ -f "$wheel" ]]; then
+              echo ""
+              echo "Testing: $(basename $wheel)"
+              echo "----------------------------------------"
+              
+              # Create isolated environment
+              python -m venv test-wheel-env
+              
+              if [[ "${{ runner.os }}" == "Windows" ]]; then
+                source test-wheel-env/Scripts/activate
+              else
+                source test-wheel-env/bin/activate
+              fi
+              
+              # Install and test
+              pip install "$wheel"
+              
+              python -c "
+              import vulkan_forge as vf
+              import numpy as np
+              
+              print(f'✓ Imported vulkan-forge {vf.__version__}')
+              
+              # Quick functional test
+              scene = vf.HeightFieldScene()
+              heights = np.random.rand(16, 16).astype(np.float32)
+              scene.build(heights)
+              
+              renderer = vf.Renderer(32, 32)
+              print(f'✓ Created renderer and scene ({scene.n_indices} indices)')
+              "
+              
+              deactivate
+              rm -rf test-wheel-env
+              echo "✅ $(basename $wheel) passed"
+            fi
+          done
+
+  # ========================================================================
+  # Publish to PyPI
+  # ========================================================================
+  publish-wheels:
+    name: Publish wheels to PyPI
+    needs: [setup, build-wheels, test-all-wheels]
+    runs-on: ubuntu-latest
+    if: needs.setup.outputs.should_upload == 'true' && (github.event_name == 'release' || github.event_name == 'push' || github.event.inputs.upload_to_pypi == 'true')
+    environment:
+      name: pypi
+      url: https://pypi.org/project/vulkan-forge/
+    
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist/
+          
+      - name: List distribution files
+        run: |
+          echo "Distribution files to upload:"
+          ls -la dist/
+          
+          echo ""
+          echo "Wheel summary:"
+          for wheel in dist/*.whl; do
+            basename "$wheel"
+          done
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist/
+          verbose: true
+
+  # ========================================================================
+  # Create Release Assets
+  # ========================================================================
+  create-release-assets:
+    name: Create release assets
+    needs: [setup, build-wheels]
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: wheels/
+          
+      - name: Download build reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: report-*
+          merge-multiple: true
+          path: reports/
+        continue-on-error: true
+          
+      - name: Create release archive
+        run: |
+          # Create comprehensive release package
+          mkdir -p release-assets
+          
+          # Copy wheels
+          cp wheels/*.whl release-assets/
+          
+          # Create archive with all wheels
+          tar -czf release-assets/vulkan-forge-wheels-${{ github.ref_name }}.tar.gz wheels/
+          
+          # Create build summary
+          echo "# vulkan-forge ${{ github.ref_name }} - Wheel Build Summary" > release-assets/BUILD_SUMMARY.md
+          echo "" >> release-assets/BUILD_SUMMARY.md
+          echo "**Release:** ${{ github.ref_name }}" >> release-assets/BUILD_SUMMARY.md
+          echo "**Build Date:** $(date)" >> release-assets/BUILD_SUMMARY.md
+          echo "**Python Versions:** ${{ needs.setup.outputs.python_versions }}" >> release-assets/BUILD_SUMMARY.md
+          echo "" >> release-assets/BUILD_SUMMARY.md
+          echo "## Available Wheels" >> release-assets/BUILD_SUMMARY.md
+          echo "" >> release-assets/BUILD_SUMMARY.md
+          for wheel in wheels/*.whl; do
+            echo "- $(basename $wheel)" >> release-assets/BUILD_SUMMARY.md
+          done
+          
+          ls -la release-assets/
+
+      - name: Upload release assets
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-assets/*
+          tag_name: ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

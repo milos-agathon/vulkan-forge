@@ -1,0 +1,246 @@
+# ============================================================================
+# Build-time Dependencies for vulkan-forge
+# ============================================================================
+# This file specifies all dependencies required to build vulkan-forge from
+# source, including CMake, build tools, and platform-specific requirements.
+# 
+# Usage:
+#   pip install -r requirements-build.txt
+#   python -m build
+# ============================================================================
+
+# ============================================================================
+# Core Build System
+# ============================================================================
+
+# Modern Python packaging and build backend
+scikit-build-core>=0.8.0,<0.10.0
+build>=1.0.0,<2.0.0
+setuptools>=68.0.0,<71.0.0
+setuptools-scm>=8.0.0,<9.0.0
+wheel>=0.42.0,<1.0.0
+
+# CMake and build tools (platform-independent Python packages)
+cmake>=3.24.0,<4.0.0
+ninja>=1.11.0,<2.0.0
+
+# ============================================================================
+# C++ Binding and Extension Building
+# ============================================================================
+
+# Python-C++ interface
+pybind11>=2.11.0,<3.0.0
+
+# NumPy (required at build time for headers and array interface)
+numpy>=1.19.0,<2.0.0
+
+# ============================================================================
+# Python Development Tools
+# ============================================================================
+
+# Package building and validation
+pip>=23.0.0
+twine>=4.0.0,<6.0.0
+
+# Version and metadata management  
+packaging>=23.0
+tomli>=2.0.0; python_version < "3.11"
+tomli-w>=1.0.0
+
+# ============================================================================
+# Platform-Specific Build Dependencies
+# ============================================================================
+
+# Windows-specific build tools
+# Note: Visual Studio Build Tools or Visual Studio Community required
+# Download from: https://visualstudio.microsoft.com/downloads/
+msvc-runtime>=14.0; sys_platform == "win32"
+
+# macOS-specific build tools
+# Note: Xcode Command Line Tools required on macOS
+# Install with: xcode-select --install
+
+# Linux-specific build tools (installed via system package manager)
+# Ubuntu/Debian: sudo apt install build-essential cmake ninja-build
+# RHEL/CentOS: sudo yum groupinstall "Development Tools" && sudo yum install cmake ninja-build
+# Fedora: sudo dnf groupinstall "Development Tools" && sudo dnf install cmake ninja-build
+
+# ============================================================================
+# Vulkan SDK Dependencies
+# ============================================================================
+
+# Python Vulkan bindings (for runtime, but useful during development)
+vulkan>=1.2.0,<2.0.0
+
+# Note: Vulkan SDK must be installed separately:
+# Windows: Download from https://vulkan.lunarg.com/sdk/home#windows
+# macOS: Download from https://vulkan.lunarg.com/sdk/home#mac  
+# Linux: Follow distribution-specific instructions at https://vulkan.lunarg.com/sdk/home#linux
+
+# ============================================================================
+# Optional Development Dependencies
+# ============================================================================
+
+# Code quality tools (optional, but recommended for development)
+black>=23.0.0,<25.0.0
+isort>=5.12.0,<6.0.0
+flake8>=6.0.0,<8.0.0
+mypy>=1.0.0,<2.0.0
+
+# Testing framework
+pytest>=7.0.0,<9.0.0
+pytest-cov>=4.0.0,<6.0.0
+pytest-benchmark>=4.0.0,<5.0.0
+
+# Performance monitoring
+psutil>=5.9.0,<7.0.0
+
+# Documentation building (optional)
+sphinx>=5.0.0,<8.0.0; extra == "docs"
+sphinx-rtd-theme>=1.2.0,<3.0.0; extra == "docs"
+myst-parser>=0.18.0,<4.0.0; extra == "docs"
+
+# ============================================================================
+# Debugging and Development Utilities
+# ============================================================================
+
+# Memory debugging (optional)
+memory-profiler>=0.60.0,<1.0.0; extra == "debug"
+
+# Performance profiling (optional)  
+py-spy>=0.3.14,<1.0.0; extra == "debug"
+
+# Build caching (optional, can speed up repeated builds)
+ccache>=4.0; sys_platform != "win32" and extra == "fast-build"
+
+# ============================================================================
+# CI/CD Specific Dependencies
+# ============================================================================
+
+# Wheel building and testing
+cibuildwheel>=2.16.0,<3.0.0; extra == "ci"
+
+# Wheel repair tools (platform-specific)
+delocate>=0.10.0,<1.0.0; sys_platform == "darwin" and extra == "ci"
+auditwheel>=5.0.0,<7.0.0; sys_platform == "linux" and extra == "ci"  
+delvewheel>=1.0.0,<2.0.0; sys_platform == "win32" and extra == "ci"
+
+# ============================================================================
+# Version Constraints and Compatibility Notes
+# ============================================================================
+
+# Python version compatibility:
+# - Minimum: Python 3.8
+# - Maximum tested: Python 3.12
+# - Recommended: Python 3.11
+
+# CMake version requirements:
+# - Minimum: 3.24 (for proper Vulkan FindPackage support)
+# - Recommended: Latest stable (better Ninja integration)
+
+# Ninja version requirements:
+# - Minimum: 1.11 (for parallel build improvements)
+# - Note: Significantly faster than Make on all platforms
+
+# Platform-specific notes:
+#
+# Windows:
+# - Requires Visual Studio 2019 or later (MSVC 19.20+)
+# - Windows SDK 10.0.19041 or later recommended
+# - Vulkan SDK 1.3.261+ required
+#
+# macOS:
+# - Requires macOS 10.15+ (for proper C++17 support)
+# - Xcode 11+ or Command Line Tools
+# - MoltenVK included with Vulkan SDK
+# - Universal binary support (x86_64 + arm64)
+#
+# Linux:
+# - GCC 8+ or Clang 10+ required
+# - glibc 2.28+ (manylinux2014 compatible)
+# - Vulkan development packages required
+# - Example for Ubuntu 20.04+:
+#   sudo apt update
+#   sudo apt install build-essential cmake ninja-build
+#   sudo apt install libvulkan-dev vulkan-tools
+
+# ============================================================================
+# Installation Instructions
+# ============================================================================
+
+# For development setup:
+# 1. Install system dependencies (see platform notes above)
+# 2. Create virtual environment: python -m venv venv
+# 3. Activate environment: source venv/bin/activate (Linux/macOS) or venv\Scripts\activate (Windows)
+# 4. Install build dependencies: pip install -r requirements-build.txt
+# 5. Install development dependencies: pip install -e .[dev,test]
+# 6. Build project: python -m build
+
+# For CI/CD setup:
+# 1. Install with CI extras: pip install -r requirements-build.txt -e .[ci]
+# 2. Run wheel building: cibuildwheel --output-dir wheelhouse
+
+# For minimal building (no development tools):
+# 1. pip install scikit-build-core cmake ninja pybind11 numpy
+# 2. python -m build --wheel
+
+# ============================================================================
+# Troubleshooting Common Build Issues
+# ============================================================================
+
+# Issue: CMake not found
+# Solution: Ensure cmake package is installed and available in PATH
+# pip install cmake
+# cmake --version
+
+# Issue: Ninja not found  
+# Solution: Install ninja build system
+# pip install ninja
+# ninja --version
+
+# Issue: Vulkan headers not found
+# Solution: Install Vulkan SDK for your platform
+# Set VULKAN_SDK environment variable if not auto-detected
+
+# Issue: MSVC not found (Windows)
+# Solution: Install Visual Studio Build Tools or Visual Studio Community
+# Ensure "C++ build tools" workload is selected
+
+# Issue: Build fails with "No module named 'pybind11'"
+# Solution: Install pybind11 before building
+# pip install pybind11>=2.11.0
+
+# Issue: NumPy headers not found
+# Solution: Ensure NumPy is installed before building
+# pip install numpy>=1.19.0
+
+# Issue: Permission errors during build
+# Solution: Use virtual environment or user install
+# python -m venv build-env && source build-env/bin/activate
+# pip install -r requirements-build.txt
+
+# Issue: Out of memory during compilation
+# Solution: Reduce parallel build jobs
+# export CMAKE_BUILD_PARALLEL_LEVEL=2
+# Or disable LTO: export VF_ENABLE_LTO=OFF
+
+# ============================================================================
+# Performance Optimization Tips
+# ============================================================================
+
+# For faster builds:
+# 1. Use Ninja instead of Make: pip install ninja
+# 2. Enable parallel compilation: export CMAKE_BUILD_PARALLEL_LEVEL=4
+# 3. Use ccache (Linux/macOS): export CMAKE_CXX_COMPILER_LAUNCHER=ccache
+# 4. Use SSD storage for build directory
+# 5. Increase system RAM for large parallel builds
+
+# For smaller wheels:
+# 1. Enable LTO: export VF_ENABLE_LTO=ON  
+# 2. Strip debug symbols: export CMAKE_BUILD_TYPE=MinSizeRel
+# 3. Use static linking where appropriate
+
+# For debugging builds:
+# 1. Debug build type: export CMAKE_BUILD_TYPE=Debug
+# 2. Enable validation: export VF_ENABLE_VALIDATION=ON
+# 3. Disable optimizations: export VF_ENABLE_LTO=OFF

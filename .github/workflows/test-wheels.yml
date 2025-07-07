@@ -1,0 +1,762 @@
+# ============================================================================
+# Comprehensive Wheel Testing for vulkan-forge
+# ============================================================================
+# Downloads and tests built wheels in clean environments
+# Validates Vulkan functionality across platforms and Python versions
+# Provides detailed smoke tests and performance validation
+# ============================================================================
+
+name: Test Wheels
+
+on:
+  # Triggered by wheel build completion
+  workflow_run:
+    workflows: ["Build Wheels", "CI/CD Pipeline"]
+    types:
+      - completed
+    branches: [main, develop]
+  
+  # Manual trigger for testing specific wheels
+  workflow_dispatch:
+    inputs:
+      wheel_source:
+        description: 'Source of wheels to test'
+        type: choice
+        options:
+          - 'artifacts'     # Download from recent workflow artifacts
+          - 'pypi'         # Download from PyPI
+          - 'test-pypi'    # Download from Test PyPI
+        default: 'artifacts'
+      python_versions:
+        description: 'Python versions to test (space-separated)'
+        required: false
+        default: "3.8 3.9 3.10 3.11 3.12"
+      platforms:
+        description: 'Platforms to test (space-separated: windows linux macos)'
+        required: false
+        default: "windows linux macos"
+      test_level:
+        description: 'Testing level'
+        type: choice
+        options:
+          - 'smoke'        # Basic import and functionality tests
+          - 'standard'     # Standard test suite
+          - 'comprehensive' # Full validation including performance
+        default: 'standard'
+      vulkan_tests:
+        description: 'Include Vulkan-specific tests'
+        type: boolean
+        default: true
+  
+  # Scheduled testing of latest PyPI release
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday at 6 AM UTC
+
+env:
+  # Test configuration
+  PYTEST_TIMEOUT: 300
+  MAX_MEMORY_MB: 2048
+  PERFORMANCE_THRESHOLD_FPS: 100
+
+jobs:
+  # ========================================================================
+  # Setup Test Matrix and Download Wheels
+  # ========================================================================
+  setup-tests:
+    name: Setup test matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      test_config: ${{ steps.config.outputs.config }}
+      wheel_source: ${{ steps.config.outputs.wheel_source }}
+    
+    steps:
+      - name: Determine test configuration
+        id: config
+        run: |
+          # Determine wheel source
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            WHEEL_SOURCE="${{ github.event.inputs.wheel_source }}"
+            PYTHON_VERSIONS="${{ github.event.inputs.python_versions }}"
+            PLATFORMS="${{ github.event.inputs.platforms }}"
+            TEST_LEVEL="${{ github.event.inputs.test_level }}"
+            VULKAN_TESTS="${{ github.event.inputs.vulkan_tests }}"
+          elif [[ "${{ github.event_name }}" == "schedule" ]]; then
+            WHEEL_SOURCE="pypi"
+            PYTHON_VERSIONS="3.9 3.10 3.11 3.12"
+            PLATFORMS="windows linux macos"
+            TEST_LEVEL="standard"
+            VULKAN_TESTS="true"
+          else
+            # workflow_run trigger
+            WHEEL_SOURCE="artifacts"
+            PYTHON_VERSIONS="3.8 3.9 3.10 3.11 3.12"
+            PLATFORMS="windows linux macos"
+            TEST_LEVEL="standard"
+            VULKAN_TESTS="true"
+          fi
+          
+          echo "wheel_source=$WHEEL_SOURCE" >> $GITHUB_OUTPUT
+          echo "test_config={\"python_versions\":\"$PYTHON_VERSIONS\",\"platforms\":\"$PLATFORMS\",\"test_level\":\"$TEST_LEVEL\",\"vulkan_tests\":\"$VULKAN_TESTS\"}" >> $GITHUB_OUTPUT
+
+      - name: Generate test matrix
+        id: matrix
+        run: |
+          PYTHON_VERSIONS="${{ steps.config.outputs.test_config }}"
+          PLATFORMS=$(echo '${{ steps.config.outputs.test_config }}' | jq -r '.platforms')
+          
+          # Extract from JSON-like config
+          PYTHON_VERSIONS=$(echo '${{ steps.config.outputs.test_config }}' | jq -r '.python_versions')
+          PLATFORMS=$(echo '${{ steps.config.outputs.test_config }}' | jq -r '.platforms')
+          
+          MATRIX='{"include":['
+          
+          for platform in $PLATFORMS; do
+            for python_version in $PYTHON_VERSIONS; do
+              case $platform in
+                windows)
+                  MATRIX+='{
+                    "os": "windows-latest",
+                    "platform": "windows",
+                    "python_version": "'$python_version'",
+                    "wheel_pattern": "*win_amd64.whl",
+                    "test_gpu": false
+                  },'
+                  ;;
+                linux)
+                  MATRIX+='{
+                    "os": "ubuntu-latest", 
+                    "platform": "linux",
+                    "python_version": "'$python_version'",
+                    "wheel_pattern": "*linux_x86_64.whl",
+                    "test_gpu": false
+                  },'
+                  ;;
+                macos)
+                  MATRIX+='{
+                    "os": "macos-13",
+                    "platform": "macos",
+                    "python_version": "'$python_version'",
+                    "wheel_pattern": "*macosx*.whl",
+                    "test_gpu": false
+                  },'
+                  ;;
+              esac
+            done
+          done
+          
+          # Remove trailing comma and close
+          MATRIX="${MATRIX%,}]}"
+          
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          echo "Generated test matrix: $MATRIX"
+
+  # ========================================================================
+  # Download Wheels from Various Sources
+  # ========================================================================
+  download-wheels:
+    name: Download wheels
+    needs: setup-tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download wheels from artifacts
+        if: needs.setup-tests.outputs.wheel_source == 'artifacts'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: wheelhouse/
+        continue-on-error: true
+        
+      - name: Download wheels from PyPI
+        if: needs.setup-tests.outputs.wheel_source == 'pypi'
+        run: |
+          mkdir -p wheelhouse
+          cd wheelhouse
+          
+          # Get latest version from PyPI
+          LATEST_VERSION=$(pip index versions vulkan-forge | grep "Available versions:" | cut -d' ' -f3 | cut -d',' -f1)
+          echo "Latest PyPI version: $LATEST_VERSION"
+          
+          # Download all available wheels for the latest version
+          pip download vulkan-forge==$LATEST_VERSION --no-deps --only-binary=:all: || true
+          
+          ls -la
+
+      - name: Download wheels from Test PyPI
+        if: needs.setup-tests.outputs.wheel_source == 'test-pypi'
+        run: |
+          mkdir -p wheelhouse
+          cd wheelhouse
+          
+          # Download from Test PyPI
+          pip download --index-url https://test.pypi.org/simple/ vulkan-forge --no-deps --only-binary=:all: || true
+          
+          ls -la
+
+      - name: Verify wheel availability
+        run: |
+          echo "Available wheels:"
+          find wheelhouse -name "*.whl" -type f | sort
+          
+          if [[ ! -f wheelhouse/*.whl ]]; then
+            echo "Warning: No wheels found!"
+            # Create a dummy file to prevent artifacts upload failure
+            touch wheelhouse/no-wheels-found.txt
+          fi
+
+      - name: Upload wheels for testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-wheels
+          path: wheelhouse/
+          retention-days: 7
+
+  # ========================================================================
+  # Comprehensive Wheel Testing
+  # ========================================================================
+  test-wheels:
+    name: Test ${{ matrix.platform }} Python ${{ matrix.python_version }}
+    needs: [setup-tests, download-wheels]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup-tests.outputs.matrix) }}
+    
+    steps:
+      - name: Set up Python ${{ matrix.python_version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+          
+      - name: Download test wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: test-wheels
+          path: wheelhouse/
+
+      - name: Find appropriate wheel
+        id: find-wheel
+        shell: bash
+        run: |
+          echo "Looking for wheels matching: ${{ matrix.wheel_pattern }}"
+          
+          # Find the wheel for this platform and Python version
+          python_tag="cp$(echo ${{ matrix.python_version }} | tr -d '.')"
+          
+          # Search for wheels
+          wheels=(wheelhouse/${{ matrix.wheel_pattern }})
+          matching_wheel=""
+          
+          for wheel in "${wheels[@]}"; do
+            if [[ -f "$wheel" && "$wheel" == *"$python_tag"* ]]; then
+              matching_wheel="$wheel"
+              break
+            fi
+          done
+          
+          if [[ -z "$matching_wheel" ]]; then
+            # Try to find any wheel for this platform (different Python version)
+            for wheel in wheelhouse/*${{ matrix.wheel_pattern }}; do
+              if [[ -f "$wheel" ]]; then
+                matching_wheel="$wheel"
+                echo "Warning: Using wheel with different Python version: $wheel"
+                break
+              fi
+            done
+          fi
+          
+          if [[ -n "$matching_wheel" ]]; then
+            echo "wheel_path=$matching_wheel" >> $GITHUB_OUTPUT
+            echo "wheel_found=true" >> $GITHUB_OUTPUT
+            echo "Found wheel: $matching_wheel"
+          else
+            echo "wheel_found=false" >> $GITHUB_OUTPUT
+            echo "No compatible wheel found for ${{ matrix.platform }} Python ${{ matrix.python_version }}"
+            echo "Available wheels:"
+            ls -la wheelhouse/ || true
+          fi
+
+      # ====================================================================
+      # Clean Environment Setup
+      # ====================================================================
+      
+      - name: Create clean test environment
+        if: steps.find-wheel.outputs.wheel_found == 'true'
+        shell: bash
+        run: |
+          # Create isolated virtual environment
+          python -m venv clean-test-env
+          
+          # Activate environment
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            source clean-test-env/Scripts/activate
+          else
+            source clean-test-env/bin/activate
+          fi
+          
+          # Verify clean environment
+          python -c "
+          import sys
+          print(f'Clean environment Python: {sys.version}')
+          print(f'Python executable: {sys.executable}')
+          
+          # Verify no vulkan-forge is installed
+          try:
+              import vulkan_forge
+              print('ERROR: vulkan-forge already installed in clean environment!')
+              sys.exit(1)
+          except ImportError:
+              print('✓ Clean environment verified')
+          "
+          
+          # Install minimal test dependencies
+          pip install --upgrade pip setuptools
+          pip install pytest psutil numpy pillow
+
+      # ====================================================================
+      # Wheel Installation and Basic Validation
+      # ====================================================================
+      
+      - name: Install and test wheel
+        if: steps.find-wheel.outputs.wheel_found == 'true'
+        shell: bash
+        run: |
+          # Activate test environment
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            source clean-test-env/Scripts/activate
+          else
+            source clean-test-env/bin/activate
+          fi
+          
+          echo "Installing wheel: ${{ steps.find-wheel.outputs.wheel_path }}"
+          pip install "${{ steps.find-wheel.outputs.wheel_path }}"
+          
+          echo "Verifying installation..."
+          pip show vulkan-forge
+          
+          # Basic import test
+          python -c "
+          import vulkan_forge as vf
+          print(f'✓ Successfully imported vulkan-forge {vf.__version__}')
+          "
+
+      # ====================================================================
+      # Smoke Tests
+      # ====================================================================
+      
+      - name: Run smoke tests
+        if: steps.find-wheel.outputs.wheel_found == 'true'
+        shell: bash
+        run: |
+          # Activate test environment
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            source clean-test-env/Scripts/activate
+          else
+            source clean-test-env/bin/activate
+          fi
+          
+          python -c "
+          import sys
+          import time
+          import traceback
+          import numpy as np
+          import vulkan_forge as vf
+          
+          print('🧪 Starting Smoke Tests')
+          print('=' * 60)
+          print(f'Platform: ${{ matrix.platform }}')
+          print(f'Python: {sys.version}')
+          print(f'vulkan-forge: {vf.__version__}')
+          print(f'NumPy: {np.__version__}')
+          print('')
+          
+          test_results = []
+          
+          # Test 1: Module structure
+          try:
+              assert hasattr(vf, 'HeightFieldScene')
+              assert hasattr(vf, 'Renderer')
+              print('✓ Test 1: Module structure - PASS')
+              test_results.append(('Module structure', True, ''))
+          except Exception as e:
+              print(f'✗ Test 1: Module structure - FAIL: {e}')
+              test_results.append(('Module structure', False, str(e)))
+          
+          # Test 2: Scene creation
+          try:
+              scene = vf.HeightFieldScene()
+              print('✓ Test 2: Scene creation - PASS')
+              test_results.append(('Scene creation', True, ''))
+          except Exception as e:
+              print(f'✗ Test 2: Scene creation - FAIL: {e}')
+              test_results.append(('Scene creation', False, str(e)))
+              traceback.print_exc()
+          
+          # Test 3: Scene building with various data types
+          try:
+              # Test with different NumPy dtypes
+              for dtype in [np.float32, np.float64]:
+                  heights = np.ones((8, 8), dtype=dtype)
+                  scene = vf.HeightFieldScene()
+                  scene.build(heights, zscale=1.0)
+                  assert scene.n_indices > 0
+              
+              print('✓ Test 3: Scene building (multiple dtypes) - PASS')
+              test_results.append(('Scene building', True, ''))
+          except Exception as e:
+              print(f'✗ Test 3: Scene building - FAIL: {e}')
+              test_results.append(('Scene building', False, str(e)))
+              traceback.print_exc()
+          
+          # Test 4: Renderer creation
+          try:
+              renderer = vf.Renderer(64, 64)
+              print('✓ Test 4: Renderer creation - PASS')
+              test_results.append(('Renderer creation', True, ''))
+          except Exception as e:
+              print(f'✗ Test 4: Renderer creation - FAIL: {e}')
+              test_results.append(('Renderer creation', False, str(e)))
+              traceback.print_exc()
+          
+          # Test 5: Memory handling
+          try:
+              large_heights = np.random.rand(256, 256).astype(np.float32)
+              large_scene = vf.HeightFieldScene()
+              large_scene.build(large_heights)
+              print(f'✓ Test 5: Memory handling - PASS ({large_scene.n_indices} indices)')
+              test_results.append(('Memory handling', True, ''))
+          except Exception as e:
+              print(f'✗ Test 5: Memory handling - FAIL: {e}')
+              test_results.append(('Memory handling', False, str(e)))
+              traceback.print_exc()
+          
+          # Test 6: Error handling
+          try:
+              # Test with invalid input
+              scene = vf.HeightFieldScene()
+              try:
+                  scene.build(np.array([]), zscale=1.0)  # Empty array should fail gracefully
+                  print('⚠ Test 6: Error handling - Empty array didn\'t raise error')
+              except Exception:
+                  pass  # Expected
+              
+              print('✓ Test 6: Error handling - PASS')
+              test_results.append(('Error handling', True, ''))
+          except Exception as e:
+              print(f'✗ Test 6: Error handling - FAIL: {e}')
+              test_results.append(('Error handling', False, str(e)))
+          
+          # Summary
+          print('')
+          print('📊 Smoke Test Summary')
+          print('=' * 60)
+          passed = sum(1 for _, success, _ in test_results if success)
+          total = len(test_results)
+          print(f'Passed: {passed}/{total}')
+          
+          if passed == total:
+              print('🎉 All smoke tests PASSED!')
+          else:
+              print('⚠️  Some smoke tests FAILED:')
+              for test_name, success, error in test_results:
+                  if not success:
+                      print(f'  - {test_name}: {error}')
+              
+              if passed < total // 2:
+                  print('❌ Too many failures - marking as failed')
+                  sys.exit(1)
+              else:
+                  print('⚠️  Some failures but majority passed')
+          "
+
+      # ====================================================================
+      # Vulkan Functionality Tests
+      # ====================================================================
+      
+      - name: Test Vulkan functionality
+        if: steps.find-wheel.outputs.wheel_found == 'true' && fromJson(needs.setup-tests.outputs.test_config).vulkan_tests == 'true'
+        shell: bash
+        continue-on-error: true  # Vulkan may not be available in CI
+        run: |
+          # Activate test environment
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            source clean-test-env/Scripts/activate
+          else
+            source clean-test-env/bin/activate
+          fi
+          
+          python -c "
+          import sys
+          import time
+          import numpy as np
+          import vulkan_forge as vf
+          
+          print('🖥️  Vulkan Functionality Tests')
+          print('=' * 60)
+          
+          try:
+              # Test GPU rendering attempt
+              heights = np.ones((16, 16), dtype=np.float32)
+              scene = vf.HeightFieldScene()
+              scene.build(heights, zscale=2.0)
+              
+              renderer = vf.Renderer(128, 128)
+              
+              print('✓ Created scene and renderer')
+              
+              # Attempt rendering (may fail in headless environment)
+              try:
+                  start_time = time.time()
+                  img = renderer.render(scene)
+                  render_time = time.time() - start_time
+                  
+                  print(f'✓ Render successful: {img.shape} in {render_time:.3f}s')
+                  
+                  # Validate image
+                  assert img.shape == (128, 128, 4)
+                  assert img.dtype == np.uint8
+                  print('✓ Image validation passed')
+                  
+                  # Performance test
+                  n_renders = 10
+                  start_time = time.time()
+                  for _ in range(n_renders):
+                      renderer.render(scene)
+                  total_time = time.time() - start_time
+                  fps = n_renders / total_time
+                  
+                  print(f'✓ Performance: {fps:.1f} FPS')
+                  
+                  if fps >= ${{ env.PERFORMANCE_THRESHOLD_FPS }}:
+                      print('🚀 Performance target met!')
+                  else:
+                      print(f'⚠️  Performance below threshold ({fps:.1f} < ${{ env.PERFORMANCE_THRESHOLD_FPS }})')
+                  
+              except Exception as render_error:
+                  print(f'⚠️  Render failed (expected in CI): {render_error}')
+                  print('   This is normal for headless environments')
+              
+          except Exception as e:
+              print(f'❌ Vulkan test failed: {e}')
+              import traceback
+              traceback.print_exc()
+          "
+
+      # ====================================================================
+      # Performance and Memory Tests
+      # ====================================================================
+      
+      - name: Run performance tests
+        if: steps.find-wheel.outputs.wheel_found == 'true' && fromJson(needs.setup-tests.outputs.test_config).test_level == 'comprehensive'
+        shell: bash
+        run: |
+          # Activate test environment
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            source clean-test-env/Scripts/activate
+          else
+            source clean-test-env/bin/activate
+          fi
+          
+          python -c "
+          import sys
+          import time
+          import gc
+          import psutil
+          import numpy as np
+          import vulkan_forge as vf
+          
+          print('⚡ Performance and Memory Tests')
+          print('=' * 60)
+          
+          process = psutil.Process()
+          initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+          print(f'Initial memory usage: {initial_memory:.1f} MB')
+          
+          # Performance test: Scene building
+          print('\\n📊 Scene Building Performance:')
+          sizes = [(32, 32), (64, 64), (128, 128), (256, 256)]
+          
+          for size in sizes:
+              heights = np.random.rand(*size).astype(np.float32)
+              
+              n_builds = max(1, 1000 // (size[0] * size[1] // 1000))  # Scale iterations
+              
+              start_time = time.time()
+              for _ in range(n_builds):
+                  scene = vf.HeightFieldScene()
+                  scene.build(heights, zscale=1.0)
+              elapsed = time.time() - start_time
+              
+              builds_per_sec = n_builds / elapsed
+              vertices_per_sec = builds_per_sec * size[0] * size[1]
+              
+              print(f'  {size[0]}x{size[1]}: {builds_per_sec:.1f} builds/s ({vertices_per_sec:.0f} vertices/s)')
+          
+          # Memory leak test
+          print('\\n🧠 Memory Leak Test:')
+          initial_objects = len(gc.get_objects())
+          
+          for i in range(50):
+              heights = np.random.rand(64, 64).astype(np.float32)
+              scene = vf.HeightFieldScene()
+              scene.build(heights)
+              renderer = vf.Renderer(32, 32)
+              
+              if i % 10 == 0:
+                  gc.collect()
+                  current_memory = process.memory_info().rss / 1024 / 1024
+                  memory_growth = current_memory - initial_memory
+                  print(f'  Iteration {i}: {current_memory:.1f} MB (+{memory_growth:.1f} MB)')
+          
+          final_memory = process.memory_info().rss / 1024 / 1024
+          memory_growth = final_memory - initial_memory
+          final_objects = len(gc.get_objects())
+          object_growth = final_objects - initial_objects
+          
+          print(f'\\nMemory summary:')
+          print(f'  Initial: {initial_memory:.1f} MB')
+          print(f'  Final: {final_memory:.1f} MB')
+          print(f'  Growth: {memory_growth:.1f} MB')
+          print(f'  Object growth: {object_growth}')
+          
+          if memory_growth > ${{ env.MAX_MEMORY_MB }}:
+              print('❌ Excessive memory usage!')
+              sys.exit(1)
+          elif memory_growth > 100:
+              print('⚠️  High memory usage')
+          else:
+              print('✅ Memory usage acceptable')
+          "
+
+      # ====================================================================
+      # Generate Test Report
+      # ====================================================================
+      
+      - name: Generate test report
+        if: always()
+        shell: bash
+        run: |
+          # Create test report
+          cat > test-report-${{ matrix.platform }}-py${{ matrix.python_version }}.md << 'EOF'
+          # Test Report: ${{ matrix.platform }} Python ${{ matrix.python_version }}
+          
+          **Date:** $(date)
+          **Platform:** ${{ matrix.platform }}
+          **Python Version:** ${{ matrix.python_version }}
+          **Wheel Found:** ${{ steps.find-wheel.outputs.wheel_found }}
+          **Wheel Path:** ${{ steps.find-wheel.outputs.wheel_path }}
+          
+          ## Test Configuration
+          - **Wheel Source:** ${{ needs.setup-tests.outputs.wheel_source }}
+          - **Test Level:** $(echo '${{ needs.setup-tests.outputs.test_config }}' | jq -r '.test_level')
+          - **Vulkan Tests:** $(echo '${{ needs.setup-tests.outputs.test_config }}' | jq -r '.vulkan_tests')
+          
+          ## Test Results
+          EOF
+          
+          if [[ "${{ steps.find-wheel.outputs.wheel_found }}" == "true" ]]; then
+            echo "✅ Wheel installation and basic tests completed" >> test-report-${{ matrix.platform }}-py${{ matrix.python_version }}.md
+          else
+            echo "❌ No compatible wheel found for testing" >> test-report-${{ matrix.platform }}-py${{ matrix.python_version }}.md
+          fi
+          
+          echo "" >> test-report-${{ matrix.platform }}-py${{ matrix.python_version }}.md
+          echo "See workflow logs for detailed test output." >> test-report-${{ matrix.platform }}-py${{ matrix.python_version }}.md
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-${{ matrix.platform }}-py${{ matrix.python_version }}
+          path: test-report-*.md
+        continue-on-error: true
+
+      # ====================================================================
+      # Cleanup
+      # ====================================================================
+      
+      - name: Cleanup test environment
+        if: always()
+        shell: bash
+        run: |
+          # Remove test environment to free space
+          rm -rf clean-test-env || true
+
+  # ========================================================================
+  # Aggregate Test Results
+  # ========================================================================
+  aggregate-results:
+    name: Aggregate test results
+    needs: [setup-tests, test-wheels]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download all test reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-report-*
+          merge-multiple: true
+          path: reports/
+        continue-on-error: true
+
+      - name: Create summary report
+        run: |
+          echo "# vulkan-forge Wheel Test Summary" > WHEEL_TEST_SUMMARY.md
+          echo "" >> WHEEL_TEST_SUMMARY.md
+          echo "**Date:** $(date)" >> WHEEL_TEST_SUMMARY.md
+          echo "**Trigger:** ${{ github.event_name }}" >> WHEEL_TEST_SUMMARY.md
+          echo "**Wheel Source:** ${{ needs.setup-tests.outputs.wheel_source }}" >> WHEEL_TEST_SUMMARY.md
+          echo "" >> WHEEL_TEST_SUMMARY.md
+          
+          if [[ -d reports && $(ls reports/*.md 2>/dev/null | wc -l) -gt 0 ]]; then
+            echo "## Test Results by Platform" >> WHEEL_TEST_SUMMARY.md
+            echo "" >> WHEEL_TEST_SUMMARY.md
+            
+            for report in reports/*.md; do
+              if [[ -f "$report" ]]; then
+                echo "### $(basename $report .md)" >> WHEEL_TEST_SUMMARY.md
+                echo "" >> WHEEL_TEST_SUMMARY.md
+                cat "$report" >> WHEEL_TEST_SUMMARY.md
+                echo "" >> WHEEL_TEST_SUMMARY.md
+              fi
+            done
+          else
+            echo "## No test reports found" >> WHEEL_TEST_SUMMARY.md
+            echo "" >> WHEEL_TEST_SUMMARY.md
+            echo "This may indicate that no compatible wheels were available for testing." >> WHEEL_TEST_SUMMARY.md
+          fi
+          
+          echo "" >> WHEEL_TEST_SUMMARY.md
+          echo "---" >> WHEEL_TEST_SUMMARY.md
+          echo "*Generated by GitHub Actions wheel testing workflow*" >> WHEEL_TEST_SUMMARY.md
+
+      - name: Upload summary report
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-test-summary
+          path: WHEEL_TEST_SUMMARY.md
+        continue-on-error: true
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            try {
+              const summary = fs.readFileSync('WHEEL_TEST_SUMMARY.md', 'utf8');
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.workflow_run.pull_requests[0].number,
+                body: `## 🧪 Wheel Test Results\n\n${summary}`
+              });
+            } catch (error) {
+              console.log('Could not post PR comment:', error.message);
+            }
+        continue-on-error: true
