@@ -41,48 +41,18 @@ class CullingMode(Enum):
 @dataclass
 class TessellationConfig:
     """Configuration for GPU tessellation"""
-
     mode: TessellationMode = TessellationMode.DISTANCE_BASED
     base_level: int = 8  # Base tessellation level (1-64)
-
-    # Distance-based tessellation parameters
     near_distance: float = 100.0  # Near tessellation distance
     far_distance: float = 5000.0  # Far tessellation distance
     falloff_exponent: float = 1.5  # Distance falloff curve
-
-    # Screen-space tessellation parameters
     target_triangle_size: float = 8.0  # Target triangle size in pixels
     screen_tolerance: float = 1.0  # Screen-space error tolerance
 
-    # REMOVED: Don't define _max_level and _min_level as dataclass fields
-    # _max_level: int = 64        # <- Remove this line
-    # _min_level: int = 1         # <- Remove this line
-
-    def __init__(
-        self,
-        mode: TessellationMode = TessellationMode.DISTANCE_BASED,
-        base_level: int = 8,
-        near_distance: float = 100.0,
-        far_distance: float = 5000.0,
-        falloff_exponent: float = 1.5,
-        target_triangle_size: float = 8.0,
-        screen_tolerance: float = 1.0,
-    ) -> None:
-        self.mode = mode
-        self.base_level = base_level
-        self.near_distance = near_distance
-        self.far_distance = far_distance
-        self.falloff_exponent = falloff_exponent
-        self.target_triangle_size = target_triangle_size
-        self.screen_tolerance = screen_tolerance
+    def __post_init__(self):
+        """Initialize private attributes after dataclass creation."""
         self._min_level = 1
         self._max_level = 64
-        self.__post_init__()
-
-    def __post_init__(self):
-        """Validate configuration after initialization."""
-        self._min_level = getattr(self, "_min_level", 1)
-        self._max_level = getattr(self, "_max_level", 64)
 
     @property
     def max_level(self) -> int:
@@ -98,34 +68,30 @@ class TessellationConfig:
             raise ValueError(f"max_level must be at least 1, got {value}")
         if value > 64:
             raise ValueError(f"max_level must be <= 64, got {value}")
-        if hasattr(self, "_min_level") and self.min_level > value:
+        if hasattr(self, "_min_level") and self._min_level > value:
             raise ValueError("min_level cannot exceed max_level")
         self._max_level = value
 
     @property
     def min_level(self) -> int:
+        """Get the minimum tessellation level."""
         return self._min_level
 
     @min_level.setter
-    def min_level(self, v: int) -> None:
-        if not isinstance(v, int):
+    def min_level(self, value: int) -> None:
+        """Set the minimum tessellation level."""
+        if not isinstance(value, int):
             raise TypeError("min_level must be int")
-        if v < 1 or v > self.max_level:
-            raise ValueError("min_level out of range")
-        self._min_level = v
+        if value < 0:
+            raise ValueError("min_level must be >= 0")
+        if value > 64:
+            raise ValueError("min_level must be <= 64")
+        if hasattr(self, "_max_level") and value > self._max_level:
+            raise ValueError("min_level cannot exceed max_level")
+        self._min_level = value
 
     def get_tessellation_level(self, distance: float) -> int:
-        """Return tessellation level based on camera distance.
-
-        Args:
-            distance: Camera-to-tile distance.
-
-        Returns:
-            Rounded tessellation level within ``[min_level, max_level]``.
-
-        Raises:
-            ValueError: If ``distance`` is negative.
-        """
+        """Return tessellation level based on camera distance."""
         if distance < 0:
             raise ValueError("distance must be non-negative")
 
@@ -140,44 +106,157 @@ class TessellationConfig:
             return self.max_level
         if distance >= self.far_distance:
             return self.min_level
+        
         t = (distance - self.near_distance) / (self.far_distance - self.near_distance)
-        return int(round(self.max_level - t * (self.max_level - self.min_level)))
-
-    @property
-    def tessellation_level(self) -> Callable[[float], int]:
-        """Callable alias for :func:`get_tessellation_level`."""
-
-        return self.get_tessellation_level
+        level = self.max_level - t * (self.max_level - self.min_level)
+        return int(round(level))
 
 
 @dataclass
 class LODConfig:
-    """Level of Detail configuration"""
-
+    """Level of Detail configuration - Fixed version"""
     algorithm: LODAlgorithm = LODAlgorithm.DISTANCE
-    distances: List[float] = field(
-        default_factory=lambda: [500.0, 1000.0, 2500.0, 5000.0]
-    )
-    screen_error_threshold: float = 2.0  # Pixels of acceptable error
-    enable_morphing: bool = True  # Enable LOD transition morphing
-    morph_distance: float = 50.0  # Distance over which to morph
+    screen_error_threshold: float = 2.0
+    enable_morphing: bool = True
+    morph_distance: float = 50.0
+    subdivision_threshold: float = 1000.0
+    merge_threshold: float = 2000.0
+    max_lod_levels: int = 8
+    
+    def __post_init__(self):
+        """Initialize distances list after dataclass creation."""
+        # Set as simple attribute to avoid property conflicts
+        self.distances = [500.0, 1000.0, 2500.0, 5000.0]
 
-    # Hierarchical LOD parameters
-    subdivision_threshold: float = 1000.0  # Distance threshold for subdivision
-    merge_threshold: float = 2000.0  # Distance threshold for merging
-    max_lod_levels: int = 8  # Maximum LOD levels
 
-    @property
-    def distances(self) -> List[float]:
-        return self._distances
+@dataclass
+class CullingConfig:
+    """Culling configuration"""
+    mode: CullingMode = CullingMode.FRUSTUM
+    enable_backface_culling: bool = True
+    frustum_margin: float = 50.0
+    occlusion_threshold: float = 0.1
+    occlusion_query_delay: int = 2
+    hierarchical_levels: int = 4
+    cull_empty_tiles: bool = True
 
-    @distances.setter
-    def distances(self, value: List[float]) -> None:
-        vals = list(value)
-        if any(vals[i] >= vals[i + 1] for i in range(len(vals) - 1)):
-            raise ValueError("distances must be strictly increasing")
-        self._distances = vals
 
+@dataclass
+class MemoryConfig:
+    """Memory management configuration"""
+    max_tile_cache_mb: int = 512
+    max_loaded_tiles: int = 256
+    texture_cache_mb: int = 256
+    preload_radius: float = 2000.0
+    unload_distance: float = 5000.0
+    loading_priority_levels: int = 4
+
+
+@dataclass
+class RenderingConfig:
+    """General rendering configuration"""
+    enable_lighting: bool = True
+    enable_shadows: bool = False
+    shadow_map_size: int = 2048
+    use_pbr_shading: bool = False
+    metallic_factor: float = 0.0
+    roughness_factor: float = 0.8
+    enable_texture_blending: bool = True
+    texture_tiling: float = 1.0
+    anisotropic_filtering: int = 16
+    enable_fog: bool = True
+    fog_start: float = 1000.0
+    fog_end: float = 10000.0
+    fog_color: Tuple[float, float, float] = (0.7, 0.8, 0.9)
+
+
+@dataclass
+class PerformanceConfig:
+    """Performance tuning configuration"""
+    target_fps: int = 144
+    vsync_enabled: bool = False
+    enable_multithreading: bool = True
+    worker_threads: int = 4
+    enable_gpu_driven_rendering: bool = True
+    use_indirect_draws: bool = True
+    enable_mesh_shaders: bool = False
+    enable_memory_pooling: bool = True
+    buffer_reuse: bool = True
+    enable_profiling: bool = False
+    frame_time_smoothing: float = 0.9
+
+
+@dataclass
+class TerrainConfig:
+    """Complete terrain rendering configuration"""
+    tile_size: int = 256
+    height_scale: float = 1.0
+    max_render_distance: float = 10000.0
+    tessellation: TessellationConfig = field(default_factory=TessellationConfig)
+    lod: LODConfig = field(default_factory=LODConfig)  # Now LODConfig is properly defined
+    culling: CullingConfig = field(default_factory=CullingConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    rendering: RenderingConfig = field(default_factory=RenderingConfig)
+    performance: PerformanceConfig = field(default_factory=PerformanceConfig)
+
+    @classmethod
+    def from_preset(cls, preset_name: str) -> "TerrainConfig":
+        """Create configuration from preset"""
+        presets = {
+            "high_performance": cls._high_performance_preset(),
+            "balanced": cls._balanced_preset(),
+            "high_quality": cls._high_quality_preset(),
+            "mobile": cls._mobile_preset(),
+            "debug": cls._debug_preset(),
+        }
+
+        if preset_name not in presets:
+            raise ValueError(f"Unknown preset '{preset_name}'. Available: {list(presets.keys())}")
+
+        return presets[preset_name]
+
+    @classmethod
+    def _high_performance_preset(cls) -> "TerrainConfig":
+        """High performance preset"""
+        config = cls()
+        config.tessellation.base_level = 4
+        config.tessellation.max_level = 16
+        config.lod.distances = [200.0, 500.0, 1000.0, 2000.0]
+        config.performance.target_fps = 144
+        return config
+
+    @classmethod
+    def _balanced_preset(cls) -> "TerrainConfig":
+        """Balanced preset"""
+        return cls()  # Default values
+
+    @classmethod
+    def _high_quality_preset(cls) -> "TerrainConfig":
+        """High quality preset"""
+        config = cls()
+        config.tessellation.base_level = 16
+        config.tessellation.max_level = 64
+        config.lod.distances = [1000.0, 2000.0, 4000.0, 8000.0]
+        config.performance.target_fps = 60
+        return config
+
+    @classmethod
+    def _mobile_preset(cls) -> "TerrainConfig":
+        """Mobile preset"""
+        config = cls()
+        config.tessellation.base_level = 2
+        config.tessellation.max_level = 8
+        config.lod.distances = [100.0, 250.0, 500.0, 1000.0]
+        config.performance.target_fps = 30
+        return config
+
+    @classmethod
+    def _debug_preset(cls) -> "TerrainConfig":
+        """Debug preset"""
+        config = cls()
+        config.tessellation.base_level = 1
+        config.performance.enable_profiling = True
+        return config
 
 @dataclass
 class CullingConfig:
