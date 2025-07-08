@@ -26,6 +26,14 @@ class TessellationConfig:
         if max_lv > 64:
             raise ValueError("max_level out of range")
 
+    def get_tessellation_level(self, distance: float) -> int:
+        """Compute tessellation level based on distance."""
+        if distance < 0:
+            raise ValueError("distance must be non-negative")
+        ratio = max(0.0, min(distance / 1000.0, 1.0))
+        level = round(self.max_level - (self.max_level - self.min_level) * ratio)
+        return int(max(self.min_level, min(level, self.max_level)))
+
 
 def _get_min_level(self) -> int:
     return self._min_level
@@ -69,13 +77,34 @@ class LODConfig:
     max_lod_levels: int = 4
 
     def __post_init__(self) -> None:
-        if any(d <= 0 for d in self.distances):
+        self._validate_distances()
+
+    def _validate_distances(self) -> None:
+        if any(d <= 0 for d in self._distances):
             raise ValueError("distances must be positive")
         if any(
-            self.distances[i] >= self.distances[i + 1]
-            for i in range(len(self.distances) - 1)
+            self._distances[i] >= self._distances[i + 1]
+            for i in range(len(self._distances) - 1)
         ):
             raise ValueError("distances must be strictly ascending")
+
+
+def _get_distances(self) -> List[float]:
+    return self._distances
+
+
+def _set_distances(self, value: List[float]) -> None:
+    old = getattr(self, "_distances", None)
+    self._distances = list(value)
+    try:
+        self._validate_distances()
+    except Exception:
+        if old is not None:
+            self._distances = old
+        raise
+
+
+LODConfig.distances = property(_get_distances, _set_distances)
 
 
 @dataclass
@@ -115,8 +144,8 @@ class TerrainConfig:
         if gpu_mem_mb < 1024:
             self.tessellation.max_level = min(self.tessellation.max_level, 8)
             self.lod.max_lod_levels = min(self.lod.max_lod_levels, 4)
-        elif gpu_mem_mb < 4096:
-            self.tessellation.max_level = min(self.tessellation.max_level, 16)
+        elif gpu_mem_mb < 2048:
+            self.tessellation.max_level = min(self.tessellation.max_level, 32)
             self.lod.max_lod_levels = min(self.lod.max_lod_levels, 6)
         else:
             self.tessellation.max_level = min(self.tessellation.max_level, 32)

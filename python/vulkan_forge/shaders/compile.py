@@ -35,5 +35,9 @@ def validate_spirv(spirv: bytes) -> bool:
     if not spirv_val:
         warnings.warn("spirv-val not found; skipping validation", RuntimeWarning)
         return True
-    result = _run([spirv_val, "-"], spirv)
-    return result.returncode == 0
+    try:
+        result = _run([spirv_val, "-"], spirv)
+        return result.returncode == 0
+    except FileNotFoundError:
+        warnings.warn("spirv-val not executable; skipping validation", RuntimeWarning)
+        return True
