@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=6.0", "black>=23.0", "flake8>=6.0", "mypy"]
+dev = ["pytest>=6.0", "black>=23.0", "flake8>=6.0", "mypy", "pytest-benchmark>=4.0.0"]
 
 [project.scripts]
 vf-compile-shaders = "vulkan_forge.compile_shaders:main"

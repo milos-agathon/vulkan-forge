@@ -1,69 +1,93 @@
+"""Pytest configuration and fixtures."""
+
 import pytest
+import numpy as np
+import os
+import sys
+from pathlib import Path
 
-import vulkan_forge as vf
-from vulkan_forge.perf_helpers import create_performance_mesh
+# Add the python directory to the path for imports
+test_dir = Path(__file__).parent
+project_root = test_dir.parent
+python_dir = project_root / "python"
+sys.path.insert(0, str(python_dir))
 
+# Mock vulkan_forge for testing when not built
+class MockEngine:
+    """Mock engine for testing."""
+    def __init__(self):
+        self.allocated_memory = 0
+    
+    def get_allocated_memory(self):
+        return self.allocated_memory
 
-@pytest.fixture(autouse=True)
-def _patch_performance_helpers(monkeypatch):
-    import tests.test_performance as tp
+class MockVertexBuffer:
+    """Mock vertex buffer for testing."""
+    def __init__(self, engine):
+        self.engine = engine
+        self.size = 0
+    
+    def upload_mesh_data(self, vertices, normals, tex_coords, indices):
+        self.size = len(vertices) + len(normals) + len(tex_coords) + len(indices)
+        self.engine.allocated_memory += self.size * 4  # 4 bytes per float
+        return True
+    
+    def cleanup(self):
+        self.engine.allocated_memory -= self.size * 4
 
-    monkeypatch.setattr(
-        tp.TestMeshPerformance,
-        "create_performance_mesh",
-        staticmethod(create_performance_mesh),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        tp.TestRenderingPerformance,
-        "create_performance_mesh",
-        staticmethod(create_performance_mesh),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        vf, "create_performance_mesh", create_performance_mesh, raising=False
-    )
+class MockMeshLoader:
+    """Mock mesh loader for testing."""
+    def __init__(self):
+        self.vertices = []
+        self.indices = []
+        self.groups = []
+    
+    def load_obj(self, filename):
+        if not os.path.exists(filename):
+            return False
+        try:
+            with open(filename, 'r') as f:
+                content = f.read()
+                # Simple parsing for testing
+                lines = content.strip().split('\n')
+                vertices = []
+                indices = []
+                for line in lines:
+                    if line.startswith('v '):
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            vertices.extend([float(parts[1]), float(parts[2]), float(parts[3])])
+                    elif line.startswith('f '):
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            # Simple triangulation
+                            indices.extend([int(parts[1])-1, int(parts[2])-1, int(parts[3])-1])
+                self.vertices = vertices
+                self.indices = indices
+                return len(vertices) > 0
+        except:
+            return False
+    
+    def get_vertices(self):
+        return self.vertices
+    
+    def get_indices(self):
+        return self.indices
+    
+    def get_groups(self):
+        return self.groups
 
-    def _estimate_gpu_performance(mesh: vf.Mesh, target_fps: int = 1000) -> dict:
-        vertex_count = mesh.data.vertex_count
-        triangle_count = mesh.data.triangle_count
-        vertex_size = mesh.data.vertex_size_bytes
-        index_size = mesh.data.index_size_bytes
+@pytest.fixture
+def engine():
+    """Provide a mock engine for testing."""
+    return MockEngine()
 
-        vertex_processing_time = vertex_count / 100_000_000
-        triangle_processing_time = triangle_count / 100_000_000
-        memory_transfer_time = (vertex_size + index_size) / (500 * 1024**3)
+@pytest.fixture
+def vertex_buffer(engine):
+    """Provide a mock vertex buffer for testing."""
+    return MockVertexBuffer(engine)
 
-        estimated_frame_time = max(
-            vertex_processing_time, triangle_processing_time, memory_transfer_time
-        )
-        estimated_fps = (
-            1.0 / estimated_frame_time if estimated_frame_time > 0 else float("inf")
-        )
-
-        return {
-            "vertex_count": vertex_count,
-            "triangle_count": triangle_count,
-            "vertex_size_mb": vertex_size / (1024**2),
-            "estimated_frame_time_ms": estimated_frame_time * 1000,
-            "estimated_fps": estimated_fps,
-            "meets_target": estimated_fps >= target_fps,
-            "performance_ratio": estimated_fps / target_fps,
-            "bottleneck": (
-                "vertices"
-                if vertex_processing_time == estimated_frame_time
-                else (
-                    "triangles"
-                    if triangle_processing_time == estimated_frame_time
-                    else "memory"
-                )
-            ),
-        }
-
-    monkeypatch.setattr(
-        tp.TestRenderingPerformance,
-        "estimate_gpu_performance",
-        staticmethod(_estimate_gpu_performance),
-        raising=False,
-    )
-    yield
+@pytest.fixture
+def mesh_loader():
+    """Provide a mock mesh loader for testing."""
+    return MockMeshLoader()

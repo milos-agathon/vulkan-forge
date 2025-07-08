@@ -1,2 +1,3 @@
-# File: python/vulkan_forge/tests/__init__.py
 """Tests for vulkan-forge package."""
+
+__version__ = "0.1.0"
