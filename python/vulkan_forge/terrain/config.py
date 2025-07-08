@@ -14,10 +14,51 @@ class TessellationConfig:
     max_level: int = 8
 
     def __post_init__(self) -> None:
-        if self.min_level < 1 or self.max_level < self.min_level:
+        self._validate_levels()
+
+    def _validate_levels(self) -> None:
+        min_lv = getattr(self, "_min_level", None)
+        max_lv = getattr(self, "_max_level", None)
+        if min_lv is None or max_lv is None:
+            return
+        if max_lv < 1 or min_lv < 1 or min_lv > max_lv:
             raise ValueError("Invalid tessellation levels")
-        if self.max_level > 64:
+        if max_lv > 64:
             raise ValueError("max_level out of range")
+
+
+def _get_min_level(self) -> int:
+    return self._min_level
+
+
+def _set_min_level(self, value: int) -> None:
+    old = getattr(self, "_min_level", None)
+    self._min_level = value
+    try:
+        self._validate_levels()
+    except Exception:
+        if old is not None:
+            self._min_level = old
+        raise
+
+
+def _get_max_level(self) -> int:
+    return self._max_level
+
+
+def _set_max_level(self, value: int) -> None:
+    old = getattr(self, "_max_level", None)
+    self._max_level = value
+    try:
+        self._validate_levels()
+    except Exception:
+        if old is not None:
+            self._max_level = old
+        raise
+
+
+TessellationConfig.min_level = property(_get_min_level, _set_min_level)
+TessellationConfig.max_level = property(_get_max_level, _set_max_level)
 
 
 @dataclass
