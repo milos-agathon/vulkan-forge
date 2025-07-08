@@ -1,4 +1,3 @@
-# tests/test_performance.py
 """Test performance functionality."""
 
 import pytest
@@ -13,11 +12,9 @@ class TestPerformance:
         sizes = [1000, 10000, 100000]
         
         for size in sizes:
-            # Create test arrays
             a = np.random.rand(size).astype(np.float32)
             b = np.random.rand(size).astype(np.float32)
             
-            # Time array operations
             start = time.perf_counter()
             c = a + b
             add_time = time.perf_counter() - start
@@ -35,15 +32,12 @@ class TestPerformance:
         """Test memory bandwidth with large arrays."""
         size = 1_000_000
         
-        # Create large array
         data = np.random.rand(size).astype(np.float32)
         
-        # Test sequential access
         start = time.perf_counter()
         total = np.sum(data)
         seq_time = time.perf_counter() - start
         
-        # Test random access (via fancy indexing)
         indices = np.random.randint(0, size, size//10)
         start = time.perf_counter()
         subset = data[indices]
@@ -54,3 +48,24 @@ class TestPerformance:
         
         print(f"Sequential sum: {seq_time*1000:.2f}ms")
         print(f"Random access: {random_time*1000:.2f}ms")
+    
+    @pytest.mark.performance
+    def test_large_array_creation(self):
+        """Test performance of large array creation."""
+        sizes = [100_000, 1_000_000, 10_000_000]
+        
+        for size in sizes:
+            start = time.perf_counter()
+            arr = np.zeros(size, dtype=np.float32)
+            creation_time = time.perf_counter() - start
+            
+            start = time.perf_counter()
+            arr.fill(1.0)
+            fill_time = time.perf_counter() - start
+            
+            assert arr.size == size
+            assert np.all(arr == 1.0)
+            
+            print(f"Size {size}: create={creation_time*1000:.2f}ms, fill={fill_time*1000:.2f}ms")
+            
+            del arr

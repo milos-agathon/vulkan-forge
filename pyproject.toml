@@ -47,3 +47,15 @@ vulkan_forge = [
     "shaders/*.spv",
     "shaders/embedded_spirv.py",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "performance: marks tests as performance tests (deselect with '-m \"not performance\"')",
+    "slow: marks tests as slow tests (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
