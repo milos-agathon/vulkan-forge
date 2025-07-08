@@ -144,6 +144,7 @@ class Renderer(ABC):
     def __init__(self, width: int = 1280, height: int = 720) -> None:
         self.width = width
         self.height = height
+        self._render_target: Optional[RenderTarget] = None
 
     @abstractmethod
     def render(
@@ -159,7 +160,8 @@ class Renderer(ABC):
     def set_target(self, target: RenderTarget) -> None: ...
 
     def set_render_target(self, target: RenderTarget) -> None:
-        """Backward-compat alias for :meth:`set_target`."""
+        """Store RenderTarget descriptor for CPU-path tests."""
+        self._render_target = target
         return self.set_target(target)
 
     @abstractmethod

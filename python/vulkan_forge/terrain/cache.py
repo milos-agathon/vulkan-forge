@@ -11,15 +11,8 @@ import numpy as np
 class TerrainCache:
     """Cache of terrain tiles with size limits."""
 
-    def __init__(
-        self,
-        max_tiles: int = 512,
-        max_mb: int = 1024,
-        *,
-        max_size_mb: Optional[int] = None,
-    ) -> None:
-        if max_size_mb is not None:
-            max_mb = max_size_mb
+    def __init__(self, max_mb: int = 512, max_tiles: int = 256, **kw) -> None:
+        max_mb = kw.pop("max_size_mb", max_mb)
         self.max_tiles = max_tiles
         self.max_mb = max_mb
         self._tiles: "OrderedDict[Any, Tuple[np.ndarray, Dict[str, Any]]]" = (
