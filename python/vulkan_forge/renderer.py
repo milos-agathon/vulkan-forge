@@ -66,7 +66,9 @@ class Transform:
 
     matrix: np.ndarray = field(default_factory=lambda: np.eye(4, dtype=np.float32))
 
-    def transform_point(self, point: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    def transform_point(
+        self, point: Tuple[float, float, float]
+    ) -> Tuple[float, float, float]:
         p = np.array([*point, 1.0], dtype=np.float32)
         r = self.matrix @ p
         return (float(r[0]), float(r[1]), float(r[2]))
@@ -130,7 +132,9 @@ class Renderer(ABC):
         enable_validation: bool = True,
     ) -> "Renderer":
         if cls is Renderer:
-            impl = create_renderer(prefer_gpu=prefer_gpu, enable_validation=enable_validation)
+            impl = create_renderer(
+                prefer_gpu=prefer_gpu, enable_validation=enable_validation
+            )
             impl.set_target(RenderTarget(width, height))
             impl.width = width
             impl.height = height
@@ -178,8 +182,12 @@ class Renderer(ABC):
         max_y = int(min(h - 1, np.ceil(max(v0[1], v1[1], v2[1]))))
         for y in range(min_y, max_y + 1):
             for x in range(min_x, max_x + 1):
-                w0 = ((v1[0] - v2[0]) * (y - v2[1]) - (v1[1] - v2[1]) * (x - v2[0])) / area
-                w1 = ((v2[0] - v0[0]) * (y - v0[1]) - (v2[1] - v0[1]) * (x - v0[0])) / area
+                w0 = (
+                    (v1[0] - v2[0]) * (y - v2[1]) - (v1[1] - v2[1]) * (x - v2[0])
+                ) / area
+                w1 = (
+                    (v2[0] - v0[0]) * (y - v0[1]) - (v2[1] - v0[1]) * (x - v0[0])
+                ) / area
                 w2 = 1 - w0 - w1
                 if w0 >= 0 and w1 >= 0 and w2 >= 0:
                     fb[y, x, :3] = [w0, w1, w2]
@@ -213,13 +221,17 @@ class VulkanRenderer(Renderer):
             return
 
         self.device_manager = device_manager
-        self.logical_devices = logical_devices if isinstance(logical_devices, list) else []
+        self.logical_devices = (
+            logical_devices if isinstance(logical_devices, list) else []
+        )
         self.render_target: Optional[RenderTarget] = None
         self._render_pass: Optional[int] = None
         self._framebuffer: Optional[np.ndarray] = None
         self._enable_runtime_compilation = False
 
-        self.swapchain_format = vk.VK_FORMAT_B8G8R8A8_UNORM if VULKAN_AVAILABLE else None
+        self.swapchain_format = (
+            vk.VK_FORMAT_B8G8R8A8_UNORM if VULKAN_AVAILABLE else None
+        )
         self.current_device_index = 0
         self.gpu_active = False
 
@@ -246,7 +258,11 @@ class VulkanRenderer(Renderer):
                     self.point_pipelines.append(point_pl)
                 self.gpu_active = any(self.pipelines)
                 self.gpu_point_active = any(self.point_pipelines)
-                logger.info("GPU rendering enabled" if self.gpu_active else "GPU init failed; CPU fallback")
+                logger.info(
+                    "GPU rendering enabled"
+                    if self.gpu_active
+                    else "GPU init failed; CPU fallback"
+                )
             except Exception as e:
                 logger.exception("Vulkan init failed, switching to CPU: %s", e)
                 self.gpu_active = False
@@ -282,7 +298,14 @@ class VulkanRenderer(Renderer):
 
         # Also check in python/vulkan_forge/shaders
         if not os.path.exists(spv_path):
-            alt_shader_dir = os.path.join(os.path.dirname(__file__), "..", "..", "python", "vulkan_forge", "shaders")
+            alt_shader_dir = os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "python",
+                "vulkan_forge",
+                "shaders",
+            )
             spv_path = os.path.join(alt_shader_dir, f"{shader_name}.spv")
             if not os.path.exists(spv_path):
                 base_name = shader_name.replace(".glsl", "")
@@ -320,7 +343,9 @@ class VulkanRenderer(Renderer):
 
         # Additional check: try loading from current directory shaders
         try:
-            direct_spv = os.path.join(shader_dir, f"{shader_name.replace('.glsl', '')}.spv")
+            direct_spv = os.path.join(
+                shader_dir, f"{shader_name.replace('.glsl', '')}.spv"
+            )
             if os.path.exists(direct_spv):
                 with open(direct_spv, "rb") as f:
                     return f.read()
@@ -341,7 +366,9 @@ class VulkanRenderer(Renderer):
 
         # For point shaders that don't exist, return None instead of minimal SPIR-V
         if "point" in shader_name:
-            logger.info(f"Point shader {shader_name} not found, will use regular shaders")
+            logger.info(
+                f"Point shader {shader_name} not found, will use regular shaders"
+            )
             return None
 
     def _get_minimal_spirv(self, stage: str) -> bytes:
@@ -455,7 +482,9 @@ class VulkanRenderer(Renderer):
             attachments = [color_attachment, depth_attachment]
 
             # Attachment references
-            color_ref = vk.VkAttachmentReference(attachment=0, layout=vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+            color_ref = vk.VkAttachmentReference(
+                attachment=0, layout=vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+            )
 
             depth_ref = vk.VkAttachmentReference(
                 attachment=1, layout=vk.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
@@ -513,7 +542,9 @@ class VulkanRenderer(Renderer):
 
         # Skip pipeline creation if we don't have shader support
         if not hasattr(self, "_compile_shader"):
-            logger.warning("Shader compilation not available - skipping pipeline creation")
+            logger.warning(
+                "Shader compilation not available - skipping pipeline creation"
+            )
             return None
 
         try:
@@ -550,7 +581,9 @@ class VulkanRenderer(Renderer):
 
             # If shader modules couldn't be created, we can't create pipeline
             if not vert_module or not frag_module:
-                logger.warning("Shader modules not available - falling back to CPU rendering")
+                logger.warning(
+                    "Shader modules not available - falling back to CPU rendering"
+                )
                 return None
 
             # Shader stages
@@ -608,7 +641,9 @@ class VulkanRenderer(Renderer):
                 vertexBindingDescriptionCount=1,
                 pVertexBindingDescriptions=ctypes.pointer(binding_desc),
                 vertexAttributeDescriptionCount=len(attr_descs),
-                pVertexAttributeDescriptions=(vk.VkVertexInputAttributeDescription * len(attr_descs))(*attr_descs),
+                pVertexAttributeDescriptions=(
+                    vk.VkVertexInputAttributeDescription * len(attr_descs)
+                )(*attr_descs),
             )
 
             # Input assembly
@@ -632,7 +667,9 @@ class VulkanRenderer(Renderer):
 
             scissor = vk.VkRect2D(
                 offset=vk.VkOffset2D(x=0, y=0),
-                extent=vk.VkExtent2D(width=self.swapchain_extent[0], height=self.swapchain_extent[1]),
+                extent=vk.VkExtent2D(
+                    width=self.swapchain_extent[0], height=self.swapchain_extent[1]
+                ),
             )
 
             viewport_state = vk.VkPipelineViewportStateCreateInfo(
@@ -733,7 +770,9 @@ class VulkanRenderer(Renderer):
                 pNext=None,
                 flags=0,
                 bindingCount=len(layout_bindings),
-                pBindings=(vk.VkDescriptorSetLayoutBinding * len(layout_bindings))(*layout_bindings),
+                pBindings=(vk.VkDescriptorSetLayoutBinding * len(layout_bindings))(
+                    *layout_bindings
+                ),
             )
 
             desc_layout = vk.vkCreateDescriptorSetLayout(
@@ -767,7 +806,9 @@ class VulkanRenderer(Renderer):
                 pNext=None,
                 flags=0,
                 stageCount=len(shader_stages),
-                pStages=(vk.VkPipelineShaderStageCreateInfo * len(shader_stages))(*shader_stages),
+                pStages=(vk.VkPipelineShaderStageCreateInfo * len(shader_stages))(
+                    *shader_stages
+                ),
                 pVertexInputState=ctypes.pointer(vertex_input),
                 pInputAssemblyState=ctypes.pointer(input_assembly),
                 pTessellationState=None,
@@ -826,14 +867,18 @@ class VulkanRenderer(Renderer):
             if vert_spv.is_file():
                 vert_code = vert_spv.read_bytes()
             else:
-                logger.debug("Point vertex shader not found, using regular vertex shader")
+                logger.debug(
+                    "Point vertex shader not found, using regular vertex shader"
+                )
                 vert_code = self._compile_shader("vertex", "vertex")
 
             frag_spv = shader_dir / "point_fragment.spv"
             if frag_spv.is_file():
                 frag_code = frag_spv.read_bytes()
             else:
-                logger.debug("Point fragment shader not found, using regular fragment shader")
+                logger.debug(
+                    "Point fragment shader not found, using regular fragment shader"
+                )
                 frag_code = self._compile_shader("fragment", "fragment")
 
             if not vert_code or not frag_code:
@@ -904,9 +949,13 @@ class VulkanRenderer(Renderer):
                 pNext=None,
                 flags=0,
                 vertexBindingDescriptionCount=len(binding_descs),
-                pVertexBindingDescriptions=(vk.VkVertexInputBindingDescription * len(binding_descs))(*binding_descs),
+                pVertexBindingDescriptions=(
+                    vk.VkVertexInputBindingDescription * len(binding_descs)
+                )(*binding_descs),
                 vertexAttributeDescriptionCount=len(attr_descs),
-                pVertexAttributeDescriptions=(vk.VkVertexInputAttributeDescription * len(attr_descs))(*attr_descs),
+                pVertexAttributeDescriptions=(
+                    vk.VkVertexInputAttributeDescription * len(attr_descs)
+                )(*attr_descs),
             )
 
             # Input assembly - POINT_LIST topology
@@ -930,7 +979,9 @@ class VulkanRenderer(Renderer):
 
             scissor = vk.VkRect2D(
                 offset=vk.VkOffset2D(x=0, y=0),
-                extent=vk.VkExtent2D(width=self.swapchain_extent[0], height=self.swapchain_extent[1]),
+                extent=vk.VkExtent2D(
+                    width=self.swapchain_extent[0], height=self.swapchain_extent[1]
+                ),
             )
 
             viewport_state = vk.VkPipelineViewportStateCreateInfo(
@@ -1063,7 +1114,9 @@ class VulkanRenderer(Renderer):
                 pNext=None,
                 flags=0,
                 stageCount=len(shader_stages),
-                pStages=(vk.VkPipelineShaderStageCreateInfo * len(shader_stages))(*shader_stages),
+                pStages=(vk.VkPipelineShaderStageCreateInfo * len(shader_stages))(
+                    *shader_stages
+                ),
                 pVertexInputState=ctypes.pointer(vertex_input),
                 pInputAssemblyState=ctypes.pointer(input_assembly),
                 pTessellationState=None,
@@ -1104,7 +1157,10 @@ class VulkanRenderer(Renderer):
 
         except Exception as e:
             logger.error(f"Failed to create point pipeline: {e}")
-            if hasattr(self, "point_descriptor_set_layouts") and self.point_descriptor_set_layouts:
+            if (
+                hasattr(self, "point_descriptor_set_layouts")
+                and self.point_descriptor_set_layouts
+            ):
                 self.point_descriptor_set_layouts.pop()
             if hasattr(self, "point_pipeline_layouts") and self.point_pipeline_layouts:
                 self.point_pipeline_layouts.pop()
@@ -1159,7 +1215,9 @@ class VulkanRenderer(Renderer):
             except Exception as e:  # pragma: no cover - GPU optional
                 logger.error("GPU point rendering failed: %s", e)
 
-        return self._render_points_cpu(vertex_buffer, model_matrix, view_matrix, projection_matrix, color)
+        return self._render_points_cpu(
+            vertex_buffer, model_matrix, view_matrix, projection_matrix, color
+        )
 
     def _render_points_cpu(
         self,
@@ -1187,7 +1245,9 @@ class VulkanRenderer(Renderer):
 
         mvp = projection_matrix.data @ view_matrix.data @ model_matrix.data
         coords = np.c_[verts[:, :3], np.ones(len(verts))] @ mvp.T
-        ndc = coords[:, :3] / np.where(np.abs(coords[:, 3:4]) < 1e-6, 1e-6, coords[:, 3:4])
+        ndc = coords[:, :3] / np.where(
+            np.abs(coords[:, 3:4]) < 1e-6, 1e-6, coords[:, 3:4]
+        )
 
         x = ((ndc[:, 0] + 1) * 0.5 * self.width).astype(int)
         y = ((1 - ndc[:, 1]) * 0.5 * self.height).astype(int)
@@ -1279,7 +1339,11 @@ class VulkanRenderer(Renderer):
                             "dtype",
                             np.uint32,
                         )
-                        index_type = vk.VK_INDEX_TYPE_UINT16 if dtype == np.uint16 else vk.VK_INDEX_TYPE_UINT32
+                        index_type = (
+                            vk.VK_INDEX_TYPE_UINT16
+                            if dtype == np.uint16
+                            else vk.VK_INDEX_TYPE_UINT32
+                        )
                         vk.vkCmdBindIndexBuffer(cmd_buf, ib_handle, 0, index_type)
 
                     vk.vkCmdDrawIndexed(cmd_buf, index_count, 1, 0, 0, 0)
@@ -1303,7 +1367,8 @@ class VulkanRenderer(Renderer):
             verts_arr = vertex_buffer
         else:
             raise TypeError(
-                "Unsupported vertex_buffer type; expected NumpyBuffer, " "MultiBuffer, NumpyBufferCtx, or ndarray."
+                "Unsupported vertex_buffer type; expected NumpyBuffer, "
+                "MultiBuffer, NumpyBufferCtx, or ndarray."
             )
 
         verts_arr = np.asarray(verts_arr, dtype=np.float32, order="C")
@@ -1340,7 +1405,9 @@ class VulkanRenderer(Renderer):
             indices=indices,
         )
         material = Material()
-        return self.render_cpu_fallback([mesh], [material], [], view_matrix, projection_matrix)
+        return self.render_cpu_fallback(
+            [mesh], [material], [], view_matrix, projection_matrix
+        )
 
     # ─────────────────────────────────────────────────────────────────────
     # Main render entry
@@ -1358,7 +1425,9 @@ class VulkanRenderer(Renderer):
 
         w, h = self.render_target.width, self.render_target.height
         # Since GPU rendering isn't fully implemented, use CPU fallback
-        return self.render_cpu_fallback(meshes, materials, lights, view_matrix, projection_matrix)
+        return self.render_cpu_fallback(
+            meshes, materials, lights, view_matrix, projection_matrix
+        )
 
     def render_cpu_fallback(
         self,
@@ -1387,7 +1456,9 @@ class VulkanRenderer(Renderer):
             base_rgb, alpha = _extract_base_color(mat)
             base_rgb[:] = 0.5
 
-            verts = np.hstack([mesh.vertices, np.ones((len(mesh.vertices), 1), dtype=np.float32)])
+            verts = np.hstack(
+                [mesh.vertices, np.ones((len(mesh.vertices), 1), dtype=np.float32)]
+            )
             clip = verts @ mvp.T
             w_vals = np.where(np.abs(clip[:, 3:4]) < 1e-6, 1e-6, clip[:, 3:4])
             ndc = clip[:, :3] / w_vals
@@ -1441,9 +1512,13 @@ class VulkanRenderer(Renderer):
                     n0 = mesh.normals[i0]
                     n1 = mesh.normals[i1]
                     n2 = mesh.normals[i2]
-                    normal = n0 * w0[..., None] + n1 * w1[..., None] + n2 * w2[..., None]
+                    normal = (
+                        n0 * w0[..., None] + n1 * w1[..., None] + n2 * w2[..., None]
+                    )
                     nlen = np.linalg.norm(normal, axis=2, keepdims=True)
-                    normal = np.divide(normal, nlen, out=np.zeros_like(normal), where=nlen > 1e-10)
+                    normal = np.divide(
+                        normal, nlen, out=np.zeros_like(normal), where=nlen > 1e-10
+                    )
                 else:
                     normal = np.array([0.0, 0.0, 1.0], dtype=np.float32)
                     normal = np.broadcast_to(normal, (*w0.shape, 3))
@@ -1484,12 +1559,27 @@ class VulkanRenderer(Renderer):
             # Clean up point pipeline resources
             if idx < len(self.point_pipelines) and self.point_pipelines[idx]:
                 vk.vkDestroyPipeline(dev.device, self.point_pipelines[idx], None)
-            if idx < len(self.point_pipeline_layouts) and self.point_pipeline_layouts[idx]:
-                vk.vkDestroyPipelineLayout(dev.device, self.point_pipeline_layouts[idx], None)
-            if idx < len(self.point_descriptor_set_layouts) and self.point_descriptor_set_layouts[idx]:
-                vk.vkDestroyDescriptorSetLayout(dev.device, self.point_descriptor_set_layouts[idx], None)
-            if idx < len(self.descriptor_set_layouts) and self.descriptor_set_layouts[idx]:
-                vk.vkDestroyDescriptorSetLayout(dev.device, self.descriptor_set_layouts[idx], None)
+            if (
+                idx < len(self.point_pipeline_layouts)
+                and self.point_pipeline_layouts[idx]
+            ):
+                vk.vkDestroyPipelineLayout(
+                    dev.device, self.point_pipeline_layouts[idx], None
+                )
+            if (
+                idx < len(self.point_descriptor_set_layouts)
+                and self.point_descriptor_set_layouts[idx]
+            ):
+                vk.vkDestroyDescriptorSetLayout(
+                    dev.device, self.point_descriptor_set_layouts[idx], None
+                )
+            if (
+                idx < len(self.descriptor_set_layouts)
+                and self.descriptor_set_layouts[idx]
+            ):
+                vk.vkDestroyDescriptorSetLayout(
+                    dev.device, self.descriptor_set_layouts[idx], None
+                )
         self.device_manager.cleanup()
 
     def render_points(
@@ -1513,7 +1603,9 @@ class VulkanRenderer(Renderer):
             self.set_target(RenderTarget(800, 600))
 
         # Use the same CPU rendering logic as VulkanRenderer
-        return self._render_points_cpu(vertex_buffer, model_matrix, view_matrix, projection_matrix, color)
+        return self._render_points_cpu(
+            vertex_buffer, model_matrix, view_matrix, projection_matrix, color
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1553,8 +1645,14 @@ class CPURenderer(Renderer):
             if entry:
                 _, vertex_buffer = entry
             # Also check for index buffer in MultiBuffer
-            idx_buf = vertex_buffer.get_index_buffer() if hasattr(vertex_buffer, "get_index_buffer") else None
-            if idx_buf is not None and not isinstance(index_buffer, (NumpyBuffer, np.ndarray)):
+            idx_buf = (
+                vertex_buffer.get_index_buffer()
+                if hasattr(vertex_buffer, "get_index_buffer")
+                else None
+            )
+            if idx_buf is not None and not isinstance(
+                index_buffer, (NumpyBuffer, np.ndarray)
+            ):
                 index_buffer = idx_buf
 
         # -- resolve vertex data for CPU raster --
@@ -1568,7 +1666,8 @@ class CPURenderer(Renderer):
             verts_arr = vertex_buffer
         else:
             raise TypeError(
-                "Unsupported vertex_buffer type; expected NumpyBuffer, " "MultiBuffer, NumpyBufferCtx, or ndarray."
+                "Unsupported vertex_buffer type; expected NumpyBuffer, "
+                "MultiBuffer, NumpyBufferCtx, or ndarray."
             )
 
         verts_arr = np.asarray(verts_arr, dtype=np.float32, order="C")
@@ -1626,7 +1725,9 @@ class CPURenderer(Renderer):
             base_rgb, alpha = _extract_base_color(mat)
             base_rgb[:] = 0.5
 
-            verts = np.hstack([mesh.vertices, np.ones((len(mesh.vertices), 1), dtype=np.float32)])
+            verts = np.hstack(
+                [mesh.vertices, np.ones((len(mesh.vertices), 1), dtype=np.float32)]
+            )
             clip = verts @ mvp.T
             w_vals = np.where(np.abs(clip[:, 3:4]) < 1e-6, 1e-6, clip[:, 3:4])
             ndc = clip[:, :3] / w_vals
@@ -1680,9 +1781,13 @@ class CPURenderer(Renderer):
                     n0 = mesh.normals[i0]
                     n1 = mesh.normals[i1]
                     n2 = mesh.normals[i2]
-                    normal = n0 * w0[..., None] + n1 * w1[..., None] + n2 * w2[..., None]
+                    normal = (
+                        n0 * w0[..., None] + n1 * w1[..., None] + n2 * w2[..., None]
+                    )
                     nlen = np.linalg.norm(normal, axis=2, keepdims=True)
-                    normal = np.divide(normal, nlen, out=np.zeros_like(normal), where=nlen > 1e-10)
+                    normal = np.divide(
+                        normal, nlen, out=np.zeros_like(normal), where=nlen > 1e-10
+                    )
                 else:
                     normal = np.array([0.0, 0.0, 1.0], dtype=np.float32)
                     normal = np.broadcast_to(normal, (*w0.shape, 3))
@@ -1718,7 +1823,9 @@ VulkanRenderer._render_points_cpu_alias = VulkanRenderer._render_points_cpu
 # ─────────────────────────────────────────────────────────────────────────────
 # Factory
 # ─────────────────────────────────────────────────────────────────────────────
-def create_renderer(prefer_gpu: bool = True, enable_validation: bool = True) -> Renderer:
+def create_renderer(
+    prefer_gpu: bool = True, enable_validation: bool = True
+) -> Renderer:
     if prefer_gpu and VULKAN_AVAILABLE:
         dm = DeviceManager(enable_validation=enable_validation)
         devices = dm.create_logical_devices()
@@ -1742,6 +1849,11 @@ def set_vertex_buffer(renderer: Renderer, numpy_buf, binding: int = 0) -> None:
     renderer.set_vertex_buffer(numpy_buf, binding)
 
 
+def set_render_target(renderer: Renderer, target: RenderTarget) -> None:
+    """Convenience wrapper for :meth:`Renderer.set_render_target`."""
+    renderer.set_render_target(target)
+
+
 __all__ = [
     "RenderTarget",
     "Mesh",
@@ -1753,5 +1865,6 @@ __all__ = [
     "CPURenderer",
     "create_renderer",
     "set_vertex_buffer",
+    "set_render_target",
     "save_image",
 ]

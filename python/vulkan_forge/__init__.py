@@ -495,6 +495,7 @@ try:
     from .terrain.coords import CoordinateSystems, GeographicBounds
     from .terrain.cache import TerrainCache
     from .terrain.config import TerrainConfig, TessellationConfig, LODConfig
+    from .terrain import config as terrain_config
 
     # Promote full-feature classes if available
     from .renderer import Renderer, VulkanRenderer, CPURenderer, create_renderer
@@ -565,6 +566,7 @@ __all__ = [
     "TerrainConfig",
     "TessellationConfig",
     "LODConfig",
+    "terrain_config",
     "PERFORMANCE_TARGETS",
     "__version__",
     "__author__",

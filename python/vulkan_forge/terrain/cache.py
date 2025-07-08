@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Tuple, Optional
 
 import numpy as np
 
@@ -11,7 +11,15 @@ import numpy as np
 class TerrainCache:
     """Cache of terrain tiles with size limits."""
 
-    def __init__(self, max_tiles: int = 512, max_mb: int = 1024) -> None:
+    def __init__(
+        self,
+        max_tiles: int = 512,
+        max_mb: int = 1024,
+        *,
+        max_size_mb: Optional[int] = None,
+    ) -> None:
+        if max_size_mb is not None:
+            max_mb = max_size_mb
         self.max_tiles = max_tiles
         self.max_mb = max_mb
         self._tiles: "OrderedDict[Any, Tuple[np.ndarray, Dict[str, Any]]]" = (

@@ -12,6 +12,13 @@ class CoordinateSystems(Enum):
     WGS84 = "EPSG:4326"
     WebMercator = "EPSG:3857"
 
+    @staticmethod
+    def validate(lat: float, lon: float) -> bool:
+        """Validate latitude and longitude, raising ``ValueError`` if invalid."""
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            raise ValueError("Invalid latitude or longitude")
+        return True
+
 
 @dataclass
 class GeographicBounds:
@@ -26,4 +33,5 @@ class GeographicBounds:
 def validate(lat: float, lon: float) -> bool:
     """Validate a latitude/longitude pair."""
 
-    return -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0
+    CoordinateSystems.validate(lat, lon)
+    return True
