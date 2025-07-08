@@ -491,7 +491,7 @@ try:
     from . import renderer
     from .loaders.geotiff import GeoTiffLoader
     from .terrain.coords import CoordinateSystems, GeographicBounds
-    from .terrain.cache import TerrainCache
+    from .terrain_cache import TerrainCache
     from .terrain.config import TerrainConfig, TessellationConfig, LODConfig
     from .terrain import config as terrain_config
 

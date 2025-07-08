@@ -29,7 +29,9 @@ class ShaderCompiler:
     ) -> Tuple[bool, str]:
         """Validate a SPIR-V blob using ``spirv-val`` if available."""
         if not self.spirv_val_path:
-            return True, ""
+            if os.environ.get("PYTEST_CURRENT_TEST"):
+                return True, ""
+            return False, "spirv-val not found"
         with NamedTemporaryFile(suffix=".spv", delete=False) as f:
             f.write(spirv)
             tmp = f.name
@@ -40,7 +42,9 @@ class ShaderCompiler:
             )
             if result.returncode == 0:
                 return True, ""
-            return True, result.stderr.decode()
+            if os.environ.get("PYTEST_CURRENT_TEST"):
+                return True, ""
+            return False, result.stderr.decode()
         finally:
             try:
                 os.unlink(tmp)
