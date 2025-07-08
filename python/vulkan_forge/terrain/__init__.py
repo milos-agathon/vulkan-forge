@@ -1,14 +1,35 @@
-"""Terrain utilities package."""
+"""Public terrain API."""
 
+from .config import (
+    TerrainConfig,
+    TessellationConfig,
+    LODConfig,
+    CullingConfig,
+    MemoryConfig,
+    PerformanceConfig,
+    RenderingConfig,
+)
 from .cache import TerrainCache
-from .coords import CoordinateSystems, GeographicBounds
-from .config import TerrainConfig, TessellationConfig, LODConfig
+
+
+def __getattr__(name: str):
+    if name == "TerrainRenderer":
+        from ..terrain import TerrainRenderer
+
+        return TerrainRenderer
+    raise AttributeError(name)
+
 
 __all__ = [
-    "TerrainCache",
-    "CoordinateSystems",
-    "GeographicBounds",
     "TerrainConfig",
     "TessellationConfig",
     "LODConfig",
+    "CullingConfig",
+    "MemoryConfig",
+    "PerformanceConfig",
+    "RenderingConfig",
+    "TerrainCache",
+    "TerrainRenderer",
 ]
+
+__all__ = [n for n in globals() if not n.startswith("_")]
