@@ -159,10 +159,10 @@ class Renderer(ABC):
     @abstractmethod
     def set_target(self, target: RenderTarget) -> None: ...
 
-    def set_render_target(self, target: RenderTarget) -> None:
-        """Store RenderTarget descriptor for CPU-path tests."""
+    def set_render_target(self, target: RenderTarget):
+        """Light-weight CPU-test helper (no GPU FB)."""
         self._render_target = target
-        return self.set_target(target)
+        return self
 
     @abstractmethod
     def cleanup(self) -> None: ...

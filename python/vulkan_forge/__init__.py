@@ -576,3 +576,4 @@ __all__ = [
 
 # expose CLI terrain API for tests that patch() it
 from . import terrain  # noqa: F401
+from .terrain_config import TessellationConfig, LODConfig, TerrainConfig

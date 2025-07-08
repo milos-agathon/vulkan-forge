@@ -13,6 +13,10 @@ class TerrainCache:
 
     def __init__(self, max_mb: int = 512, max_tiles: int = 256, **kw) -> None:
         max_mb = kw.pop("max_size_mb", max_mb)
+        try:
+            super().__init__(max_mb=max_mb, max_tiles=max_tiles, **kw)
+        except TypeError:
+            super().__init__()  # type: ignore[misc]
         self.max_tiles = max_tiles
         self.max_mb = max_mb
         self._tiles: "OrderedDict[Any, Tuple[np.ndarray, Dict[str, Any]]]" = (
