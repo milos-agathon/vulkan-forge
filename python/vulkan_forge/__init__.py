@@ -21,7 +21,9 @@ from typing import Optional, List, Dict, Any
 try:
     import numpy as np
 except ImportError:
-    raise ImportError("NumPy is required for vulkan-forge. Install with: pip install numpy")
+    raise ImportError(
+        "NumPy is required for vulkan-forge. Install with: pip install numpy"
+    )
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -106,7 +108,9 @@ class HeightFieldScene:
         if heights.ndim != 2:
             raise ValueError("heights must be a 2D array")
 
-        if not np.issubdtype(heights.dtype, np.floating) and not np.issubdtype(heights.dtype, np.integer):
+        if not np.issubdtype(heights.dtype, np.floating) and not np.issubdtype(
+            heights.dtype, np.integer
+        ):
             raise ValueError("heights must be numeric dtype")
 
         if heights.size == 0:
@@ -202,7 +206,9 @@ class VulkanForgeError(Exception):
 class Material:
     """Material properties for rendering"""
 
-    def __init__(self, ambient=(0.1, 0.1, 0.1), diffuse=(0.8, 0.8, 0.8), specular=(1.0, 1.0, 1.0)):
+    def __init__(
+        self, ambient=(0.1, 0.1, 0.1), diffuse=(0.8, 0.8, 0.8), specular=(1.0, 1.0, 1.0)
+    ):
         self.ambient = ambient
         self.diffuse = diffuse
         self.specular = specular
@@ -285,12 +291,18 @@ def get_capabilities():
 # Mesh and geometry utilities
 def create_cube(size=1.0):
     """Create a cube mesh"""
-    return {"vertices": np.array([[0, 0, 0]], dtype=np.float32), "indices": np.array([0], dtype=np.uint32)}
+    return {
+        "vertices": np.array([[0, 0, 0]], dtype=np.float32),
+        "indices": np.array([0], dtype=np.uint32),
+    }
 
 
 def create_sphere(radius=1.0, segments=32):
     """Create a sphere mesh"""
-    return {"vertices": np.array([[0, 0, 0]], dtype=np.float32), "indices": np.array([0], dtype=np.uint32)}
+    return {
+        "vertices": np.array([[0, 0, 0]], dtype=np.float32),
+        "indices": np.array([0], dtype=np.uint32),
+    }
 
 
 # Buffer and memory management
@@ -479,6 +491,10 @@ try:
     from . import backend
     from . import core
     from . import renderer
+    from .loaders.geotiff import GeoTiffLoader
+    from .terrain.coords import CoordinateSystems, GeographicBounds
+    from .terrain.cache import TerrainCache
+    from .terrain.config import TerrainConfig, TessellationConfig, LODConfig
 
     # Promote full-feature classes if available
     from .renderer import Renderer, VulkanRenderer, CPURenderer, create_renderer
@@ -542,6 +558,13 @@ __all__ = [
     "PhysicalDeviceInfo",
     "RenderTarget",
     "VulkanForgeError",
+    "GeoTiffLoader",
+    "TerrainCache",
+    "CoordinateSystems",
+    "GeographicBounds",
+    "TerrainConfig",
+    "TessellationConfig",
+    "LODConfig",
     "PERFORMANCE_TARGETS",
     "__version__",
     "__author__",
