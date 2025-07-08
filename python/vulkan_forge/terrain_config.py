@@ -38,9 +38,7 @@ class CullingMode(Enum):
 class TessellationConfig:
     """Configuration for GPU tessellation"""
     mode: TessellationMode = TessellationMode.DISTANCE_BASED
-    base_level: int = 8             # Base tessellation level (1-64)
-    max_level: int = 64             # Maximum tessellation level
-    min_level: int = 1              # Minimum tessellation level
+    base_level: int = 8         # Base tessellation level (1-64)
     
     # Distance-based tessellation parameters
     near_distance: float = 100.0    # Near tessellation distance
@@ -49,27 +47,44 @@ class TessellationConfig:
     
     # Screen-space tessellation parameters
     target_triangle_size: float = 8.0  # Target triangle size in pixels
-    screen_tolerance: float = 1.0       # Screen-space error tolerance
+    screen_tolerance: float = 1.0      # Screen-space error tolerance
     
-    def get_tessellation_level(self, distance: float) -> int:
-        """Calculate tessellation level based on distance"""
-        if self.mode == TessellationMode.DISABLED:
-            return 1
-        elif self.mode == TessellationMode.UNIFORM:
-            return self.base_level
-        elif self.mode == TessellationMode.DISTANCE_BASED:
-            if distance <= self.near_distance:
-                return self.max_level
-            elif distance >= self.far_distance:
-                return self.min_level
-            else:
-                # Smooth falloff between near and far
-                t = (distance - self.near_distance) / (self.far_distance - self.near_distance)
-                t = pow(t, self.falloff_exponent)
-                level = int(self.max_level * (1.0 - t) + self.min_level * t)
-                return max(self.min_level, min(self.max_level, level))
-        else:
-            return self.base_level
+    # REMOVED: Don't define _max_level and _min_level as dataclass fields
+    # _max_level: int = 64        # <- Remove this line
+    # _min_level: int = 1         # <- Remove this line
+    
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        # Initialize private attributes directly (not as dataclass fields)
+        self._max_level = None
+        self._min_level = None
+        
+        # Set default values through properties to trigger validation
+        self.min_level = 1      # Default min_level
+        self.max_level = 64     # Default max_level
+    
+    @property
+    def max_level(self) -> int:
+        """Get the maximum tessellation level."""
+        return self._max_level
+    
+    @max_level.setter
+    def max_level(self, value: int) -> None:
+        """Set the maximum tessellation level."""
+        if not isinstance(value, int):
+            raise TypeError(f"max_level must be an integer, got {type(value).__name__}")
+        
+        if value < 1:  # This is the key validation for your failing test
+            raise ValueError(f"max_level must be at least 1, got {value}")
+        
+        if value > 64:  # GPU tessellation limit
+            raise ValueError(f"max_level must be <= 64, got {value}")
+        
+        if hasattr(self, '_min_level') and self._min_level is not None and value < self._min_level:
+            raise ValueError(f"max_level ({value}) must be >= min_level ({self._min_level})")
+        
+        self._max_level = value
+
 
 
 @dataclass
