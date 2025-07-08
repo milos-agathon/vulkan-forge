@@ -1,478 +1,49 @@
-# ============================================================================
-# pyproject.toml – unified package definition for Vulkan-Forge 0.2.0
-#   • Base scientific/graphics wheel (old file, v0.1.0)
-#   • Terrain / GIS / scikit-build pipeline (pyproject_terrain.txt)
-#   • Nothing from the original file that was unique has been removed
-# ============================================================================
-
-# ============================================================================
-# pyproject.toml - Fixed Python packaging for vulkan-forge
-# ============================================================================
-# Uses simple setuptools for now to avoid scikit-build-core complexity
-# This ensures error-free installation while we test the CI/CD infrastructure
-# ============================================================================
-
 [build-system]
-requires = ["setuptools>=68.0", "wheel", "numpy>=1.19.0"]
+requires = ["setuptools>=45", "wheel", "numpy>=1.19.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "vulkan-forge"
 version = "0.1.0"
-authors = [
-    {name = "VulkanForge Team", email = "team@vulkanforge.dev"},
-]
-description = "High-performance GPU renderer for height fields using Vulkan"
+authors = [{ name = "VulkanForge Team" }]
+description = "Multi-GPU renderer with automatic CPU fallback"
 readme = "README.md"
-license = {text = "MIT"}
 requires-python = ">=3.8"
-
-keywords = [
-    "vulkan", "rendering", "gpu", "3d", "visualization", 
-    "height-field", "terrain", "graphics", "compute"
-]
-
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers", 
     "Topic :: Multimedia :: Graphics :: 3D Rendering",
-    "Topic :: Scientific/Engineering :: Visualization",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
 ]
-
 dependencies = [
-    "numpy>=1.19.0,<3.0.0",
+    "numpy>=1.19.0",
+    "pillow>=8.0.0", 
+    "vulkan>=1.2.0",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
-    "mypy>=1.0.0",
-]
-
-test = [
-    "pytest>=7.0.0",
-    "psutil>=5.9.0",
-]
-
-[project.urls]
-Homepage = "https://github.com/vulkanforge/vulkan-forge"
-Repository = "https://github.com/vulkanforge/vulkan-forge.git"
-"Bug Tracker" = "https://github.com/vulkanforge/vulkan-forge/issues"
+dev = ["pytest>=6.0", "black>=23.0", "flake8>=6.0", "mypy"]
 
 [project.scripts]
-vf-test = "vulkan_forge.tools:main"
+vf-compile-shaders = "vulkan_forge.compile_shaders:main"
 
-# ============================================================================
+[project.urls]
+Homepage = "https://github.com/yourusername/vulkan-forge"
+BugTracker = "https://github.com/yourusername/vulkan-forge/issues"
+
+###############################################################################
 # Setuptools configuration
-# ============================================================================
+###############################################################################
 [tool.setuptools]
-package-dir = {"" = "python"}
+package-dir = { "" = "python" }
 packages = ["vulkan_forge"]
 
 [tool.setuptools.package-data]
-vulkan_forge = ["*.py"]
-
-# ============================================================================
-# Development tools configuration
-# ============================================================================
-[tool.black]
-line-length = 88
-target-version = ["py38", "py39", "py310", "py311", "py312"]
-
-[tool.isort]
-profile = "black"
-line_length = 88
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = ["-v", "--tb=short"]
-
-# ----------------------------- TERRAIN EXTENSIONS ---------------------------
-[build-system]
-requires = [
-    "pybind11[global]>=2.10.0",
-    "cmake>=3.20",
-    "scikit-build-core[pyproject]>=0.4.0",
-    "numpy>=1.20.0",
-]
-build-backend = "scikit_build_core.build"
-
-[project]
-name = "vulkan-forge"
-version = "0.2.0"
-description = "High-performance terrain rendering with Vulkan and GPU tessellation"
-readme = "README.md"
-license = {text = "MIT"}
-authors = [
-    {name = "Vulkan-Forge Team", email = "contact@vulkan-forge.org"}
-]
-maintainers = [
-    {name = "Vulkan-Forge Team", email = "contact@vulkan-forge.org"}
-]
-keywords = [
-    "vulkan", "terrain", "rendering", "3d", "gis", "geotiff", 
-    "tessellation", "gpu", "visualization", "heightmap"
-]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: Microsoft :: Windows",
-    "Operating System :: POSIX :: Linux",
-    "Operating System :: MacOS",
-    "Programming Language :: C++",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Scientific/Engineering :: GIS",
-    "Topic :: Scientific/Engineering :: Visualization",
-    "Topic :: Multimedia :: Graphics :: 3D Rendering",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-]
-requires-python = ">=3.8"
-
-# Core dependencies
-dependencies = [
-    # Core scientific computing
-    "numpy>=1.20.0",
-    
-    # GIS and geospatial data support
-    "GDAL>=3.4.0",
-    "rasterio>=1.3.0",
-    "pyproj>=3.4.0",
-    
-    # Data processing and analysis
-    "scipy>=1.7.0",
-    "pandas>=1.3.0",
-    
-    # Image processing
-    "Pillow>=9.0.0",
-    
-    # Configuration and serialization
-    "pyyaml>=6.0",
-    "toml>=0.10.0",
-    
-    # Progress and logging
-    "tqdm>=4.62.0",
-    "rich>=12.0.0",
-    
-    # Type hints and utilities
-    "typing-extensions>=4.0.0",
-]
-
-# Optional dependencies for enhanced features
-[project.optional-dependencies]
-# Visualization and interactive features
-visualization = [
-    "matplotlib>=3.5.0",
-    "plotly>=5.0.0",
-    "seaborn>=0.11.0",
-    "ipywidgets>=7.6.0",
-]
-
-# Interactive viewing and GUI
-interactive = [
-    "pygame>=2.1.0",
-    "PyOpenGL>=3.1.0",
-    "PyOpenGL-accelerate>=3.1.0",
-    "imgui[glfw]>=1.4.0",
-]
-
-# Jupyter notebook support
-jupyter = [
-    "jupyter>=1.0.0",
-    "ipykernel>=6.0.0",
-    "notebook>=6.4.0",
-    "jupyterlab>=3.2.0",
-]
-
-# Performance monitoring and profiling
-profiling = [
-    "psutil>=5.8.0",
-    "memory-profiler>=0.60.0",
-    "line-profiler>=3.5.0",
-    "py-spy>=0.3.0",
-]
-
-# Development and testing
-dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "pytest-benchmark>=4.0.0",
-    "black>=22.0.0",
-    "isort>=5.10.0",
-    "flake8>=5.0.0",
-    "mypy>=0.991",
-    "pre-commit>=2.20.0",
-    "sphinx>=5.0.0",
-    "sphinx-rtd-theme>=1.0.0",
-]
-
-# Machine learning and AI features
-ml = [
-    "torch>=1.12.0",
-    "torchvision>=0.13.0",
-    "tensorflow>=2.9.0",
-    "scikit-learn>=1.1.0",
-]
-
-# Cloud and distributed computing
-cloud = [
-    "dask[complete]>=2022.8.0",
-    "xarray>=2022.6.0",
-    "zarr>=2.12.0",
-    "fsspec>=2022.7.0",
-    "s3fs>=2022.7.0",
-    "gcsfs>=2022.7.0",
-]
-
-# Complete installation with all features
-all = [
-    "vulkan-forge[visualization,interactive,jupyter,profiling,ml,cloud]"
-]
-
-[project.urls]
-Homepage = "https://vulkan-forge.org"
-Documentation = "https://docs.vulkan-forge.org"
-Repository = "https://github.com/vulkan-forge/vulkan-forge"
-"Bug Tracker" = "https://github.com/vulkan-forge/vulkan-forge/issues"
-Changelog = "https://github.com/vulkan-forge/vulkan-forge/blob/main/CHANGELOG.md"
-
-[project.scripts]
-vf-benchmark = "vulkan_forge.cli.benchmark:main"
-vf-viewer = "vulkan_forge.cli.viewer:main"
-vf-convert = "vulkan_forge.cli.convert:main"
-vf-info = "vulkan_forge.cli.info:main"
-
-[tool.scikit-build]
-# CMake build configuration
-cmake.args = [
-    "-DCMAKE_BUILD_TYPE=Release",
-    "-DVF_ENABLE_TESSELLATION=ON",
-    "-DVF_ENABLE_PROFILING=ON",
-]
-cmake.verbose = true
-
-# Wheel configuration
-wheel.expand-macos-universal-tags = true
-wheel.install-dir = "vulkan_forge"
-
-# Source distribution
-sdist.include = [
-    "cpp/src/**",
-    "cpp/include/**",
-    "cpp/shaders/**",
-    "cpp/CMakeLists.txt",
-    "python/vulkan_forge/**",
-]
-sdist.exclude = [
-    "**/__pycache__",
-    "**/*.pyc",
-    "**/build",
-    "**/dist",
-    "**/.git",
-]
-
-[tool.cibuildwheel]
-# Build configuration for different platforms
-build = ["cp38-*", "cp39-*", "cp310-*", "cp311-*", "cp312-*"]
-skip = ["*-win32", "*-manylinux_i686", "*-musllinux*"]
-
-# Dependencies for building
-before-all = [
-    "yum install -y vulkan-devel glfw-devel eigen3-devel gdal-devel || echo 'Using system packages'",
-    "apt-get update && apt-get install -y libvulkan-dev libglfw3-dev libeigen3-dev libgdal-dev || echo 'Using system packages'",
-    "brew install vulkan-headers glfw eigen gdal || echo 'Using system packages'"
-]
-
-# Test command
-test-command = "python -c 'import vulkan_forge; print(vulkan_forge.__version__)'"
-
-# Environment variables
-environment = {VULKAN_SDK = "/usr"}
-
-[tool.cibuildwheel.macos]
-archs = ["x86_64", "arm64"]
-environment = {VULKAN_SDK = "/usr/local"}
-
-[tool.cibuildwheel.windows]
-before-build = "pip install delvewheel"
-repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel}"
-
-[tool.black]
-line-length = 100
-target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-line_length = 100
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
-
-[tool.mypy]
-python_version = "3.8"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-strict_equality = true
-
-[[tool.mypy.overrides]]
-module = [
-    "GDAL.*",
-    "rasterio.*",
-    "pygame.*",
-    "OpenGL.*",
-    "vulkan.*",
-]
-ignore_missing_imports = true
-
-[tool.pytest.ini_options]
-minversion = "7.0"
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "--cov=vulkan_forge",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-report=xml",
-]
-testpaths = [
-    "tests",
-    "python/tests",
-]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "gpu: marks tests that require a GPU",
-    "vulkan: marks tests that require Vulkan support",
-    "geotiff: marks tests that require GeoTIFF test data",
-    "interactive: marks tests that require interactive display",
-]
-
-[tool.coverage.run]
-source = ["vulkan_forge"]
-omit = [
-    "*/tests/*",
-    "*/examples/*",
-    "setup.py",
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "if self.debug:",
-    "if settings.DEBUG",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if 0:",
-    "if __name__ == .__main__.:",
-    "class .*\\bProtocol\\):",
-    "@(abc\\.)?abstractmethod",
-]
-
-[tool.ruff]
-target-version = "py38"
-line-length = 100
-select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isort
-    "B",  # flake8-bugbear
-    "C4", # flake8-comprehensions
-    "UP", # pyupgrade
-]
-ignore = [
-    "E501",  # line too long, handled by black
-    "B008",  # do not perform function calls in argument defaults
-    "C901",  # too complex
-]
-
-[tool.ruff.per-file-ignores]
-"__init__.py" = ["F401"]
-"tests/**/*" = ["B011"]
-
-[tool.ruff.isort]
-known-first-party = ["vulkan_forge"]
-
-# Documentation configuration
-[tool.sphinx]
-source-dir = "docs"
-build-dir = "docs/_build"
-
-# Package data and resources
-[tool.setuptools.package-data]
 vulkan_forge = [
+    "shaders/*.glsl",
+    "shaders/*.vert", 
+    "shaders/*.frag",
     "shaders/*.spv",
-    "data/*.tif",
-    "data/*.yml",
-    "examples/*.py",
+    "shaders/embedded_spirv.py",
 ]
-
-# Entry points for plugins
-[project.entry-points."vulkan_forge.plugins"]
-terrain = "vulkan_forge.terrain:TerrainPlugin"
-heightfield = "vulkan_forge.heightfield:HeightfieldPlugin"
-pointcloud = "vulkan_forge.pointcloud:PointCloudPlugin"
-
-# Metadata for package managers
-[tool.hatch.metadata]
-allow-direct-references = true
-
-[tool.hatch.build.targets.wheel]
-packages = ["python/vulkan_forge"]
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "/python",
-    "/cpp",
-    "/docs",
-    "/tests",
-    "/examples",
-    "README.md",
-    "LICENSE",
-    "CHANGELOG.md",
-]
-
