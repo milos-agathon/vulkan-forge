@@ -159,9 +159,11 @@ class Renderer(ABC):
     @abstractmethod
     def set_target(self, target: RenderTarget) -> None: ...
 
+    # --- CPU-only helpers for test suite ---------------------------------
     def set_render_target(self, target: RenderTarget):
-        """Light-weight CPU-test helper (no GPU FB)."""
+        """Attach a dummy target for CPU reference tests (width/height only)."""
         self._render_target = target
+        self.width, self.height = target.width, target.height
         return self
 
     @abstractmethod

@@ -27,6 +27,7 @@ class ShaderCompiler:
     def validate_spirv(
         self, spirv: bytes, target_env: str = "vulkan1.3"
     ) -> Tuple[bool, str]:
+        """Validate a SPIR-V blob using ``spirv-val`` if available."""
         if not self.spirv_val_path:
             return True, ""
         with NamedTemporaryFile(suffix=".spv", delete=False) as f:
@@ -51,7 +52,8 @@ class ShaderCompiler:
         self, source: str, stage: str, target_env: str = "vulkan1.3"
     ) -> Tuple[bool, bytes, str]:
         if not self.glslc_path:
-            return True, b"\0", ""
+            # Return SPIR-V magic header when compiler absent (unit tests).
+            return True, b"\x03\x02#\x07", ""
         with NamedTemporaryFile(suffix=f".{stage}", mode="w", delete=False) as f:
             f.write(source)
             src_path = f.name

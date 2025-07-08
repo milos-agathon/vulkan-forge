@@ -15,6 +15,7 @@ import sys
 import os
 import logging
 from pathlib import Path
+from collections import namedtuple
 from typing import Optional, List, Dict, Any
 
 # Critical: Import numpy with error handling
@@ -384,10 +385,7 @@ class PhysicalDeviceInfo:
         self.name = "CPU Fallback Device"
 
 
-class RenderTarget:
-    def __init__(self, width, height):
-        self.width = width
-        self.height = height
+RenderTarget = namedtuple("RenderTarget", "width height")
 
 
 class Mesh:

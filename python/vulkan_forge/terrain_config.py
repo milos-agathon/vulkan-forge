@@ -58,10 +58,31 @@ class TessellationConfig:
     # _max_level: int = 64        # <- Remove this line
     # _min_level: int = 1         # <- Remove this line
 
-    def __post_init__(self):
-        """Validate configuration after initialization."""
+    def __init__(
+        self,
+        mode: TessellationMode = TessellationMode.DISTANCE_BASED,
+        base_level: int = 8,
+        near_distance: float = 100.0,
+        far_distance: float = 5000.0,
+        falloff_exponent: float = 1.5,
+        target_triangle_size: float = 8.0,
+        screen_tolerance: float = 1.0,
+    ) -> None:
+        self.mode = mode
+        self.base_level = base_level
+        self.near_distance = near_distance
+        self.far_distance = far_distance
+        self.falloff_exponent = falloff_exponent
+        self.target_triangle_size = target_triangle_size
+        self.screen_tolerance = screen_tolerance
         self._min_level = 1
         self._max_level = 64
+        self.__post_init__()
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        self._min_level = getattr(self, "_min_level", 1)
+        self._max_level = getattr(self, "_max_level", 64)
 
     @property
     def max_level(self) -> int:
