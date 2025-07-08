@@ -60,13 +60,8 @@ class TessellationConfig:
 
     def __post_init__(self):
         """Validate configuration after initialization."""
-        # Initialize private attributes directly (not as dataclass fields)
-        self._max_level = None
-        self._min_level = None
-
-        # Set default values through properties to trigger validation
-        self.min_level = 1  # Default min_level
-        self.max_level = 64  # Default max_level
+        self._min_level = 1
+        self._max_level = 64
 
     @property
     def max_level(self) -> int:
@@ -78,23 +73,25 @@ class TessellationConfig:
         """Set the maximum tessellation level."""
         if not isinstance(value, int):
             raise TypeError(f"max_level must be an integer, got {type(value).__name__}")
-
-        if value < 1:  # This is the key validation for your failing test
+        if value < 1:
             raise ValueError(f"max_level must be at least 1, got {value}")
-
-        if value > 64:  # GPU tessellation limit
+        if value > 64:
             raise ValueError(f"max_level must be <= 64, got {value}")
-
-        if (
-            hasattr(self, "_min_level")
-            and self._min_level is not None
-            and value < self._min_level
-        ):
-            raise ValueError(
-                f"max_level ({value}) must be >= min_level ({self._min_level})"
-            )
-
+        if hasattr(self, "_min_level") and self.min_level > value:
+            raise ValueError("min_level cannot exceed max_level")
         self._max_level = value
+
+    @property
+    def min_level(self) -> int:
+        return self._min_level
+
+    @min_level.setter
+    def min_level(self, v: int) -> None:
+        if not isinstance(v, int):
+            raise TypeError("min_level must be int")
+        if v < 1 or v > self.max_level:
+            raise ValueError("min_level out of range")
+        self._min_level = v
 
     def get_tessellation_level(self, distance: float) -> int:
         """Return tessellation level based on camera distance.
@@ -118,18 +115,12 @@ class TessellationConfig:
                 else self.min_level
             )
 
-        d_norm = np.clip(
-            (distance - self.near_distance)
-            / max(self.far_distance - self.near_distance, 1e-6),
-            0.0,
-            1.0,
-        )
-        level_f = (
-            self.max_level
-            - (self.max_level - self.min_level) * d_norm**self.falloff_exponent
-        )
-        level_i = int(np.clip(round(level_f), self.min_level, self.max_level))
-        return level_i
+        if distance <= self.near_distance:
+            return self.max_level
+        if distance >= self.far_distance:
+            return self.min_level
+        t = (distance - self.near_distance) / (self.far_distance - self.near_distance)
+        return int(round(self.max_level - t * (self.max_level - self.min_level)))
 
     @property
     def tessellation_level(self) -> Callable[[float], int]:
@@ -154,6 +145,17 @@ class LODConfig:
     subdivision_threshold: float = 1000.0  # Distance threshold for subdivision
     merge_threshold: float = 2000.0  # Distance threshold for merging
     max_lod_levels: int = 8  # Maximum LOD levels
+
+    @property
+    def distances(self) -> List[float]:
+        return self._distances
+
+    @distances.setter
+    def distances(self, value: List[float]) -> None:
+        vals = list(value)
+        if any(vals[i] >= vals[i + 1] for i in range(len(vals) - 1)):
+            raise ValueError("distances must be strictly increasing")
+        self._distances = vals
 
 
 @dataclass
@@ -460,6 +462,9 @@ class TerrainConfig:
         if self.height_scale <= 0:
             issues.append(f"height_scale ({self.height_scale}) must be positive")
 
+        if self.max_render_distance <= 0:
+            issues.append("max_render_distance must be positive")
+
         # Validate tessellation
         if self.tessellation.base_level < 1 or self.tessellation.base_level > 64:
             issues.append(
@@ -479,6 +484,9 @@ class TerrainConfig:
         # Validate memory limits
         if self.memory.max_tile_cache_mb < 64:
             issues.append("max_tile_cache_mb should be at least 64 MB")
+
+        if self.memory.max_tile_cache_mb <= 0:
+            issues.append("memory.max_tile_cache_mb must be positive")
 
         if self.memory.max_loaded_tiles < 16:
             issues.append("max_loaded_tiles should be at least 16")
@@ -510,6 +518,9 @@ class TerrainConfig:
             self.tessellation.max_level = 16
             self.performance.enable_gpu_driven_rendering = False
             self.rendering.enable_shadows = False
+
+        if vram_mb < 12288:
+            self.tessellation.max_level = 32
 
         # VRAM-based memory optimization
         if vram_mb >= 8192:  # 8GB+
