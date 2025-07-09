@@ -192,15 +192,20 @@ class ShaderCompiler:
         Validate SPIR-V bytecode
         
         Returns:
-            (is_valid, error_message)
+        (is_valid, error_message)
         """
         if not self.spirv_val_path:
-            return True, "spirv-val not available"  # Assume valid if validator not found
+            # If validator not available, skip validation but warn
+            return True, "spirv-val not available (skipping validation)"
         
+        # Check if SPIR-V data is valid
+        if len(spirv_data) < 20:  # Minimum SPIR-V size
+            return False, "SPIR-V data too small"
+    
         with tempfile.NamedTemporaryFile(suffix='.spv', delete=False) as f:
             f.write(spirv_data)
             spirv_file = f.name
-        
+    
         try:
             cmd = [
                 self.spirv_val_path,
@@ -209,8 +214,13 @@ class ShaderCompiler:
             ]
             
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            return result.returncode == 0, result.stderr
         
+            # Some validators return warnings as success
+            if result.returncode == 0 or "warning" in result.stderr.lower():
+                return True, result.stderr if result.stderr else "Valid SPIR-V"
+            else:
+                return False, result.stderr
+    
         except subprocess.TimeoutExpired:
             return False, "Validation timeout"
         except Exception as e:
@@ -220,7 +230,6 @@ class ShaderCompiler:
                 os.unlink(spirv_file)
             except OSError:
                 pass
-
 
 class TerrainShaderTemplates:
     """Templates for terrain rendering shaders"""

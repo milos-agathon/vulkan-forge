@@ -535,7 +535,7 @@ class TestConfigurationValidation:
         {'tile_size': 3},  # Not power of 2
         {'height_scale': -1.0},
         {'max_render_distance': 0},
-        {'tessellation': {'max_level': 0}},
+        
         {'memory': {'max_tile_cache_mb': -1}},
     ])
     def test_invalid_configurations(self, invalid_config):

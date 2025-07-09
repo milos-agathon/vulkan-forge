@@ -5,7 +5,7 @@ from vulkan_forge.numpy_buffer import MultiBuffer
 
 def test_render_indexed_multibuffer_cpu():
     renderer = create_renderer(prefer_gpu=False)
-    renderer.set_render_target(RenderTarget(width=4, height=4))
+    renderer = create_renderer(prefer_gpu=False, width=4, height=4)
     allocator = object()
     buffers = MultiBuffer(allocator)
     buffers.add_vertex_buffer(

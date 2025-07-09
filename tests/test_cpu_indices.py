@@ -5,7 +5,7 @@ from vulkan_forge.matrices import Matrix4x4
 
 def test_render_cpu_indices_matrix():
     renderer = create_renderer(prefer_gpu=False)
-    renderer.set_render_target(RenderTarget(width=4, height=4))
+    renderer = create_renderer(prefer_gpu=False, width=4, height=4)
 
     vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
     normals = np.zeros_like(vertices)

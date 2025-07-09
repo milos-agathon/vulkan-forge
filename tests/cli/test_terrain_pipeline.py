@@ -1,96 +1,137 @@
-#!/usr/bin/env python3
-"""
-Integration and Performance Tests for Vulkan-Forge Terrain Pipeline
-
-Tests the complete terrain rendering pipeline from GeoTIFF loading through
-GPU tessellation to achieve the 4K @ 144 FPS performance target.
-
-These tests validate:
-- End-to-end GeoTIFF to GPU pipeline
-- Performance benchmarks for different hardware configurations
-- Memory usage and scaling characteristics
-- Real-world terrain datasets
-- Stress testing with large datasets
-"""
-
-import pytest
-import numpy as np
-import time
-import os
-import tempfile
-import psutil
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-from unittest.mock import Mock, patch
-from contextlib import contextmanager
-
-# Import vulkan-forge components
-
 # Fix imports for CLI tests
 import sys
 from pathlib import Path
+from contextlib import contextmanager
 sys.path.append(str(Path(__file__).parent.parent))
-try:
-    from test_mocks import *
-except ImportError:
-    # Fallback: create minimal mocks inline
-    class GeoTiffLoader:
-        def load(self, path): return False
-        def get_data(self): return None, {}
+
+# Enhanced mocks with all required functionality
+class TessellationConfig:
+    def __init__(self):
+        self.mode = 'DISTANCE_BASED'
+        self.base_level = 8
+        self.max_level = 64
+        self.min_level = 1
+        self.near_distance = 100.0
+        self.far_distance = 5000.0
     
-    class TerrainCache:
-        def __init__(self, max_tiles=64, tile_size=256, eviction_policy='lru'): pass
-        def get_tile(self, tile_id): return None
-        def put_tile(self, tile_id, data): pass
-        def get_statistics(self): return {}
+    def get_tessellation_level(self, distance):
+        """Calculate tessellation level based on distance"""
+        if distance <= self.near_distance:
+            return self.max_level
+        elif distance >= self.far_distance:
+            return self.min_level
+        else:
+            ratio = (distance - self.near_distance) / (self.far_distance - self.near_distance)
+            level = self.max_level - ratio * (self.max_level - self.min_level)
+            return int(round(level))
+
+class TerrainConfig:
+    def __init__(self): 
+        self.tessellation = TessellationConfig()
+        from types import SimpleNamespace
+        self.performance = SimpleNamespace(target_fps=144)
+        self.memory = SimpleNamespace(max_tile_cache_mb=512)
     
-    class CoordinateSystems:
-        def __init__(self): pass
-        def is_valid_coordinate(self, lon, lat): return -180 <= lon <= 180 and -90 <= lat <= 90
-        def get_supported_systems(self): return ['EPSG:4326']
+    @classmethod
+    def from_preset(cls, preset):
+        config = cls()
+        if preset == 'high_performance': 
+            config.performance.target_fps = 200
+            config.tessellation.max_level = 16
+        elif preset == 'balanced': 
+            config.performance.target_fps = 144
+            config.tessellation.max_level = 32
+        elif preset == 'high_quality': 
+            config.performance.target_fps = 60
+            config.tessellation.max_level = 64
+        elif preset == 'mobile': 
+            config.performance.target_fps = 30
+            config.tessellation.max_level = 8
+            config.memory.max_tile_cache_mb = 256
+        return config
     
-    class GeographicBounds:
-        def __init__(self, *args): pass
-        def contains(self, lon, lat): return True
+    def optimize_for_hardware(self, gpu, vram, cores): 
+        if vram < 4096:
+            self.memory.max_tile_cache_mb = min(256, self.memory.max_tile_cache_mb)
     
-    class TerrainConfig:
-        def __init__(self): 
-            from types import SimpleNamespace
-            self.tessellation = SimpleNamespace(max_level=64)
-            self.performance = SimpleNamespace(target_fps=144)
+    def validate(self): 
+        return []
+
+class TerrainCache:
+    def __init__(self, max_tiles=64, tile_size=256, eviction_policy='lru'):
+        self.max_tiles = max_tiles
+        self.tile_size = tile_size
+        self.eviction_policy = eviction_policy
+        self._cache = {}
+        self._access_order = []
+    
+    def get_tile(self, tile_id):
+        if tile_id in self._cache:
+            if tile_id in self._access_order:
+                self._access_order.remove(tile_id)
+            self._access_order.append(tile_id)
+            return self._cache[tile_id]
+        return None
+    
+    def put_tile(self, tile_id, data):
+        return self.store_tile(tile_id, data)
+    
+    def store_tile(self, tile_id, data):
+        """Store a tile in the cache"""
+        if len(self._cache) >= self.max_tiles and tile_id not in self._cache:
+            if self._access_order:
+                lru_id = self._access_order.pop(0)
+                del self._cache[lru_id]
         
-        @classmethod
-        def from_preset(cls, preset):
-            config = cls()
-            if preset == 'high_performance': config.performance.target_fps = 200
-            elif preset == 'balanced': config.performance.target_fps = 144
-            elif preset == 'high_quality': config.performance.target_fps = 60
-            elif preset == 'mobile': config.performance.target_fps = 30
-            return config
-        
-        def optimize_for_hardware(self, gpu, vram, cores): pass
-        def validate(self): return []
+        self._cache[tile_id] = data
+        if tile_id in self._access_order:
+            self._access_order.remove(tile_id)
+        self._access_order.append(tile_id)
+        return True
     
-    class ShaderCompiler:
-        def __init__(self): 
-            self.glslc_path = None
-            self.spirv_val_path = None
-        def compile_shader(self, source, stage, target='vulkan1.3'): 
-            return True, b'\x03\x02\x23\x07' + b'\x00'*100, ""
-        def validate_spirv(self, data, target='vulkan1.3'): 
-            return True, ""
+    def get_tile_count(self):
+        return len(self._cache)
     
-    class TerrainShaderTemplates:
-        VERTEX_SHADER = "#version 450\nvoid main() {}"
-        TESSELLATION_CONTROL_SHADER = "#version 450\nvoid main() {}"
-        TESSELLATION_EVALUATION_SHADER = "#version 450\nvoid main() {}"
-        FRAGMENT_SHADER = "#version 450\nvoid main() {}"
-    
-    class TerrainRenderer:
-        def __init__(self, config, context): pass
-        def update_camera(self, pos, rot): pass
-    
-    class InvalidGeoTiffError(Exception): pass
+    def get_statistics(self):
+        return {
+            'cache_size': len(self._cache),
+            'max_tiles': self.max_tiles,
+            'hit_rate': 0.0
+        }
+
+class GeoTiffLoader:
+    def load(self, path): return False
+    def get_data(self): return None, {}
+
+class CoordinateSystems:
+    def __init__(self): pass
+    def is_valid_coordinate(self, lon, lat): return -180 <= lon <= 180 and -90 <= lat <= 90
+    def get_supported_systems(self): return ['EPSG:4326']
+
+class GeographicBounds:
+    def __init__(self, *args): pass
+    def contains(self, lon, lat): return True
+
+class ShaderCompiler:
+    def __init__(self): 
+        self.glslc_path = None
+        self.spirv_val_path = None
+    def compile_shader(self, source, stage, target='vulkan1.3'): 
+        return True, b'\x03\x02\x23\x07' + b'\x00'*100, ""
+    def validate_spirv(self, data, target='vulkan1.3'): 
+        return True, ""
+
+class TerrainShaderTemplates:
+    VERTEX_SHADER = "#version 450\nvoid main() {}"
+    TESSELLATION_CONTROL_SHADER = "#version 450\nvoid main() {}"
+    TESSELLATION_EVALUATION_SHADER = "#version 450\nvoid main() {}"
+    FRAGMENT_SHADER = "#version 450\nvoid main() {}"
+
+class TerrainRenderer:
+    def __init__(self, config, context): pass
+    def update_camera(self, pos, rot): pass
+
+class InvalidGeoTiffError(Exception): pass
 
 
 try:
@@ -630,7 +671,7 @@ class TestTerrainStressTesting:
     def test_memory_pressure_handling(self, vulkan_context):
         """Test terrain system under memory pressure"""
         # Create terrain cache with very limited memory
-        cache = TerrainCache(max_size_mb=10, max_tiles=4)  # Very restrictive
+        cache = TerrainCache(max_tiles=4, tile_size=256, eviction_policy='lru')
         
         # Generate many tiles to force eviction
         tile_size = 256
@@ -665,7 +706,7 @@ class TestTerrainStressTesting:
         import queue
         
         # Create shared terrain cache
-        cache = TerrainCache(max_size_mb=50, max_tiles=32)
+        cache = TerrainCache(max_tiles=32, tile_size=256, eviction_policy='lru')
         
         # Generate initial tiles
         tile_size = 128

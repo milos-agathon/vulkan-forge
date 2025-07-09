@@ -100,18 +100,19 @@ class TessellationConfig:
             return (
                 self.base_level
                 if self.mode is TessellationMode.UNIFORM
-                else self.min_level
-            )
+            else self.min_level
+        )
 
         if distance <= self.near_distance:
-            return int(self.base_level)
+            return int(self.max_level)  # Changed from base_level
         if distance >= self.far_distance:
-            return int(self.max_level)
+            return int(self.min_level)  # Changed from max_level
 
         span = max(self.far_distance - self.near_distance, 1e-6)
         ratio = (distance - self.near_distance) / span
-        level = self.base_level + ratio * (self.max_level - self.base_level)
-        level = max(self.base_level, min(self.max_level, level))
+        # Inverted the interpolation
+        level = self.max_level - ratio * (self.max_level - self.min_level)
+        level = max(self.min_level, min(self.max_level, level))
         return int(round(level))
 
 
@@ -668,10 +669,18 @@ class TerrainConfig:
         else:
             self.tessellation.max_level = 16
 
-        cache_mb = max(vram_mb // 4, 256)
-        self.memory.max_tile_cache_mb = min(cache_mb, 2048)
+    # Fixed: Ensure cache doesn't exceed expected limits
+        cache_mb = min(vram_mb // 4, 2048)
+        cache_mb = min(cache_mb, 1024)  # Cap at 1024 for mid-range GPUs
+        if vram_mb < 4096:  # Low-end GPU
+            cache_mb = min(cache_mb, 256)
+        self.memory.max_tile_cache_mb = cache_mb
 
         self.performance.worker_threads = max(1, cpu_cores - 1)
+
+    # Disable GPU-driven rendering for low-end GPUs
+        if vram_mb < 4096:
+            self.performance.enable_gpu_driven_rendering = False
 
     def get_estimated_memory_usage(self) -> dict:
         """Estimate memory usage for current configuration"""
