@@ -26,6 +26,15 @@ except ImportError:
         "NumPy is required for vulkan-forge. Install with: pip install numpy"
     )
 
+try:
+    from . import matrices
+    from . import mesh
+    # ... other imports ...
+    from .renderer import Renderer, VulkanRenderer, CPURenderer, create_renderer
+    from .mesh import Mesh
+except ImportError:
+    pass
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -152,38 +161,44 @@ class Renderer:
 
         time.sleep(0.002)  # 2ms simulation
 
-    def render(self, scene):
-        """Render a scene to an image"""
-        if not isinstance(scene, HeightFieldScene):
-            raise ValueError("scene must be a HeightFieldScene instance")
-
-        if not hasattr(scene, "_built") or not scene._built:
-            raise ValueError("Scene must be built before rendering")
-
-        # Simulate rendering time
-        import time
-
-        time.sleep(0.005)  # 5ms simulation
-
-        # Return a valid RGBA image
-        image = np.zeros((self.height, self.width, 4), dtype=np.uint8)
-
-        # Add some fake content that varies with scene data
-        if hasattr(scene, "_heights") and scene._heights is not None:
-            # Use scene data to generate some pattern
-            h_sample = scene._heights[0, 0] if scene._heights.size > 0 else 0
-            pattern_value = int((h_sample * scene._zscale * 128) % 256)
-        else:
-            pattern_value = 128
-
-        # Alpha channel
-        image[:, :, 3] = 255
-
-        # Create a pattern based on the scene
-        image[::4, ::4, :3] = [pattern_value, pattern_value // 2, pattern_value // 4]
-
-        return image
-
+def render(self, scene):
+    """Render a scene to an image with proper wireframe"""
+    if not isinstance(scene, HeightFieldScene):
+        raise ValueError("scene must be a HeightFieldScene instance")
+        
+    if not hasattr(scene, "_built") or not scene._built:
+        raise ValueError("Scene must be built before rendering")
+    
+    # Create image
+    image = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+    
+    if hasattr(scene, "_heights") and scene._heights is not None:
+        heights = scene._heights
+        h, w = heights.shape
+        
+        # Draw wireframe by connecting adjacent vertices
+        for y in range(h-1):
+            for x in range(w-1):
+                # Map terrain coordinates to screen
+                x0 = int(x * self.width / w)
+                y0 = int(y * self.height / h)
+                x1 = int((x+1) * self.width / w)
+                y1 = int((y+1) * self.height / h)
+                
+                # Get height-based color
+                h_val = heights[y, x] * scene._zscale
+                color_val = int(min(255, h_val * 255))
+                
+                # Draw lines (simplified)
+                # Horizontal lines
+                image[y0:y0+2, x0:x1, :3] = [color_val, color_val//2, color_val//4]
+                # Vertical lines  
+                image[y0:y1, x0:x0+2, :3] = [color_val, color_val//2, color_val//4]
+    
+    # Set alpha
+    image[:, :, 3] = 255
+    
+    return image
 
 # Additional compatibility classes and functions for advanced features
 class VulkanRenderer(Renderer):
