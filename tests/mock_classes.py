@@ -129,3 +129,28 @@ def mock_create_allocator_native(instance, physical_device, device):
 
 def mock_allocate_buffer(allocator, size, usage):
     return ("mock_buffer", "mock_allocation")
+
+class VertexBuffer:
+    """Mock vertex buffer for testing."""
+    def __init__(self, engine):
+        self.engine = engine
+        self.size = 0
+        self.uploaded = False
+        
+        # Initialize allocated_memory if not present
+        if not hasattr(self.engine, 'allocated_memory'):
+            self.engine.allocated_memory = 0
+        elif hasattr(self.engine.allocated_memory, '_mock_name'):
+            # It's a Mock, replace with real value
+            self.engine.allocated_memory = 0
+    
+    def upload_mesh_data(self, vertices, normals, tex_coords, indices):
+        self.size = len(vertices) + len(normals) + len(tex_coords) + len(indices)
+        self.engine.allocated_memory += self.size * 4  # 4 bytes per float
+        self.uploaded = True
+        return True
+    
+    def destroy(self):
+        if self.uploaded:
+            self.engine.allocated_memory = max(0, self.engine.allocated_memory - self.size * 4)
+            self.uploaded = False

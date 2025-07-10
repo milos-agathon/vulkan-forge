@@ -1,9 +1,15 @@
 # Fix imports for CLI tests
 import sys
 from pathlib import Path
+from typing import Dict, List, Tuple, Optional
 from contextlib import contextmanager
+import pytest
 sys.path.append(str(Path(__file__).parent.parent))
 
+import numpy as np
+import time
+import psutil
+from unittest.mock import Mock, patch
 # Enhanced mocks with all required functionality
 class TessellationConfig:
     def __init__(self):
