@@ -24,6 +24,10 @@ wheel>=0.42.0,<1.0.0
 cmake>=3.24.0,<4.0.0
 ninja>=1.11.0,<2.0.0
 
+glfw>=2.5.0
+Pillow>=9.0.0
+rasterio>=1.3.0
+
 # ============================================================================
 # C++ Binding and Extension Building
 # ============================================================================
@@ -70,7 +74,7 @@ msvc-runtime>=14.0; sys_platform == "win32"
 # ============================================================================
 
 # Python Vulkan bindings (for runtime, but useful during development)
-vulkan>=1.2.0,<2.0.0
+vulkan>=1.3.0
 
 # Note: Vulkan SDK must be installed separately:
 # Windows: Download from https://vulkan.lunarg.com/sdk/home#windows

@@ -11,6 +11,9 @@ import ctypes
 import numpy as np
 import os
 import subprocess
+from ..renderer import Renderer
+from ..terrain_config import TerrainConfig
+from ..backend import VulkanContext
 
 # Import vulkan with fallback
 try:
@@ -1854,6 +1857,332 @@ def set_vertex_buffer(renderer: Renderer, numpy_buf, binding: int = 0) -> None:
 def set_render_target(renderer: Renderer, target: RenderTarget) -> None:
     """Convenience wrapper for :meth:`Renderer.set_render_target`."""
     renderer.set_render_target(target)
+
+@dataclass
+class TerrainBounds:
+    """Terrain boundary information"""
+    min_x: float
+    max_x: float
+    min_y: float
+    max_y: float
+    min_elevation: float
+    max_elevation: float
+
+
+class TerrainRenderer:
+    """GPU-accelerated terrain renderer using Vulkan"""
+    
+    def __init__(self, config: Optional[TerrainConfig] = None):
+        """
+        Initialize terrain renderer.
+        
+        Args:
+            config: Terrain configuration (uses default if None)
+        """
+        self.config = config or TerrainConfig()
+        self.is_initialized = False
+        
+        # Renderer and context
+        self._renderer = None
+        self._context = None
+        
+        # Terrain data
+        self.heightmap = None
+        self.bounds = None
+        self.tiles = []
+        
+        # GPU resources
+        self._vertex_buffers = []
+        self._index_buffers = []
+        self._uniform_buffers = []
+        
+        # Camera state
+        self.camera_position = np.array([0.0, -5.0, 2.0], dtype=np.float32)
+        self.camera_target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        
+    def initialize(self, width: int = 1920, height: int = 1080) -> bool:
+        """
+        Initialize the renderer with a window.
+        
+        Args:
+            width: Window width
+            height: Window height
+            
+        Returns:
+            True if initialization successful
+        """
+        try:
+            # Create Vulkan context
+            self._context = VulkanContext()
+            self._context.initialize()
+            
+            # Create renderer
+            from ..core import create_renderer_auto
+            self._renderer = create_renderer_auto(width, height)
+            
+            self.is_initialized = True
+            logger.info("TerrainRenderer initialized successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize TerrainRenderer: {e}")
+            return False
+    
+    def load_heightmap(self, heightmap: np.ndarray, 
+                      bounds: Optional[TerrainBounds] = None) -> bool:
+        """
+        Load heightmap data for rendering.
+        
+        Args:
+            heightmap: 2D array of height values
+            bounds: Geographic bounds (optional)
+            
+        Returns:
+            True if successful
+        """
+        if not self.is_initialized:
+            logger.error("Renderer not initialized")
+            return False
+            
+        try:
+            self.heightmap = heightmap.astype(np.float32)
+            height, width = heightmap.shape
+            
+            # Set bounds if not provided
+            if bounds is None:
+                self.bounds = TerrainBounds(
+                    min_x=0.0, max_x=float(width),
+                    min_y=0.0, max_y=float(height),
+                    min_elevation=float(np.min(heightmap)),
+                    max_elevation=float(np.max(heightmap))
+                )
+            else:
+                self.bounds = bounds
+            
+            # Generate terrain mesh
+            self._generate_terrain_mesh()
+            
+            logger.info(f"Loaded heightmap: {width}x{height}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to load heightmap: {e}")
+            return False
+    
+    def _generate_terrain_mesh(self):
+        """Generate 3D mesh from heightmap"""
+        if self.heightmap is None:
+            return
+            
+        height, width = self.heightmap.shape
+        
+        # Generate vertices
+        vertices = []
+        for y in range(height):
+            for x in range(width):
+                # Position
+                px = (x / (width - 1)) * (self.bounds.max_x - self.bounds.min_x) + self.bounds.min_x
+                py = (y / (height - 1)) * (self.bounds.max_y - self.bounds.min_y) + self.bounds.min_y
+                pz = self.heightmap[y, x] * self.config.height_scale
+                
+                # Normal (will be calculated properly later)
+                nx, ny, nz = 0.0, 0.0, 1.0
+                
+                # Texture coordinates
+                u = x / (width - 1)
+                v = y / (height - 1)
+                
+                vertices.extend([px, py, pz, nx, ny, nz, u, v])
+        
+        # Generate indices
+        indices = []
+        for y in range(height - 1):
+            for x in range(width - 1):
+                # Vertex indices for quad
+                v0 = y * width + x
+                v1 = v0 + 1
+                v2 = (y + 1) * width + x
+                v3 = v2 + 1
+                
+                # Two triangles
+                indices.extend([v0, v2, v1])
+                indices.extend([v1, v2, v3])
+        
+        # Convert to numpy arrays
+        self.vertices = np.array(vertices, dtype=np.float32)
+        self.indices = np.array(indices, dtype=np.uint32)
+        
+        # Update GPU buffers
+        if self._renderer:
+            self._upload_to_gpu()
+    
+    def _upload_to_gpu(self):
+        """Upload mesh data to GPU"""
+        # This would use the actual Vulkan backend
+        # For now, it's a placeholder
+        pass
+    
+    def render(self, view_matrix: Optional[np.ndarray] = None,
+              proj_matrix: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """
+        Render the terrain.
+        
+        Args:
+            view_matrix: View matrix (4x4)
+            proj_matrix: Projection matrix (4x4)
+            
+        Returns:
+            Rendered image as numpy array, or None if failed
+        """
+        if not self.is_initialized or self.heightmap is None:
+            return None
+            
+        try:
+            # Use default matrices if not provided
+            if view_matrix is None:
+                view_matrix = self._create_view_matrix()
+            if proj_matrix is None:
+                proj_matrix = self._create_projection_matrix()
+            
+            # Render using the backend
+            if self._renderer:
+                # This would call the actual rendering
+                pass
+                
+            return None  # Placeholder
+            
+        except Exception as e:
+            logger.error(f"Render failed: {e}")
+            return None
+    
+    def update_camera(self, position: np.ndarray, target: Optional[np.ndarray] = None):
+        """Update camera position and target"""
+        self.camera_position = position.copy()
+        if target is not None:
+            self.camera_target = target.copy()
+    
+    def _create_view_matrix(self) -> np.ndarray:
+        """Create view matrix from camera state"""
+        eye = self.camera_position
+        target = self.camera_target
+        up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        
+        # Calculate view matrix
+        f = target - eye
+        f = f / np.linalg.norm(f)
+        
+        s = np.cross(f, up)
+        s = s / np.linalg.norm(s)
+        
+        u = np.cross(s, f)
+        
+        view = np.eye(4, dtype=np.float32)
+        view[0, :3] = s
+        view[1, :3] = u
+        view[2, :3] = -f
+        view[3, 0] = -np.dot(s, eye)
+        view[3, 1] = -np.dot(u, eye)
+        view[3, 2] = np.dot(f, eye)
+        
+        return view.T
+    
+    def _create_projection_matrix(self, fov: float = 45.0, 
+                                 near: float = 0.1, 
+                                 far: float = 1000.0) -> np.ndarray:
+        """Create perspective projection matrix"""
+        aspect = 16.0 / 9.0  # Default aspect ratio
+        fov_rad = np.radians(fov)
+        
+        proj = np.zeros((4, 4), dtype=np.float32)
+        proj[0, 0] = 1.0 / (aspect * np.tan(fov_rad / 2))
+        proj[1, 1] = 1.0 / np.tan(fov_rad / 2)
+        proj[2, 2] = far / (far - near)
+        proj[2, 3] = 1.0
+        proj[3, 2] = -(far * near) / (far - near)
+        
+        return proj
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get rendering performance statistics"""
+        return {
+            'triangles_rendered': len(self.indices) // 3 if hasattr(self, 'indices') else 0,
+            'tiles_rendered': len(self.tiles),
+            'frame_time_ms': 0.0,  # Would be tracked by renderer
+            'fps': 0.0,
+            'gpu_memory_mb': 0.0,
+        }
+    
+    def cleanup(self):
+        """Clean up renderer resources"""
+        try:
+            self._vertex_buffers.clear()
+            self._index_buffers.clear()
+            self._uniform_buffers.clear()
+            
+            if self._renderer:
+                self._renderer.cleanup()
+            
+            if self._context:
+                self._context.cleanup()
+                
+            self.is_initialized = False
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+
+
+# Additional classes for complete terrain system
+
+class TerrainStreamer:
+    """Terrain data streaming system"""
+    
+    def __init__(self, cache_size_mb: int = 512):
+        """
+        Initialize terrain streamer.
+        
+        Args:
+            cache_size_mb: Size of terrain cache in MB
+        """
+        self.cache_size_mb = cache_size_mb
+        self.loaded_tiles = {}
+        self.streaming_queue = []
+    
+    def load_tile(self, tile_x: int, tile_y: int, lod_level: int = 0) -> Optional[np.ndarray]:
+        """Load a terrain tile"""
+        tile_key = f"{tile_x}_{tile_y}_{lod_level}"
+        
+        if tile_key in self.loaded_tiles:
+            return self.loaded_tiles[tile_key]
+        
+        # Generate or load tile data
+        # This is a placeholder
+        return None
+    
+    def update_streaming(self, camera_position: Tuple[float, float, float],
+                        view_distance: float = 1000.0):
+        """Update terrain streaming based on camera position"""
+        pass
+
+
+class TerrainLODManager:
+    """Level of detail management for terrain"""
+    
+    def __init__(self, config: Optional[TerrainConfig] = None):
+        """Initialize LOD manager"""
+        self.config = config or TerrainConfig()
+        self.active_lod_levels = {}
+    
+    def calculate_lod(self, position: Tuple[float, float, float], 
+                     camera_position: Tuple[float, float, float]) -> int:
+        """Calculate appropriate LOD level for a position"""
+        distance = np.linalg.norm(np.array(position) - np.array(camera_position))
+        
+        # Simple distance-based LOD
+        for i, threshold in enumerate(self.config.lod.distances):
+            if distance < threshold:
+                return i
+        
+        return len(self.config.lod.distances)
 
 
 __all__ = [

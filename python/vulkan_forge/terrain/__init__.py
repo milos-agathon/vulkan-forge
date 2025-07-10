@@ -246,4 +246,4 @@ class TerrainLODManager:
 
 
 # Export the classes
-__all__ = ['TerrainRenderer', 'TerrainStreamer', 'TerrainLODManager']
+__all__ = ['TerrainRenderer', 'TerrainStreamer', 'TerrainLODManager', 'TerrainBounds']
