@@ -110,6 +110,94 @@ class Camera:
         
         # Update direction to look at center
         self.look_at(center)
+    
+    def set_orbit_position(self, center: np.ndarray, angle_degrees: float, 
+                          elevation_degrees: float, distance: float):
+        """Position camera in orbit around center point with GL convention."""
+        angle_rad = np.radians(angle_degrees)
+        elevation_rad = np.radians(elevation_degrees)
+        
+        # Spherical to Cartesian with GL convention
+        x = distance * np.cos(elevation_rad) * np.sin(angle_rad)  # East-west
+        y = distance * np.sin(elevation_rad)                      # Height
+        z = distance * np.cos(elevation_rad) * np.cos(angle_rad)  # North-south
+        
+        self.position = center + np.array([x, y, z], dtype=np.float32)
+        self.look_at(center)
+    
+    def get_view_vectors(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Get camera view vectors (forward, right, up) with GL convention."""
+        # Forward vector (from position to target)
+        target = self.position + self.direction
+        forward = target - self.position
+        forward_length = np.linalg.norm(forward)
+        if forward_length > 1e-6:
+            forward = forward / forward_length
+        else:
+            forward = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+        
+        # Right vector = cross(forward, world_up)
+        world_up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+        right = np.cross(forward, world_up)
+        right_length = np.linalg.norm(right)
+        if right_length > 1e-6:
+            right = right / right_length
+        else:
+            right = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        
+        # Up vector = cross(right, forward)
+        up = np.cross(right, forward)
+        up_length = np.linalg.norm(up)
+        if up_length > 1e-6:
+            up = up / up_length
+        else:
+            up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+        
+        return forward, right, up
+    
+    def project_perspective_gl(self, world_pos: np.ndarray, width: int, height: int) -> Optional[Tuple[int, int, float]]:
+        """Project world position to screen coordinates using GL convention perspective projection."""
+        forward, right, up = self.get_view_vectors()
+        
+        # Transform to camera space
+        relative_pos = world_pos - self.position
+        
+        # Project onto camera plane using GL convention
+        forward_dist = np.dot(relative_pos, forward)
+        right_dist = np.dot(relative_pos, right)
+        up_dist = np.dot(relative_pos, up)
+        
+        if forward_dist <= self.near:
+            return None
+        
+        # Perspective projection
+        tan_half_fov = np.tan(np.radians(self.fov / 2))
+        x_proj = right_dist / (forward_dist * tan_half_fov * self.aspect)
+        y_proj = up_dist / (forward_dist * tan_half_fov)
+        
+        # Convert to screen coordinates
+        x_screen = int((x_proj + 1) * width / 2)
+        y_screen = int((1 - y_proj) * height / 2)
+        
+        return (x_screen, y_screen, forward_dist)
+    
+    def project_orthographic_gl(self, world_pos: np.ndarray, width: int, height: int,
+                               world_bounds: Tuple[float, float, float, float]) -> Tuple[int, int, float]:
+        """Project world position to screen coordinates using GL convention orthographic projection."""
+        x, y, z = world_pos
+        world_x_min, world_x_max, world_z_min, world_z_max = world_bounds
+        
+        # Map world coordinates to screen coordinates using exact world bounds
+        x_norm = (x - world_x_min) / (world_x_max - world_x_min)
+        z_norm = (z - world_z_min) / (world_z_max - world_z_min)
+        
+        x_screen = int(x_norm * (width - 1))
+        y_screen = int((1 - z_norm) * (height - 1))  # Flip Z for screen Y
+        
+        # Use height for depth testing (higher terrain = closer to camera)
+        depth = 10.0 - y
+        
+        return (x_screen, y_screen, depth)
 
 
 class TerrainDataset:

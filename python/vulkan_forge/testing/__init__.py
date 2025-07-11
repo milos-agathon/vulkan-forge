@@ -13,7 +13,8 @@ from .validation import (
     validate_normalization,
     validate_plot_consistency,
     validate_terrain_statistics,
-    run_comprehensive_validation
+    run_comprehensive_validation,
+    run_automated_validation
 )
 
 __all__ = [
@@ -24,5 +25,6 @@ __all__ = [
     'validate_normalization',
     'validate_plot_consistency',
     'validate_terrain_statistics',
-    'run_comprehensive_validation'
+    'run_comprehensive_validation',
+    'run_automated_validation'
 ]

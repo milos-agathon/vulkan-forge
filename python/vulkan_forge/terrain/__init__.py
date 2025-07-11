@@ -13,7 +13,11 @@ from .data import (
     create_mountain_terrain,
     add_noise_to_terrain,
     normalize_terrain_height,
-    get_terrain_statistics
+    get_terrain_statistics,
+    is_power_of_two_plus_one,
+    save_heightmap_16bit,
+    load_heightmap_16bit_strict,
+    build_verified_mesh
 )
 from .colormap import (
     create_terrain_colormap,
@@ -25,7 +29,12 @@ from .colormap import (
     create_colormap_legend,
     blend_colormaps,
     get_available_colormaps,
-    create_colormap_by_name
+    create_colormap_by_name,
+    linear_to_srgb,
+    srgb_to_linear,
+    create_terrain_lut_png,
+    sample_terrain_lut,
+    apply_fragment_colors
 )
 from .plot3d import (
     create_unified_terrain_plot,
@@ -35,7 +44,9 @@ from .plot3d import (
     create_wireframe_plot,
     save_terrain_plot,
     set_3d_view,
-    add_terrain_lighting
+    add_terrain_lighting,
+    render_with_gl_camera,
+    create_verified_preview
 )
 
 
@@ -290,6 +301,10 @@ __all__ = [
     'add_noise_to_terrain',
     'normalize_terrain_height',
     'get_terrain_statistics',
+    'is_power_of_two_plus_one',
+    'save_heightmap_16bit',
+    'load_heightmap_16bit_strict',
+    'build_verified_mesh',
     # Colormap functions
     'create_terrain_colormap',
     'create_elevation_colormap',
@@ -301,6 +316,11 @@ __all__ = [
     'blend_colormaps',
     'get_available_colormaps',
     'create_colormap_by_name',
+    'linear_to_srgb',
+    'srgb_to_linear',
+    'create_terrain_lut_png',
+    'sample_terrain_lut',
+    'apply_fragment_colors',
     # Plotting functions
     'create_unified_terrain_plot',
     'create_3d_terrain_plot',
@@ -309,5 +329,7 @@ __all__ = [
     'create_wireframe_plot',
     'save_terrain_plot',
     'set_3d_view',
-    'add_terrain_lighting'
+    'add_terrain_lighting',
+    'render_with_gl_camera',
+    'create_verified_preview'
 ]

@@ -7,7 +7,13 @@ with consistent color mappings across different visualization contexts.
 
 import numpy as np
 import matplotlib.colors as mcolors
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
+
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
 
 
 def create_terrain_colormap(N: int = 256) -> mcolors.LinearSegmentedColormap:
@@ -243,3 +249,138 @@ def create_colormap_by_name(name: str, N: int = 256) -> mcolors.LinearSegmentedC
         return create_geological_colormap(N)
     else:
         raise ValueError(f"Unknown colormap name: {name}")
+
+
+def linear_to_srgb(linear_rgb: np.ndarray) -> np.ndarray:
+    """Convert linear RGB to sRGB color space."""
+    srgb = np.where(linear_rgb <= 0.0031308,
+                    12.92 * linear_rgb,
+                    1.055 * np.power(linear_rgb, 1.0/2.4) - 0.055)
+    return np.clip(srgb, 0, 1)
+
+
+def srgb_to_linear(srgb_rgb: np.ndarray) -> np.ndarray:
+    """Convert sRGB to linear RGB color space."""
+    linear = np.where(srgb_rgb <= 0.04045,
+                      srgb_rgb / 12.92,
+                      np.power((srgb_rgb + 0.055) / 1.055, 2.4))
+    return np.clip(linear, 0, 1)
+
+
+def create_terrain_lut_png(filename: str = 'terrain_lut.png') -> np.ndarray:
+    """
+    Create terrain color LUT as PNG for consistent color mapping.
+    
+    Args:
+        filename: Output filename for LUT image
+        
+    Returns:
+        LUT colors as uint8 array
+        
+    Raises:
+        ImportError: If PIL is not available
+    """
+    if not HAS_PIL:
+        raise ImportError("PIL is required for PNG LUT creation. Install with: pip install Pillow")
+    
+    print("+ Creating terrain color LUT...")
+    
+    # Create 256-entry gradient
+    lut_colors = np.zeros((256, 3), dtype=np.uint8)
+    
+    for i in range(256):
+        h = i / 255.0  # Normalized height 0-1
+        
+        # Apply terrain gradient
+        if h < 0.15:
+            color = np.array([0.1, 0.3, 0.6])
+        elif h < 0.25:
+            t = (h - 0.15) / 0.1
+            color = np.array([0.1 + t*0.3, 0.3 + t*0.3, 0.6 + t*0.2])
+        elif h < 0.35:
+            t = (h - 0.25) / 0.1
+            color = np.array([0.8, 0.7 + t*0.1, 0.4 + t*0.2])
+        elif h < 0.55:
+            t = (h - 0.35) / 0.2
+            color = np.array([0.2 + t*0.2, 0.6 + t*0.1, 0.2 + t*0.1])
+        elif h < 0.75:
+            t = (h - 0.55) / 0.2
+            color = np.array([0.1 + t*0.1, 0.4 + t*0.1, 0.1 + t*0.1])
+        elif h < 0.9:
+            t = (h - 0.75) / 0.15
+            color = np.array([0.5 + t*0.2, 0.5 + t*0.2, 0.5 + t*0.2])
+        else:
+            t = (h - 0.9) / 0.1
+            color = np.array([0.8 + t*0.2, 0.8 + t*0.2, 0.8 + t*0.2])
+        
+        # Convert to sRGB uint8 for LUT storage
+        lut_colors[i] = (linear_to_srgb(color) * 255).astype(np.uint8)
+    
+    # Save as 256×1 PNG
+    lut_image = lut_colors.reshape(1, 256, 3)
+    Image.fromarray(lut_image).save(filename)
+    print(f"  Saved terrain LUT: {filename}")
+    
+    return lut_colors
+
+
+def sample_terrain_lut(normalized_height: float, lut_colors: np.ndarray) -> np.ndarray:
+    """
+    Sample LUT with GL_NEAREST equivalent.
+    
+    Args:
+        normalized_height: Height value in [0, 1]
+        lut_colors: LUT color array
+        
+    Returns:
+        Linear RGB color
+    """
+    # Clamp and scale to LUT index
+    h = np.clip(normalized_height, 0, 1)
+    index = int(h * 255)
+    
+    # Return linear RGB color
+    srgb_color = lut_colors[index].astype(np.float32) / 255.0
+    return srgb_to_linear(srgb_color)
+
+
+def apply_fragment_colors(mesh_cache: Dict[str, Any], heightmap: np.ndarray, 
+                         lut_colors: np.ndarray) -> Dict[str, Any]:
+    """
+    Apply colors per-fragment using heightmap re-sampling.
+    
+    Args:
+        mesh_cache: Mesh data dictionary
+        heightmap: Height data array
+        lut_colors: LUT color array
+        
+    Returns:
+        Updated mesh cache with colors
+    """
+    print("+ Applying fragment-based colors (GL_NEAREST sampling)...")
+    
+    vertices = mesh_cache['vertices']
+    texcoords = mesh_cache['texcoords']
+    h, w = heightmap.shape
+    
+    # Re-sample height texture with GL_NEAREST for each vertex
+    colors = np.zeros((len(vertices), 3), dtype=np.float32)
+    
+    for i, (vertex, texcoord) in enumerate(zip(vertices, texcoords)):
+        # Sample heightmap using texture coordinates
+        u, v = texcoord
+        
+        # Convert UV to heightmap indices with GL_NEAREST sampling
+        x_idx = int(np.clip(u * w, 0, w - 1))
+        y_idx = int(np.clip(v * h, 0, h - 1))
+        
+        # Sample normalized height from heightmap
+        normalized_height = heightmap[y_idx, x_idx]
+        
+        # Sample terrain LUT with GL_NEAREST
+        colors[i] = sample_terrain_lut(normalized_height, lut_colors)
+    
+    print(f"  Applied fragment colors to {len(colors)} vertices")
+    mesh_cache['colors'] = colors
+    
+    return mesh_cache
