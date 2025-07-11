@@ -31,8 +31,6 @@
   GPU metrics (memory, utilization, temperature, power) and plotting
 * **Extensible Mesh & Material System**
   Height-map, point-cloud mesh generation, PBR materials, and denoising
-* **R Interfaces**
-  High-level R functions with `.Call()` bridges to native Vulkan code
 
 # Vulkan Installation Guide for VulkanForge
 
