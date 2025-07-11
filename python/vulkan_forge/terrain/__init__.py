@@ -6,6 +6,38 @@ from typing import Optional, List, Tuple, Any
 import numpy as np
 from ..terrain_config import TerrainConfig, TessellationConfig
 
+# Import new terrain modules
+from .data import (
+    create_terrain_data,
+    create_simple_terrain,
+    create_mountain_terrain,
+    add_noise_to_terrain,
+    normalize_terrain_height,
+    get_terrain_statistics
+)
+from .colormap import (
+    create_terrain_colormap,
+    create_elevation_colormap,
+    create_geological_colormap,
+    create_custom_colormap,
+    get_terrain_color_at_height,
+    apply_colormap_to_terrain,
+    create_colormap_legend,
+    blend_colormaps,
+    get_available_colormaps,
+    create_colormap_by_name
+)
+from .plot3d import (
+    create_unified_terrain_plot,
+    create_3d_terrain_plot,
+    create_2d_terrain_plot,
+    create_contour_plot,
+    create_wireframe_plot,
+    save_terrain_plot,
+    set_3d_view,
+    add_terrain_lighting
+)
+
 
 class TerrainRenderer:
     """High-performance terrain renderer."""
@@ -245,5 +277,37 @@ class TerrainLODManager:
             return {}
 
 
-# Export the classes
-__all__ = ['TerrainRenderer', 'TerrainStreamer', 'TerrainLODManager', 'TerrainBounds']
+# Export the classes and functions
+__all__ = [
+    'TerrainRenderer', 
+    'TerrainStreamer', 
+    'TerrainLODManager', 
+    'TerrainBounds',
+    # Data generation functions
+    'create_terrain_data',
+    'create_simple_terrain',
+    'create_mountain_terrain',
+    'add_noise_to_terrain',
+    'normalize_terrain_height',
+    'get_terrain_statistics',
+    # Colormap functions
+    'create_terrain_colormap',
+    'create_elevation_colormap',
+    'create_geological_colormap',
+    'create_custom_colormap',
+    'get_terrain_color_at_height',
+    'apply_colormap_to_terrain',
+    'create_colormap_legend',
+    'blend_colormaps',
+    'get_available_colormaps',
+    'create_colormap_by_name',
+    # Plotting functions
+    'create_unified_terrain_plot',
+    'create_3d_terrain_plot',
+    'create_2d_terrain_plot',
+    'create_contour_plot',
+    'create_wireframe_plot',
+    'save_terrain_plot',
+    'set_3d_view',
+    'add_terrain_lighting'
+]
