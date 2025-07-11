@@ -17,7 +17,9 @@ from .data import (
     is_power_of_two_plus_one,
     save_heightmap_16bit,
     load_heightmap_16bit_strict,
-    build_verified_mesh
+    build_verified_mesh,
+    compute_vertex_normals,
+    compute_heightmap_normals
 )
 from .colormap import (
     create_terrain_colormap,
@@ -46,7 +48,11 @@ from .plot3d import (
     set_3d_view,
     add_terrain_lighting,
     render_with_gl_camera,
-    create_verified_preview
+    create_verified_preview,
+    create_lighting_system,
+    create_optimal_terrain_camera,
+    render_high_quality,
+    apply_atmospheric_perspective
 )
 
 
@@ -306,6 +312,8 @@ __all__ = [
     'save_heightmap_16bit',
     'load_heightmap_16bit_strict',
     'build_verified_mesh',
+    'compute_vertex_normals',
+    'compute_heightmap_normals',
     # Colormap functions
     'create_terrain_colormap',
     'create_elevation_colormap',
@@ -332,5 +340,9 @@ __all__ = [
     'set_3d_view',
     'add_terrain_lighting',
     'render_with_gl_camera',
-    'create_verified_preview'
+    'create_verified_preview',
+    'create_lighting_system',
+    'create_optimal_terrain_camera', 
+    'render_high_quality',
+    'apply_atmospheric_perspective'
 ]

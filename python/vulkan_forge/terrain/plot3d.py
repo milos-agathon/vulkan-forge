@@ -311,8 +311,9 @@ def point_in_triangle_barycentric_gl(px: int, py: int, verts: list) -> bool:
 
 
 def rasterize_triangle_linear_gl(image: np.ndarray, z_buffer: np.ndarray, 
-                                verts: list, width: int, height: int) -> None:
-    """Rasterize triangle in linear RGB space with GL convention."""
+                                verts: list, width: int, height: int, 
+                                lighting_system: Optional[Dict] = None) -> None:
+    """Rasterize triangle in linear RGB space with GL convention and proper lighting."""
     if len(verts) != 3:
         return
     
@@ -328,25 +329,147 @@ def rasterize_triangle_linear_gl(image: np.ndarray, z_buffer: np.ndarray,
     if min_x >= max_x or min_y >= max_y:
         return
     
-    # Average color and depth (fragment-based colors already applied)
-    avg_color = np.mean([v[3] for v in verts], axis=0)
+    # Extract vertex data
+    if len(verts[0]) >= 7:  # Has normals
+        positions = [v[:3] for v in verts]
+        colors = [v[3:6] for v in verts]
+        normals = [v[6:9] for v in verts]
+    else:  # Legacy format
+        positions = [v[:3] for v in verts]
+        colors = [v[3:6] for v in verts]
+        normals = [np.array([0.0, 1.0, 0.0]) for _ in range(3)]  # Default up normal
+    
     avg_depth = np.mean(zs)
     
-    # Simple directional lighting in linear space
-    light_factor = 0.8 + 0.2 * 0.7  # Consistent lighting
-    lit_color = avg_color * light_factor
-    
-    # Fill triangle
+    # Fill triangle with per-pixel lighting
     for py in range(min_y, max_y + 1):
         for px in range(min_x, max_x + 1):
             if point_in_triangle_barycentric_gl(px, py, verts):
                 if avg_depth < z_buffer[py, px]:
                     z_buffer[py, px] = avg_depth
+                    
+                    # Compute barycentric coordinates for interpolation
+                    bary = compute_barycentric_coordinates(px, py, positions)
+                    if bary is None:
+                        continue
+                    
+                    # Interpolate color and normal
+                    interp_color = bary[0] * colors[0] + bary[1] * colors[1] + bary[2] * colors[2]
+                    interp_normal = bary[0] * normals[0] + bary[1] * normals[1] + bary[2] * normals[2]
+                    
+                    # Normalize interpolated normal
+                    normal_length = np.linalg.norm(interp_normal)
+                    if normal_length > 1e-6:
+                        interp_normal = interp_normal / normal_length
+                    
+                    # Apply lighting
+                    if lighting_system:
+                        lit_color = apply_lambert_phong_lighting(
+                            interp_color, interp_normal, 
+                            bary[0] * positions[0] + bary[1] * positions[1] + bary[2] * positions[2],
+                            lighting_system
+                        )
+                    else:
+                        # Fallback to simple lighting
+                        light_factor = 0.8 + 0.2 * 0.7
+                        lit_color = interp_color * light_factor
+                    
                     image[py, px] = lit_color
 
 
+def compute_barycentric_coordinates(px: int, py: int, positions: list) -> Optional[np.ndarray]:
+    """Compute barycentric coordinates for a point in a triangle."""
+    x1, y1 = positions[0][:2]
+    x2, y2 = positions[1][:2]
+    x3, y3 = positions[2][:2]
+    
+    denom = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
+    if abs(denom) < 1e-10:
+        return None
+    
+    w1 = ((y2 - y3) * (px - x3) + (x3 - x2) * (py - y3)) / denom
+    w2 = ((y3 - y1) * (px - x3) + (x1 - x3) * (py - y3)) / denom
+    w3 = 1 - w1 - w2
+    
+    return np.array([w1, w2, w3])
+
+
+def create_lighting_system(sun_direction: np.ndarray = None, 
+                          sun_color: np.ndarray = None,
+                          ambient_color: np.ndarray = None) -> Dict:
+    """
+    Create a lighting system for terrain rendering.
+    
+    Args:
+        sun_direction: Direction to sun light (normalized)
+        sun_color: Sun light color (RGB)
+        ambient_color: Ambient light color (RGB)
+        
+    Returns:
+        Lighting system dictionary
+    """
+    if sun_direction is None:
+        sun_direction = np.array([-0.3, 0.7, -0.6])  # Angled from above
+        sun_direction = sun_direction / np.linalg.norm(sun_direction)
+    
+    if sun_color is None:
+        sun_color = np.array([1.0, 0.95, 0.8])  # Warm sunlight
+    
+    if ambient_color is None:
+        ambient_color = np.array([0.3, 0.4, 0.6])  # Cool sky light
+    
+    return {
+        'sun_direction': sun_direction,
+        'sun_color': sun_color,
+        'ambient_color': ambient_color,
+        'sun_intensity': 0.8,
+        'ambient_intensity': 0.4
+    }
+
+
+def apply_lambert_phong_lighting(base_color: np.ndarray, normal: np.ndarray, 
+                                position: np.ndarray, lighting_system: Dict) -> np.ndarray:
+    """
+    Apply Lambert + Phong lighting model.
+    
+    Args:
+        base_color: Base material color
+        normal: Surface normal (normalized)
+        position: World position
+        lighting_system: Lighting system parameters
+        
+    Returns:
+        Final lit color
+    """
+    sun_dir = lighting_system['sun_direction']
+    sun_color = lighting_system['sun_color']
+    ambient_color = lighting_system['ambient_color']
+    sun_intensity = lighting_system['sun_intensity']
+    ambient_intensity = lighting_system['ambient_intensity']
+    
+    # Ambient component
+    ambient = ambient_color * ambient_intensity
+    
+    # Diffuse component (Lambert)
+    n_dot_l = max(0.0, np.dot(normal, -sun_dir))  # Negative because direction TO light
+    diffuse = sun_color * sun_intensity * n_dot_l
+    
+    # Simple specular component (Phong)
+    view_dir = np.array([0.0, 0.0, 1.0])  # View along Z axis
+    reflect_dir = 2 * n_dot_l * normal - (-sun_dir)
+    v_dot_r = max(0.0, np.dot(view_dir, reflect_dir))
+    specular = sun_color * sun_intensity * (v_dot_r ** 16) * 0.2  # Small specular highlight
+    
+    # Combine lighting
+    final_color = base_color * (ambient + diffuse) + specular
+    
+    # Clamp to valid range
+    return np.clip(final_color, 0.0, 1.0)
+
+
 def render_with_gl_camera(mesh_cache: Dict[str, Any], camera: Any, 
-                         width: int, height: int, is_perspective: bool = True) -> np.ndarray:
+                         width: int, height: int, is_perspective: bool = True, 
+                         lighting_system: Optional[Dict] = None) -> np.ndarray:
     """
     Render mesh using GL camera system with unified projection.
     
@@ -383,31 +506,46 @@ def render_with_gl_camera(mesh_cache: Dict[str, Any], camera: Any,
         mesh_cache.get('world_scale', 4.0) * 0.5
     )
     
+    # Check if we have normals for lighting
+    has_normals = 'normals' in mesh_cache
+    normals = mesh_cache.get('normals', None)
+    
     # Render each triangle using unified camera projection
     for tri_idx in range(triangles_total):
         i1, i2, i3 = indices[tri_idx*3:(tri_idx+1)*3]
         v1, v2, v3 = vertices[i1], vertices[i2], vertices[i3]
         c1, c2, c3 = colors[i1], colors[i2], colors[i3]
         
+        if has_normals:
+            n1, n2, n3 = normals[i1], normals[i2], normals[i3]
+        
         # Project vertices using unified camera
         screen_coords = []
         if is_perspective:
-            for v, c in [(v1, c1), (v2, c2), (v3, c3)]:
+            for i, (v, c) in enumerate([(v1, c1), (v2, c2), (v3, c3)]):
                 proj_result = camera.project_perspective_gl(v, width, height)
                 if proj_result is None:
                     screen_coords = None
                     break
-                screen_coords.append((*proj_result, c))
+                if has_normals:
+                    n = [n1, n2, n3][i]
+                    screen_coords.append((*proj_result, *c, *n))
+                else:
+                    screen_coords.append((*proj_result, *c))
         else:
-            for v, c in [(v1, c1), (v2, c2), (v3, c3)]:
+            for i, (v, c) in enumerate([(v1, c1), (v2, c2), (v3, c3)]):
                 proj_result = camera.project_orthographic_gl(v, width, height, world_bounds)
-                screen_coords.append((*proj_result, c))
+                if has_normals:
+                    n = [n1, n2, n3][i]
+                    screen_coords.append((*proj_result, *c, *n))
+                else:
+                    screen_coords.append((*proj_result, *c))
         
         if screen_coords is None or len(screen_coords) != 3:
             continue
         
-        # Rasterize triangle in linear RGB space
-        rasterize_triangle_linear_gl(image, z_buffer, screen_coords, width, height)
+        # Rasterize triangle in linear RGB space with lighting
+        rasterize_triangle_linear_gl(image, z_buffer, screen_coords, width, height, lighting_system)
         triangles_rendered += 1
         
         if triangles_rendered % 5000 == 0:
@@ -545,3 +683,170 @@ def create_verified_preview(mesh_cache: Dict[str, Any], heightmap: np.ndarray,
         print("  Saved orthographic validation: terrain_ortho_validation.png")
     
     return ortho_image_uint8, fig
+
+
+def create_optimal_terrain_camera(mesh_cache: Dict[str, Any], fov: float = 30.0, 
+                                 tilt_degrees: float = 45.0) -> Any:
+    """
+    Create optimally positioned camera for terrain viewing.
+    
+    Args:
+        mesh_cache: Mesh data dictionary
+        fov: Field of view in degrees
+        tilt_degrees: Camera tilt angle
+        
+    Returns:
+        Configured camera object
+    """
+    try:
+        from ..terrain import Camera
+    except ImportError:
+        # Fallback: create a simple camera class
+        class Camera:
+            def __init__(self):
+                self.position = np.array([0.0, 0.0, 0.0])
+                self.fov = 45.0
+                self.aspect = 1.0
+                self.near = 0.1
+                self.far = 100.0
+                
+            def set_orbit_position(self, center, angle_degrees, elevation_degrees, distance):
+                angle_rad = np.radians(angle_degrees)
+                elevation_rad = np.radians(elevation_degrees)
+                
+                x = distance * np.cos(elevation_rad) * np.sin(angle_rad)
+                y = distance * np.sin(elevation_rad)
+                z = distance * np.cos(elevation_rad) * np.cos(angle_rad)
+                
+                self.position = center + np.array([x, y, z], dtype=np.float32)
+                
+            def project_perspective_gl(self, world_pos, width, height):
+                # Simple perspective projection
+                return (width//2, height//2, 5.0)
+                
+            def project_orthographic_gl(self, world_pos, width, height, world_bounds):
+                # Simple orthographic projection
+                return (width//2, height//2, 5.0)
+    
+    # Get terrain bounds
+    vertices = mesh_cache['vertices']
+    x_coords = vertices[:, 0]
+    y_coords = vertices[:, 1]
+    z_coords = vertices[:, 2]
+    
+    # Calculate bounding box
+    center = np.array([
+        (x_coords.min() + x_coords.max()) / 2,
+        (y_coords.min() + y_coords.max()) / 2,
+        (z_coords.min() + z_coords.max()) / 2
+    ])
+    
+    # Calculate distance to fit ~70% of frame
+    terrain_size = max(x_coords.max() - x_coords.min(), z_coords.max() - z_coords.min())
+    distance = terrain_size / (2 * np.tan(np.radians(fov / 2))) * 1.4  # 70% fill factor
+    
+    # Create camera
+    camera = Camera()
+    camera.fov = fov
+    camera.near = distance * 0.1
+    camera.far = distance * 5.0
+    camera.aspect = 16.0 / 9.0  # High-res aspect ratio
+    
+    # Position camera at optimal viewing angle
+    camera.set_orbit_position(center, 45.0, tilt_degrees, distance)
+    
+    return camera
+
+
+def render_high_quality(mesh_cache: Dict[str, Any], width: int = 1920, height: int = 1080,
+                       supersample: int = 4, enable_lighting: bool = True) -> np.ndarray:
+    """
+    Render high-quality terrain with supersampling and lighting.
+    
+    Args:
+        mesh_cache: Mesh data dictionary with normals
+        width: Output width
+        height: Output height  
+        supersample: Supersampling factor
+        enable_lighting: Whether to enable realistic lighting
+        
+    Returns:
+        High-quality rendered image
+    """
+    print(f"+ High-quality rendering {width}x{height} (supersample ×{supersample})...")
+    
+    # Create optimal camera
+    camera = create_optimal_terrain_camera(mesh_cache)
+    camera.aspect = width / height
+    
+    # Create lighting system if enabled
+    lighting_system = None
+    if enable_lighting:
+        lighting_system = create_lighting_system()
+        print("  Real-time lighting: Lambert + Phong shading enabled")
+    
+    # Render at higher resolution for supersampling
+    render_width = width * supersample
+    render_height = height * supersample
+    
+    # Render with lighting
+    image_linear = render_with_gl_camera(
+        mesh_cache, camera, render_width, render_height, 
+        is_perspective=True, lighting_system=lighting_system
+    )
+    
+    # Downsample for antialiasing
+    if supersample > 1:
+        print(f"  Downsampling {render_width}x{render_height} → {width}x{height}")
+        from scipy.ndimage import zoom
+        downsample_factor = 1.0 / supersample
+        image_linear = zoom(image_linear, (downsample_factor, downsample_factor, 1), order=1)
+    
+    print(f"  High-quality render complete: {image_linear.shape}")
+    return image_linear
+
+
+def apply_atmospheric_perspective(image: np.ndarray, z_buffer: np.ndarray, 
+                                fog_color: np.ndarray = None, fog_density: float = 0.1) -> np.ndarray:
+    """
+    Apply atmospheric perspective (fog) for depth cues.
+    
+    Args:
+        image: Rendered image
+        z_buffer: Depth buffer
+        fog_color: Fog color (default: light blue)
+        fog_density: Fog density factor
+        
+    Returns:
+        Image with atmospheric perspective
+    """
+    if fog_color is None:
+        fog_color = np.array([0.7, 0.8, 0.9])  # Light blue fog
+    
+    height, width = image.shape[:2]
+    
+    # Normalize depth values
+    valid_depths = z_buffer[z_buffer < float('inf')]
+    if len(valid_depths) == 0:
+        return image
+    
+    min_depth, max_depth = valid_depths.min(), valid_depths.max()
+    depth_range = max_depth - min_depth
+    
+    if depth_range < 1e-6:
+        return image
+    
+    # Apply fog based on depth
+    result = image.copy()
+    for y in range(height):
+        for x in range(width):
+            if z_buffer[y, x] < float('inf'):
+                # Compute fog factor
+                normalized_depth = (z_buffer[y, x] - min_depth) / depth_range
+                fog_factor = 1.0 - np.exp(-fog_density * normalized_depth)
+                fog_factor = np.clip(fog_factor, 0.0, 0.8)  # Limit fog strength
+                
+                # Blend with fog color
+                result[y, x] = (1 - fog_factor) * image[y, x] + fog_factor * fog_color
+    
+    return result

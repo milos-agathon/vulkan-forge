@@ -359,3 +359,94 @@ def build_verified_mesh(heightmap: np.ndarray, world_scale: float = 4.0,
     }
     
     return mesh_cache
+
+
+def compute_vertex_normals(mesh_cache: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Compute per-vertex normals from mesh geometry for lighting.
+    
+    Args:
+        mesh_cache: Mesh data dictionary
+        
+    Returns:
+        Updated mesh cache with normals
+    """
+    vertices = mesh_cache['vertices']
+    indices = mesh_cache['indices']
+    
+    # Initialize normals to zero
+    normals = np.zeros_like(vertices)
+    
+    # Compute face normals and accumulate to vertices
+    for i in range(0, len(indices), 3):
+        i1, i2, i3 = indices[i:i+3]
+        v1, v2, v3 = vertices[i1], vertices[i2], vertices[i3]
+        
+        # Compute face normal using cross product
+        edge1 = v2 - v1
+        edge2 = v3 - v1
+        face_normal = np.cross(edge1, edge2)
+        
+        # Normalize face normal
+        face_normal_length = np.linalg.norm(face_normal)
+        if face_normal_length > 1e-6:
+            face_normal = face_normal / face_normal_length
+        
+        # Accumulate to vertex normals
+        normals[i1] += face_normal
+        normals[i2] += face_normal
+        normals[i3] += face_normal
+    
+    # Normalize vertex normals
+    for i in range(len(normals)):
+        normal_length = np.linalg.norm(normals[i])
+        if normal_length > 1e-6:
+            normals[i] = normals[i] / normal_length
+        else:
+            normals[i] = np.array([0.0, 1.0, 0.0])  # Default up normal
+    
+    mesh_cache['normals'] = normals
+    print(f"  Computed normals for {len(normals)} vertices")
+    
+    return mesh_cache
+
+
+def compute_heightmap_normals(heightmap: np.ndarray, world_scale: float = 4.0, 
+                             height_scale: float = 0.4) -> np.ndarray:
+    """
+    Compute normals directly from heightmap using finite differences.
+    
+    Args:
+        heightmap: Height data as 2D array
+        world_scale: World coordinate scale
+        height_scale: Height scaling factor
+        
+    Returns:
+        Normal array with shape (height, width, 3)
+    """
+    h, w = heightmap.shape
+    normals = np.zeros((h, w, 3), dtype=np.float32)
+    
+    # Scale factors for proper normal computation
+    x_scale = world_scale / w
+    z_scale = world_scale / h
+    
+    for y in range(h):
+        for x in range(w):
+            # Sample neighboring heights with boundary clamping
+            hL = heightmap[y, max(0, x-1)] * height_scale
+            hR = heightmap[y, min(w-1, x+1)] * height_scale
+            hD = heightmap[max(0, y-1), x] * height_scale
+            hU = heightmap[min(h-1, y+1), x] * height_scale
+            
+            # Compute gradients
+            dx = (hR - hL) / (2.0 * x_scale)
+            dz = (hU - hD) / (2.0 * z_scale)
+            
+            # Normal vector (cross product of tangent vectors)
+            normal = np.array([-dx, 1.0, -dz])
+            normal = normal / np.linalg.norm(normal)
+            
+            normals[y, x] = normal
+    
+    return normals
