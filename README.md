@@ -11,7 +11,7 @@
 
 <!-- badges: end -->
 
-> **Comprehensive GPU Backend for Vulkan Ray-Tracing in R**
+> **Comprehensive GPU Backend for Vulkan Ray-Tracing in Python**
 
 **vulkan-forge** provides Python users with a high-performance Vulkan GPU backend for ray-tracing and real-time rendering. It handles device enumeration, automatic backend selection (including CPU fallback), memory management, multi-GPU support, and advanced performance tuning—so you can focus on visualization rather than low-level graphics setup.
 
