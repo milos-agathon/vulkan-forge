@@ -294,6 +294,7 @@ __all__ = [
     'TerrainStreamer', 
     'TerrainLODManager', 
     'TerrainBounds',
+    'Camera',
     # Data generation functions
     'create_terrain_data',
     'create_simple_terrain',

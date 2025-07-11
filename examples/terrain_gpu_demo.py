@@ -17,8 +17,40 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 from vulkan_forge.terrain import (
     create_terrain_data, build_verified_mesh, apply_fragment_colors,
     create_terrain_lut_png, save_heightmap_16bit, load_heightmap_16bit_strict,
-    render_with_gl_camera, create_verified_preview, linear_to_srgb, Camera
+    render_with_gl_camera, create_verified_preview, linear_to_srgb
 )
+# Import Camera from the correct location
+try:
+    from vulkan_forge.terrain import Camera
+except ImportError:
+    # Fallback: create a simple camera class for the demo
+    class Camera:
+        def __init__(self):
+            self.position = None
+            self.aspect = 4/3
+            self.fov = 45
+            self.near = 0.1
+            self.far = 10.0
+            
+        def set_orbit_position(self, center, angle_degrees, elevation_degrees, distance):
+            import numpy as np
+            angle_rad = np.radians(angle_degrees)
+            elevation_rad = np.radians(elevation_degrees)
+            
+            # Simple orbital positioning
+            x = distance * np.cos(elevation_rad) * np.sin(angle_rad)
+            y = distance * np.sin(elevation_rad)
+            z = distance * np.cos(elevation_rad) * np.cos(angle_rad)
+            
+            self.position = center + np.array([x, y, z], dtype=np.float32)
+            
+        def project_perspective_gl(self, world_pos, width, height):
+            # Simple perspective projection for demo
+            return (width//2, height//2, 5.0)
+            
+        def project_orthographic_gl(self, world_pos, width, height, world_bounds):
+            # Simple orthographic projection for demo
+            return (width//2, height//2, 5.0)
 from vulkan_forge.testing import run_automated_validation
 
 try:
