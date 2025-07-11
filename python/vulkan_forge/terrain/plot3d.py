@@ -317,14 +317,16 @@ def rasterize_triangle_linear_gl(image: np.ndarray, z_buffer: np.ndarray,
     if len(verts) != 3:
         return
     
+
+    
     xs = [v[0] for v in verts]
     ys = [v[1] for v in verts]
     zs = [v[2] for v in verts]
     
-    min_x = max(0, min(xs))
-    max_x = min(width-1, max(xs))
-    min_y = max(0, min(ys))
-    max_y = min(height-1, max(ys))
+    min_x = max(0, int(min(xs)))
+    max_x = min(width-1, int(max(xs)))
+    min_y = max(0, int(min(ys)))
+    max_y = min(height-1, int(max(ys)))
     
     if min_x >= max_x or min_y >= max_y:
         return
@@ -354,8 +356,8 @@ def rasterize_triangle_linear_gl(image: np.ndarray, z_buffer: np.ndarray,
                         continue
                     
                     # Interpolate color and normal
-                    interp_color = bary[0] * colors[0] + bary[1] * colors[1] + bary[2] * colors[2]
-                    interp_normal = bary[0] * normals[0] + bary[1] * normals[1] + bary[2] * normals[2]
+                    interp_color = bary[0] * np.array(colors[0]) + bary[1] * np.array(colors[1]) + bary[2] * np.array(colors[2])
+                    interp_normal = bary[0] * np.array(normals[0]) + bary[1] * np.array(normals[1]) + bary[2] * np.array(normals[2])
                     
                     # Normalize interpolated normal
                     normal_length = np.linalg.norm(interp_normal)
@@ -364,9 +366,10 @@ def rasterize_triangle_linear_gl(image: np.ndarray, z_buffer: np.ndarray,
                     
                     # Apply lighting
                     if lighting_system:
+                        interp_position = bary[0] * np.array(positions[0]) + bary[1] * np.array(positions[1]) + bary[2] * np.array(positions[2])
                         lit_color = apply_lambert_phong_lighting(
                             interp_color, interp_normal, 
-                            bary[0] * positions[0] + bary[1] * positions[1] + bary[2] * positions[2],
+                            interp_position,
                             lighting_system
                         )
                     else:
@@ -516,6 +519,8 @@ def render_with_gl_camera(mesh_cache: Dict[str, Any], camera: Any,
         v1, v2, v3 = vertices[i1], vertices[i2], vertices[i3]
         c1, c2, c3 = colors[i1], colors[i2], colors[i3]
         
+
+        
         if has_normals:
             n1, n2, n3 = normals[i1], normals[i2], normals[i3]
         
@@ -552,6 +557,7 @@ def render_with_gl_camera(mesh_cache: Dict[str, Any], camera: Any,
             print(f"  Progress: {triangles_rendered}/{triangles_total} triangles")
     
     print(f"  Rendered {triangles_rendered} triangles with GL camera")
+    print(f"  Image stats: min={image.min():.6f}, max={image.max():.6f}, mean={image.mean():.6f}")
     
     # Keep in linear RGB; conversion happens on write
     return image
@@ -721,12 +727,104 @@ def create_optimal_terrain_camera(mesh_cache: Dict[str, Any], fov: float = 30.0,
                 self.position = center + np.array([x, y, z], dtype=np.float32)
                 
             def project_perspective_gl(self, world_pos, width, height):
-                # Simple perspective projection
-                return (width//2, height//2, 5.0)
+                """Project 3D world position to 2D screen coordinates using perspective projection."""
+                # Transform world position to camera space
+                # Camera looks towards terrain center, so we need to create view matrix
+                
+                # For simplicity, assume camera is positioned and oriented correctly
+                # This is a basic perspective projection
+                x, y, z = world_pos
+                
+                # Transform to camera space (camera looks down the negative Z axis)
+                # We need to create a proper view matrix based on camera position and orientation
+                cam_x, cam_y, cam_z = self.position
+                
+                # Create proper view transformation
+                # Camera is positioned to look at terrain center (origin)
+                
+                # Camera position
+                camera_pos = np.array([cam_x, cam_y, cam_z])
+                
+                # Target position (terrain center)
+                target_pos = np.array([0.0, 0.0, 0.0])
+                
+                # Up vector (Y is up)
+                up = np.array([0.0, 1.0, 0.0])
+                
+                # Calculate view direction (from camera to target)
+                view_dir = target_pos - camera_pos
+                view_dir = view_dir / np.linalg.norm(view_dir)
+                
+                # Calculate right vector (cross product of view direction and up)
+                right = np.cross(view_dir, up)
+                right = right / np.linalg.norm(right)
+                
+                # Recalculate up vector (cross product of right and view direction)
+                up_recalc = np.cross(right, view_dir)
+                
+                # Transform world position to camera space
+                world_pos = np.array([x, y, z])
+                translated = world_pos - camera_pos
+                
+                # Apply view transformation
+                view_x = np.dot(translated, right)
+                view_y = np.dot(translated, up_recalc)
+                view_z = -np.dot(translated, view_dir)  # Negative Z forward
+                
+                # Perspective projection
+                if view_z > -self.near:  # Behind camera or too close
+                    return None
+                    
+                # Project to screen space
+                fov_rad = np.radians(self.fov)
+                f = 1.0 / np.tan(fov_rad / 2.0)
+                
+                # Perspective divide
+                proj_x = f * view_x / (-view_z) 
+                proj_y = f * view_y / (-view_z)
+                
+                # Convert to screen coordinates
+                screen_x = width * 0.5 + proj_x * width * 0.5
+                screen_y = height * 0.5 - proj_y * height * 0.5  # Flip Y
+                
+                # Return depth as well
+                depth = -view_z
+                
+                # Allow points slightly outside screen bounds to be processed
+                margin = 100  # pixels
+                if (-margin <= screen_x < width + margin and 
+                    -margin <= screen_y < height + margin and 
+                    depth > 0):
+                    return (screen_x, screen_y, depth)
+                else:
+                    return None
                 
             def project_orthographic_gl(self, world_pos, width, height, world_bounds):
-                # Simple orthographic projection
-                return (width//2, height//2, 5.0)
+                """Project 3D world position to 2D screen coordinates using orthographic projection."""
+                x, y, z = world_pos
+                min_x, max_x, min_z, max_z = world_bounds
+                
+                # Transform to camera space
+                cam_x, cam_y, cam_z = self.position
+                view_x = x - cam_x
+                view_y = y - cam_y
+                view_z = z - cam_z
+                
+                # Orthographic projection 
+                world_width = max_x - min_x
+                world_height = max_z - min_z
+                
+                # Map world coordinates to screen coordinates
+                screen_x = width * (view_x - min_x) / world_width
+                screen_y = height * (view_z - min_z) / world_height
+                
+                # Use Y coordinate as depth
+                depth = view_y
+                
+                if 0 <= screen_x < width and 0 <= screen_y < height:
+                    return (screen_x, screen_y, depth)
+                else:
+                    return None
     
     # Get terrain bounds
     vertices = mesh_cache['vertices']
@@ -743,7 +841,7 @@ def create_optimal_terrain_camera(mesh_cache: Dict[str, Any], fov: float = 30.0,
     
     # Calculate distance to fit ~70% of frame
     terrain_size = max(x_coords.max() - x_coords.min(), z_coords.max() - z_coords.min())
-    distance = terrain_size / (2 * np.tan(np.radians(fov / 2))) * 1.4  # 70% fill factor
+    distance = terrain_size / (2 * np.tan(np.radians(fov / 2))) * 0.7  # Closer to terrain for better view
     
     # Create camera
     camera = Camera()
@@ -753,7 +851,9 @@ def create_optimal_terrain_camera(mesh_cache: Dict[str, Any], fov: float = 30.0,
     camera.aspect = 16.0 / 9.0  # High-res aspect ratio
     
     # Position camera at optimal viewing angle
-    camera.set_orbit_position(center, 45.0, tilt_degrees, distance)
+    # Adjust elevation to bring terrain into view
+    adjusted_tilt = tilt_degrees - 10.0  # Lower the camera angle
+    camera.set_orbit_position(center, 45.0, adjusted_tilt, distance)
     
     return camera
 

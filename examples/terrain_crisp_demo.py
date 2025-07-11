@@ -41,7 +41,7 @@ def main():
     print("="*60)
     
     # Create output directory
-    output_dir = Path("examples/output")
+    output_dir = Path("output")
     output_dir.mkdir(exist_ok=True)
     
     # Generate terrain data

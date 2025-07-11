@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 16-bit heightmap loading and saving utilities
 - Automated validation system with SHA-256 hash verification
 - Color space conversion utilities (linear RGB ↔ sRGB)
+- Regression test for terrain rendering in `tests/test_crisp_render.py`
+
+### Fixed
+- Fixed high-quality terrain renderer producing blank/black output
+- Fixed camera projection functions returning incorrect screen coordinates
+- Fixed perspective camera orientation and view matrix calculations
+- Fixed barycentric coordinate interpolation for colors and normals
+- Fixed screen bounds checking to allow proper triangle rasterization
 
 ### Changed
 - Refactored terrain plotting code from `examples/terrain_plot.py` into proper library modules
