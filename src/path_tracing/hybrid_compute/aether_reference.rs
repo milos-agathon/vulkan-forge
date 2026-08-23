@@ -298,6 +298,21 @@ impl HybridPathTracer {
                 usage: wgpu::BufferUsages::UNIFORM,
             },
         )?;
+        let earth_curvature = super::terrain_heightfield::EarthCurvatureUniforms {
+            inv_two_r_prime: 0.0,
+            _pad0: 0.0,
+            ray_origin_geodetic: [0.0; 2],
+            enabled: 0,
+            _pad1: 0,
+        };
+        let earth_curvature_ubo = tracked_create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("aether-spectral-reference-earth-curvature-ubo"),
+                contents: bytemuck::bytes_of(&earth_curvature),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        )?;
         let scene_buffer = tracked_create_buffer(
             device,
             &wgpu::BufferDescriptor {
@@ -442,6 +457,10 @@ impl HybridPathTracer {
                     binding: 7,
                     resource: reservoir_prev.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: earth_curvature_ubo.as_entire_binding(),
+                },
             ],
         });
 
@@ -536,6 +555,7 @@ impl HybridPathTracer {
             + lighting_ubo.size()
             + hybrid_ubo.size()
             + terrain_ubo.size()
+            + earth_curvature_ubo.size()
             + scene_buffer.size()
             + accum_buffer.size()
             + welford_buffer.size()

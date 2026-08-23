@@ -30,7 +30,7 @@ if not f3d.has_gpu():
     )
 
 
-def _adapter_is_hardware() -> bool:
+def _adapter_is_hardware(probe: object) -> bool:
     """True only for a non-software adapter.
 
     ``has_gpu()`` is satisfied by WARP/lavapipe, which rasterise the blended
@@ -41,10 +41,6 @@ def _adapter_is_hardware() -> bool:
     in-process determinism coverage, while cross-process and committed-byte
     claims are ABSENT because deterministic mode intentionally refuses them.
     """
-    try:
-        probe = f3d.device_probe(os.environ.get("WGPU_BACKEND"))
-    except Exception:  # pragma: no cover - probe failure means "cannot prove"
-        return False
     if not isinstance(probe, dict):
         return False
     if bool(probe.get("software_fallback", False)):
@@ -82,13 +78,7 @@ def _adapter_is_nvidia_vulkan(probe: object) -> bool:
     )
 
 
-def _assert_expected_adapter(actual: dict) -> None:
-    expected_path = os.environ.get("FORGE3D_EXPECTED_ADAPTER_PROBE")
-    if not expected_path:
-        return
-    envelope = json.loads(Path(expected_path).read_text(encoding="utf-8"))
-    expected = envelope.get("probe")
-    assert isinstance(expected, dict)
+def _assert_same_adapter(actual: dict, expected: dict) -> None:
     for field in (
         "backend",
         "device_type",
@@ -98,6 +88,16 @@ def _assert_expected_adapter(actual: dict) -> None:
         "software_fallback",
     ):
         assert str(actual.get(field, "")).lower() == str(expected.get(field, "")).lower()
+
+
+def _assert_expected_adapter(actual: dict) -> None:
+    expected_path = os.environ.get("FORGE3D_EXPECTED_ADAPTER_PROBE")
+    if not expected_path:
+        return
+    envelope = json.loads(Path(expected_path).read_text(encoding="utf-8"))
+    expected = envelope.get("probe")
+    assert isinstance(expected, dict)
+    _assert_same_adapter(actual, expected)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,9 +133,10 @@ _REFERENCE_SESSION = (
     if _determinism_backend().strip().lower() == REFERENCE_BACKEND
     else None
 )
+DETERMINISM_ADAPTER_INFO = f3d.device_probe(_determinism_backend())
 REFERENCE_ADAPTER_INFO = f3d.device_probe("vulkan")
-_assert_expected_adapter(REFERENCE_ADAPTER_INFO)
-HARDWARE_ADAPTER = _adapter_is_hardware()
+_assert_expected_adapter(DETERMINISM_ADAPTER_INFO)
+HARDWARE_ADAPTER = _adapter_is_hardware(DETERMINISM_ADAPTER_INFO)
 REFERENCE_ADAPTER = _adapter_is_nvidia_vulkan(REFERENCE_ADAPTER_INFO)
 requires_hardware = pytest.mark.skipif(
     not HARDWARE_ADAPTER,
@@ -160,7 +161,7 @@ def _render_in_subprocess(destination: Path) -> str:
         "import forge3d as f3d;"
         "from forge3d import _forge3d as native;"
         "session=f3d.Session(window=False);"
-        "probe=f3d.device_probe('vulkan');"
+        f"probe=f3d.device_probe({_determinism_backend()!r});"
         f"Path({str(adapter_path)!r}).write_text(json.dumps(probe, sort_keys=True));"
         f"native._astro_night_golden_frame().save({str(destination)!r})"
     )
@@ -168,7 +169,8 @@ def _render_in_subprocess(destination: Path) -> str:
         [sys.executable, "-c", script], env=env, check=True, capture_output=True, text=True
     )
     subprocess_probe = json.loads(adapter_path.read_text(encoding="utf-8"))
-    assert _adapter_is_nvidia_vulkan(subprocess_probe), subprocess_probe
+    assert _adapter_is_hardware(subprocess_probe), subprocess_probe
+    _assert_same_adapter(subprocess_probe, DETERMINISM_ADAPTER_INFO)
     _assert_expected_adapter(subprocess_probe)
     artifact_dir = os.environ.get("FORGE3D_SIDERA_ARTIFACT_DIR")
     if artifact_dir:

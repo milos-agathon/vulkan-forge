@@ -76,9 +76,13 @@ impl CapabilitySet {
 
     /// Intersect wants with adapter features. Nothing is hard-required, so
     /// this never fails; every want not granted records a degradation.
-    pub fn negotiate(adapter_features: Features) -> Self {
+    pub fn negotiate(adapter_features: Features, backend: wgpu::Backend) -> Self {
         let wanted = Self::wants();
-        let granted = wanted & adapter_features;
+        let mut safe_features = adapter_features;
+        if backend == wgpu::Backend::Metal {
+            safe_features.remove(Features::TIMESTAMP_QUERY);
+        }
+        let granted = wanted & safe_features;
         for (name, feature, consequence) in WANTED {
             if !granted.contains(*feature) {
                 record_degradation("capability_absent", name, consequence);
@@ -233,8 +237,10 @@ mod tests {
 
     #[test]
     fn intersection_only_grants_adapter_features() {
-        let caps =
-            CapabilitySet::negotiate(Features::TIMESTAMP_QUERY | Features::DEPTH_CLIP_CONTROL);
+        let caps = CapabilitySet::negotiate(
+            Features::TIMESTAMP_QUERY | Features::DEPTH_CLIP_CONTROL,
+            wgpu::Backend::Vulkan,
+        );
         assert!(caps.granted.contains(Features::TIMESTAMP_QUERY));
         assert!(!caps.granted.contains(Features::TEXTURE_BINDING_ARRAY));
         assert!(!caps.granted.contains(Features::DEPTH_CLIP_CONTROL)); // never request unwanted
@@ -243,12 +249,18 @@ mod tests {
     #[test]
     fn empty_adapter_grants_nothing_and_degrades() {
         crate::core::degradation::clear_degradations();
-        let caps = CapabilitySet::negotiate(Features::empty());
+        let caps = CapabilitySet::negotiate(Features::empty(), wgpu::Backend::Vulkan);
         assert!(caps.granted.is_empty());
         let degs = crate::core::degradation::degradations_snapshot();
         assert_eq!(degs.len(), WANTED.len());
         assert!(degs.iter().all(|d| d.kind == "capability_absent"));
         crate::core::degradation::clear_degradations();
+    }
+
+    #[test]
+    fn metal_does_not_grant_timestamp_queries() {
+        let caps = CapabilitySet::negotiate(Features::TIMESTAMP_QUERY, wgpu::Backend::Metal);
+        assert!(!caps.granted.contains(Features::TIMESTAMP_QUERY));
     }
 
     /// Drive `f` inside a render-local capture. The thread-local CAPTURE dedups

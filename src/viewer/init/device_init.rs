@@ -94,7 +94,10 @@ pub async fn create_device_and_surface(
     // Request every optional capability the adapter advertises. A driver may
     // still reject that set, so retry once without optional features and
     // record the downgrade instead of failing the viewer.
-    let mut capabilities = crate::core::capabilities::CapabilitySet::negotiate(adapter.features());
+    let mut capabilities = crate::core::capabilities::CapabilitySet::negotiate(
+        adapter.features(),
+        adapter.get_info().backend,
+    );
     let requested_limits = adapter.limits();
     let (device, queue) = match adapter
         .request_device(

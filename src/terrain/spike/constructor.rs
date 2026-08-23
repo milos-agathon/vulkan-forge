@@ -43,8 +43,10 @@ impl TerrainSpike {
         }))
         .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("No suitable GPU adapter"))?;
 
-        let mut capabilities =
-            crate::core::capabilities::CapabilitySet::negotiate(adapter.features());
+        let mut capabilities = crate::core::capabilities::CapabilitySet::negotiate(
+            adapter.features(),
+            adapter.get_info().backend,
+        );
         let requested_limits = adapter.limits();
         let first_request = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {

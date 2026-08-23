@@ -331,8 +331,10 @@ pub fn try_ctx() -> RenderResult<&'static GpuContext> {
         // Negotiate the capability set against the adapter's advertised
         // features (records `capability_absent` degradations for anything the
         // adapter cannot grant). Nothing here is hard-required.
-        let mut capabilities =
-            crate::core::capabilities::CapabilitySet::negotiate(adapter.features());
+        let mut capabilities = crate::core::capabilities::CapabilitySet::negotiate(
+            adapter.features(),
+            adapter_info.backend,
+        );
 
         // Robustness: some drivers advertise features that still fail at
         // request_device time. Requesting a feature must never hard-fail the
@@ -432,7 +434,10 @@ pub fn create_device_for_test() -> Option<wgpu::Device> {
         .max_storage_buffers_per_shader_stage
         .max(desired_storage_buffers);
 
-    let capabilities = crate::core::capabilities::CapabilitySet::negotiate(adapter.features());
+    let capabilities = crate::core::capabilities::CapabilitySet::negotiate(
+        adapter.features(),
+        adapter.get_info().backend,
+    );
     let device = match pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             required_features: capabilities.granted,
@@ -480,7 +485,10 @@ pub fn create_device_and_queue_for_test() -> Option<(wgpu::Device, wgpu::Queue)>
         .max_storage_buffers_per_shader_stage
         .max(desired_storage_buffers);
 
-    let capabilities = crate::core::capabilities::CapabilitySet::negotiate(adapter.features());
+    let capabilities = crate::core::capabilities::CapabilitySet::negotiate(
+        adapter.features(),
+        adapter.get_info().backend,
+    );
     let (device, queue) = match pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             required_features: capabilities.granted,
