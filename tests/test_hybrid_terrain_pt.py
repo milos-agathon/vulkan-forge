@@ -584,8 +584,7 @@ def test_terrain_reference_bridge_uses_crate_root_pyo3_types():
         / "terrain_reference.rs"
     ).read_text(encoding="utf-8")
     assert "use super::super::super::*;" in source
-    assert source.count("pyo3::types::") == 1
-    assert "use pyo3::types::PyMapping;" in source
+    assert "pyo3::types::" not in source
 
 
 def test_sun_color_rejects_malformed_before_gpu_work():
