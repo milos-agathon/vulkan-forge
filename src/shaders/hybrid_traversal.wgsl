@@ -201,7 +201,11 @@ fn intersect_hybrid(ray: Ray) -> HybridHitResult {
 }
 
 // Performance-optimized early termination
-fn intersect_hybrid_optimized(ray: Ray, early_exit_distance: f32) -> HybridHitResult {
+fn intersect_hybrid_optimized(
+    ray: Ray,
+    early_exit_distance: f32,
+    apply_terrain_curvature: bool,
+) -> HybridHitResult {
     var best_hit: HybridHitResult;
     best_hit.hit = 0u;
     best_hit.t = ray.tmax;
@@ -221,7 +225,7 @@ fn intersect_hybrid_optimized(ray: Ray, early_exit_distance: f32) -> HybridHitRe
         && terrain_enabled()) {
         var tray = ray;
         tray.tmax = best_hit.t;
-        let terrain_hit = terrain_intersect(tray);
+        let terrain_hit = terrain_trace(tray, true, apply_terrain_curvature);
         if (terrain_hit.hit != 0u && terrain_hit.t < best_hit.t) {
             best_hit = terrain_hit;
         }
@@ -242,7 +246,15 @@ fn get_surface_properties(hit: HybridHitResult) -> vec3f {
 
 // Shadow ray testing for both SDF and mesh geometry
 fn intersect_shadow_ray(ray: Ray, max_distance: f32) -> bool {
-    let hit = intersect_hybrid_optimized(ray, 0.01);
+    let hit = intersect_hybrid_optimized(ray, 0.01, true);
+    return hit.hit != 0u && hit.t < max_distance;
+}
+
+// IBL rays are arbitrary hemisphere samples, so the Sun's azimuth-specific
+// effective curvature radius is not physically applicable to their terrain
+// occlusion test.
+fn intersect_ibl_occlusion_ray(ray: Ray, max_distance: f32) -> bool {
+    let hit = intersect_hybrid_optimized(ray, 0.01, false);
     return hit.hit != 0u && hit.t < max_distance;
 }
 

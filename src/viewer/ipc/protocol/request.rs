@@ -39,7 +39,7 @@ pub enum IpcRequest {
         #[serde(default = "default_fov")] fov_deg: f32,
         #[serde(default)] target: Option<[f64; 3]>,
     },
-    SetTerrainSun { #[serde(default = "default_sun_azimuth")] azimuth_deg: f32, #[serde(default = "default_sun_elevation")] elevation_deg: f32, #[serde(default = "default_sun_intensity")] intensity: f32 },
+    SetTerrainSun { #[serde(default = "default_sun_azimuth")] azimuth_deg: f32, #[serde(default = "default_sun_elevation")] elevation_deg: f32, #[serde(default = "default_sun_intensity")] intensity: f32, #[serde(default)] source: Option<String> },
     SetTerrain {
         #[serde(default)] phi: Option<f32>, #[serde(default)] theta: Option<f32>, #[serde(default)] radius: Option<f32>,
         #[serde(default)] fov: Option<f32>, #[serde(default)] sun_azimuth: Option<f32>, #[serde(default)] sun_elevation: Option<f32>,

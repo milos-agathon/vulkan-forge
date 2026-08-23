@@ -403,7 +403,7 @@ fn eval_sky(view_dir: vec3<f32>, params: SkyParams) -> vec3<f32> {
 // ============================================================================
 
 @group(0) @binding(0) var<uniform> sky_params: SkyParams;
-@group(0) @binding(1) var output_texture: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(1) var output_texture: texture_storage_2d<rgba16float, write>;
 
 struct CameraUniforms {
     view: mat4x4<f32>,

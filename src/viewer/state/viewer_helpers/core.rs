@@ -90,6 +90,11 @@ impl Viewer {
                 } else {
                     0.0
                 },
+                if self.astro_observation_active {
+                    "solar_time"
+                } else {
+                    "manual_angles"
+                },
             );
         }
     }

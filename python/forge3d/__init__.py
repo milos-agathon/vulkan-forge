@@ -19,7 +19,7 @@ Utilities:
     has_gpu             - Check GPU availability
 """
 
-__version__ = "1.34.0"
+__version__ = "1.35.0"
 version = __version__
 
 import numpy as np
@@ -274,6 +274,8 @@ from .terrain_params import (
 from .offline import OfflineProgress, OfflineResult, render_offline
 from .denoise_oidn import oidn_available, oidn_denoise
 from . import presets
+from . import geo
+from . import terrain
 from . import animation
 from . import gis
 from . import thematic
@@ -283,7 +285,12 @@ from . import codec
 # -----------------------------------------------------------------------------
 # Core rendering API
 # -----------------------------------------------------------------------------
-from .path_tracing import ExperimentalSyntheticOutput, PathTracer, make_camera
+from .path_tracing import (
+    ExperimentalSyntheticOutput,
+    PathTracer,
+    hybrid_render_terrain_reference,
+    make_camera,
+)
 
 # -----------------------------------------------------------------------------
 # Interactive Viewer API
@@ -723,6 +730,8 @@ __all__ = [
     "SunPosition",
     "sun_position",
     "sun_position_utc",
+    "geo",
+    "terrain",
     # AEQUITAS: PT-vs-raster adjudication
     "render_adjudication_pair",
     # PROMETHEUS: GPU terrain path-traced reference

@@ -84,10 +84,10 @@ def test_terrain_sky_storage_format_matches_rust_texture_contract() -> None:
     )[0]
     assert "format: wgpu::TextureFormat::Rgba16Float" in layout
     assert "format: wgpu::TextureFormat::Rgba16Float" in output
-    assert "texture_storage_2d<rgba8unorm, write>" in shader
-    assert "texture_storage_2d<rgba16float, write>" not in shader
+    assert "texture_storage_2d<rgba16float, write>" in shader
+    assert "texture_storage_2d<rgba8unorm, write>" not in shader
     assert "terrain_sky_shader_source(include_str!" in legacy_pipeline
-    assert "terrain_sky_shader_source(&crate::shader_sources::aether_sky())" in aether_pipeline
+    assert "terrain_sky_shader_source(&aether_source)" in aether_pipeline
     assert "declaration_count != 1" in rust
     assert "try_create_compute_pipeline_scoped" in rust
     assert "create_compute_pipeline_scoped(" not in rust.replace(

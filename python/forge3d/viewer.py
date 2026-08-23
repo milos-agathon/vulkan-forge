@@ -1111,10 +1111,37 @@ class ViewerHandle:
     
     def set_sun(self, azimuth_deg: float, elevation_deg: float) -> None:
         """Set sun direction (azimuth and elevation in degrees)."""
-        self._send_command({
+        command = {
             "cmd": "lit_sun",
             "azimuth_deg": float(azimuth_deg),
             "elevation_deg": float(elevation_deg),
+        }
+        self._send_command(command)
+        self._send_command({
+            "cmd": "set_terrain_sun",
+            "azimuth_deg": command["azimuth_deg"],
+            "elevation_deg": command["elevation_deg"],
+            "intensity": 1.0,
+            "source": "manual_angles",
+        })
+
+    def set_sun_time(self, solar_time: "Any", intensity: float = 1.0) -> None:
+        """Set the terrain sun from a :class:`forge3d.geo.SolarTime`."""
+        from .geo import _coerce_solar_time
+
+        solar_time = _coerce_solar_time(solar_time)
+        position = solar_time.position()
+        self._send_command({
+            "cmd": "lit_sun",
+            "azimuth_deg": float(position["azimuth_deg"]),
+            "elevation_deg": float(position["apparent_elevation_deg"]),
+        })
+        self._send_command({
+            "cmd": "set_terrain_sun",
+            "azimuth_deg": float(position["azimuth_deg"]),
+            "elevation_deg": float(position["apparent_elevation_deg"]),
+            "intensity": float(intensity),
+            "source": "solar_time",
         })
     
     def set_ibl(self, path: Union[str, Path], intensity: float = 1.0) -> None:

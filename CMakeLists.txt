@@ -3,7 +3,7 @@
 # Exists to mirror cargo/maturin targets for native integrators
 # RELEVANT FILES:Cargo.toml,pyproject.toml,docs/conf.py,.github/workflows/build.yml
 cmake_minimum_required(VERSION 3.20)
-project(forge3d VERSION 1.9.0 LANGUAGES CXX)
+project(forge3d VERSION 1.35.0 LANGUAGES CXX)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)

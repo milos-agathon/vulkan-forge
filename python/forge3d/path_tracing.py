@@ -899,8 +899,9 @@ def hybrid_render_terrain_reference(
     spacing: "tuple[float, float]" = (1.0, 1.0),
     exaggeration: float = 1.0,
     albedo: "tuple[float, float, float]" = (0.6, 0.6, 0.6),
-    sun_azimuth_deg: float = 315.0,
-    sun_elevation_deg: float = 45.0,
+    sun_azimuth_deg: float | None = None,
+    sun_elevation_deg: float | None = None,
+    solar_time: "object | None" = None,
     sun_intensity: float = 2.5,
     sun_color: "Sequence[float] | np.ndarray" = (1.0, 0.97, 0.92),
     env_map: "np.ndarray | None" = None,
@@ -914,6 +915,14 @@ def hybrid_render_terrain_reference(
     seed: int = 7,
     certificate: bool | str = False,
     cache: str | None = None,
+    observer_latitude_deg: float | None = None,
+    observer_longitude_deg: float | None = None,
+    earth_model: str = "ellipsoid",
+    sphere_radius_m: float = 6_371_008.8,
+    refraction_model: str = "bennett",
+    refraction_k: float = 0.13,
+    pressure_mbar: float | None = None,
+    temperature_c: float | None = None,
     atmosphere: "Mapping[str, Any] | Any | None" = None,
 ) -> dict:
     """Converged GPU path-traced reference of a real DEM under sun + IBL.
@@ -946,6 +955,11 @@ def hybrid_render_terrain_reference(
     or a mapping containing ``lut_handle``. Custom ozone, Mie, ground-albedo,
     or scattering-order transport requires a baked handle; it is never
     silently replaced with a shipped/default table.
+
+    ``earth_model`` controls terrain curvature and ``refraction_model`` its
+    effective-ray correction. ``earth_model='flat'`` requires
+    ``refraction_model='none'``. Unsupported model names or model pairs raise
+    an exception; they never fall back to flat or vacuum rendering.
     """
     _ = cache
     if _NATIVE is None or not hasattr(_NATIVE, "hybrid_render_terrain_reference"):
@@ -984,6 +998,49 @@ def hybrid_render_terrain_reference(
         raise ValueError(f"sun_color components must be finite, got {sun_color!r}")
     if any(c < 0.0 for c in sun_rgb):
         raise ValueError(f"sun_color components must be non-negative, got {sun_color!r}")
+    sun_source = "manual_angles"
+    if solar_time is not None:
+        if any(
+            value is not None
+            for value in (
+                sun_azimuth_deg,
+                sun_elevation_deg,
+                observer_latitude_deg,
+                observer_longitude_deg,
+                pressure_mbar,
+                temperature_c,
+            )
+        ):
+            raise ValueError(
+                "solar_time cannot be combined with manual sun, observer, pressure, "
+                "or temperature values"
+            )
+        from .geo import _coerce_solar_time
+
+        solar_time = _coerce_solar_time(solar_time)
+        solar = solar_time.position()
+        sun_azimuth_deg = solar["azimuth_deg"]
+        sun_elevation_deg = solar[
+            "true_elevation_deg"
+            if refraction_model == "none"
+            else "apparent_elevation_deg"
+        ]
+        observer_latitude_deg = solar_time.observer_lat
+        observer_longitude_deg = solar_time.observer_lon
+        pressure_mbar = solar_time.pressure_mbar
+        temperature_c = solar_time.temperature_c
+        sun_source = "solar_time"
+    else:
+        sun_azimuth_deg = 315.0 if sun_azimuth_deg is None else sun_azimuth_deg
+        sun_elevation_deg = 45.0 if sun_elevation_deg is None else sun_elevation_deg
+        observer_latitude_deg = (
+            0.0 if observer_latitude_deg is None else observer_latitude_deg
+        )
+        observer_longitude_deg = (
+            0.0 if observer_longitude_deg is None else observer_longitude_deg
+        )
+        pressure_mbar = 1013.25 if pressure_mbar is None else pressure_mbar
+        temperature_c = 15.0 if temperature_c is None else temperature_c
     cam = dict(camera or {})
     env = None
     if env_map is not None:
@@ -1000,7 +1057,7 @@ def hybrid_render_terrain_reference(
             raise ValueError(f"mesh_vertices must be (N, 3), got {mv.shape}")
         if mi.ndim != 2 or mi.shape[1] != 3:
             raise ValueError(f"mesh_indices must be (M, 3), got {mi.shape}")
-    return _NATIVE.hybrid_render_terrain_reference(
+    result = _NATIVE.hybrid_render_terrain_reference(
         dem,
         int(width),
         int(height),
@@ -1022,5 +1079,17 @@ def hybrid_render_terrain_reference(
         variance_threshold=float(variance_threshold),
         seed=int(seed),
         certificate=certificate,
+        observer_latitude_deg=float(observer_latitude_deg),
+        observer_longitude_deg=float(observer_longitude_deg),
+        earth_model=earth_model,
+        sphere_radius_m=float(sphere_radius_m),
+        refraction_model=refraction_model,
+        refraction_k=float(refraction_k),
+        pressure_mbar=float(pressure_mbar),
+        temperature_c=float(temperature_c),
         atmosphere=atmosphere,
     )
+    result["sun_source"] = sun_source
+    result["solar_azimuth_deg"] = float(sun_azimuth_deg)
+    result["solar_elevation_deg"] = float(sun_elevation_deg)
+    return result

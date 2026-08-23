@@ -286,6 +286,10 @@ impl HybridPathTracer {
                     binding: 7,
                     resource: dummy_reservoir_prev.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: terrain_ubo.as_entire_binding(),
+                },
             ],
         });
 

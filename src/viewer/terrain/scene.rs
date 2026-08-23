@@ -87,6 +87,7 @@ pub struct ViewerTerrainData {
     pub sun_azimuth_deg: f32,
     pub sun_elevation_deg: f32,
     pub sun_intensity: f32,
+    pub sun_source: String,
     pub ambient: f32,
     // Terrain rendering
     pub z_scale: f32,

@@ -128,6 +128,10 @@ class TestNativeModuleSymbols:
         "device_probe",
         "sun_position",
         "sun_position_utc",
+        "solar_position",
+        "terrain_viewshed",
+        "terrain_shadow_mask",
+        "terrain_shadow_tip",
         "astro_body_position",
         "astro_moon_phase",
         "astro_delta_t_seconds",
@@ -832,6 +836,8 @@ class TestPackageLevelApiContracts:
         "dd_selftest",
         "dd_harness",
         "dd_jitter_demo",
+        "geo",
+        "terrain",
     ]
 
     @pytest.mark.parametrize("attr_name", EXPECTED_PACKAGE_ATTRS)

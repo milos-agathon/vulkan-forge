@@ -72,7 +72,7 @@ pub enum ViewerCmd {
         fov_deg: f32,
         target: Option<[f64; 3]>,
     },
-    SetTerrainSun { azimuth_deg: f32, elevation_deg: f32, intensity: f32 },
+    SetTerrainSun { azimuth_deg: f32, elevation_deg: f32, intensity: f32, source: Option<String> },
     SetTerrain {
         phi: Option<f32>, theta: Option<f32>, radius: Option<f32>, fov: Option<f32>,
         sun_azimuth: Option<f32>, sun_elevation: Option<f32>, sun_intensity: Option<f32>,

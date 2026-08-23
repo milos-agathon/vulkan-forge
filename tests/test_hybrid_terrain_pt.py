@@ -470,8 +470,9 @@ def test_sun_color_signature_stubs_and_native_order():
         ("spacing", ko, (1.0, 1.0), "tuple[float, float]"),
         ("exaggeration", ko, 1.0, "float"),
         ("albedo", ko, (0.6, 0.6, 0.6), "tuple[float, float, float]"),
-        ("sun_azimuth_deg", ko, 315.0, "float"),
-        ("sun_elevation_deg", ko, 45.0, "float"),
+        ("sun_azimuth_deg", ko, None, "float | None"),
+        ("sun_elevation_deg", ko, None, "float | None"),
+        ("solar_time", ko, None, "object | None"),
         ("sun_intensity", ko, 2.5, "float"),
         ("sun_color", ko, WARM_WHITE, "Sequence[float] | np.ndarray"),
         ("env_map", ko, None, "np.ndarray | None"),
@@ -485,6 +486,14 @@ def test_sun_color_signature_stubs_and_native_order():
         ("seed", ko, 7, "int"),
         ("certificate", ko, False, "bool | str"),
         ("cache", ko, None, "str | None"),
+        ("observer_latitude_deg", ko, None, "float | None"),
+        ("observer_longitude_deg", ko, None, "float | None"),
+        ("earth_model", ko, "ellipsoid", "str"),
+        ("sphere_radius_m", ko, 6371008.8, "float"),
+        ("refraction_model", ko, "bennett", "str"),
+        ("refraction_k", ko, 0.13, "float"),
+        ("pressure_mbar", ko, None, "float | None"),
+        ("temperature_c", ko, None, "float | None"),
         ("atmosphere", ko, None, "Mapping[str, Any] | Any | None"),
     ]
     wrapper_stub = [
@@ -494,13 +503,32 @@ def test_sun_color_signature_stubs_and_native_order():
     wrapper_stub[3] = ("camera", po, "...", "dict | None")
     wrapper_stub[4] = ("spacing", ko, "...", "Tuple[float, float]")
     wrapper_stub[6] = ("albedo", ko, "...", "Tuple[float, float, float]")
-    wrapper_stub[20] = ("certificate", ko, "...", "bool | str | None")
-    wrapper_stub[-1] = (
-        "atmosphere",
-        ko,
-        "...",
-        "AtmosphereSettings | Mapping[str, object] | AtmosphereLutHandle | None",
-    )
+    path_stub = [
+        (
+            name,
+            kind,
+            default,
+            {
+                "certificate": "bool | str | PathLikeStr | None",
+                "cache": "str | PathLikeStr | None",
+                "atmosphere": "AtmosphereSettings | Mapping[str, object] | AtmosphereLutHandle | None",
+            }.get(name, ann),
+        )
+        for name, kind, default, ann in wrapper_stub
+    ]
+    init_stub = [
+        (
+            name,
+            kind,
+            default,
+            {
+                "certificate": "bool | str | PathLikeStr | None",
+                "cache": "str | PathLikeStr | None",
+                "atmosphere": "AtmosphereSettings | Mapping[str, Any] | AtmosphereLutHandle | None",
+            }.get(name, ann),
+        )
+        for name, kind, default, ann in wrapper_stub
+    ]
 
     native_runtime = [
         ("heightmap", po, required, ""),
@@ -525,42 +553,16 @@ def test_sun_color_signature_stubs_and_native_order():
         ("certificate", po, None, ""),
         ("sun_color", po, None, ""),
         ("cache", po, None, ""),
+        ("observer_latitude_deg", po, 0.0, ""),
+        ("observer_longitude_deg", po, 0.0, ""),
+        ("earth_model", po, "ellipsoid", ""),
+        ("sphere_radius_m", po, 6371008.8, ""),
+        ("refraction_model", po, "bennett", ""),
+        ("refraction_k", po, 0.13, ""),
+        ("pressure_mbar", po, 1013.25, ""),
+        ("temperature_c", po, 15.0, ""),
         ("atmosphere", po, None, ""),
     ]
-    native_stub = [
-        (name, po, required if default == required else "...", ann)
-        for name, _, default, ann in [
-            ("heightmap", po, required, "np.ndarray"),
-            ("width", po, required, "int"),
-            ("height", po, required, "int"),
-            ("cam", po, required, "Dict[str, Any]"),
-            ("spacing", po, "...", "Tuple[float, float]"),
-            ("exaggeration", po, "...", "float"),
-            ("albedo", po, "...", "Tuple[float, float, float]"),
-            ("sun_azimuth_deg", po, "...", "float"),
-            ("sun_elevation_deg", po, "...", "float"),
-            ("sun_intensity", po, "...", "float"),
-            ("env_map", po, "...", "Optional[np.ndarray]"),
-            ("env_intensity", po, "...", "float"),
-            ("mesh_vertices", po, "...", "Optional[np.ndarray]"),
-            ("mesh_indices", po, "...", "Optional[np.ndarray]"),
-            ("spp", po, "...", "int"),
-            ("max_frames", po, "...", "int"),
-            ("min_frames", po, "...", "int"),
-            ("variance_threshold", po, "...", "float"),
-            ("seed", po, "...", "int"),
-            ("certificate", po, "...", "bool | str | PathLikeStr | None"),
-            ("sun_color", po, "...", "Optional[Sequence[float] | np.ndarray]"),
-            ("cache", po, "...", "str | PathLikeStr | None"),
-            (
-                "atmosphere",
-                po,
-                "...",
-                "AtmosphereSettings | Mapping[str, Any] | AtmosphereLutHandle | None",
-            ),
-        ]
-    ]
-
     psig = inspect.signature(hybrid_render_terrain_reference)
     assert _runtime_model(psig) == wrapper_runtime
 
@@ -569,8 +571,8 @@ def test_sun_color_signature_stubs_and_native_order():
     nsig = inspect.signature(_native.hybrid_render_terrain_reference)
     assert _runtime_model(nsig) == native_runtime
 
-    assert _stub_model(_stub_function("path_tracing.pyi", "hybrid_render_terrain_reference")) == wrapper_stub
-    assert _stub_model(_stub_function("__init__.pyi", "hybrid_render_terrain_reference")) == native_stub
+    assert _stub_model(_stub_function("path_tracing.pyi", "hybrid_render_terrain_reference")) == path_stub
+    assert _stub_model(_stub_function("__init__.pyi", "hybrid_render_terrain_reference")) == init_stub
 
 
 def test_terrain_reference_bridge_uses_crate_root_pyo3_types():
@@ -582,7 +584,8 @@ def test_terrain_reference_bridge_uses_crate_root_pyo3_types():
         / "terrain_reference.rs"
     ).read_text(encoding="utf-8")
     assert "use super::super::super::*;" in source
-    assert "pyo3::types::" not in source
+    assert source.count("pyo3::types::") == 1
+    assert "use pyo3::types::PyMapping;" in source
 
 
 def test_sun_color_rejects_malformed_before_gpu_work():
@@ -854,3 +857,70 @@ def test_terrain_reference_golden(reference):
     print(f"\nTERRAIN PT golden drift: SSIM {score:.6f}, mean abs {mean_abs:.4f}")
     assert score >= 0.995, f"terrain reference drift: SSIM {score:.6f}"
     assert mean_abs <= 2.0, f"terrain reference drift: mean abs {mean_abs:.4f}"
+def test_public_wrapper_resolves_solar_time_and_reports_source(monkeypatch):
+    import forge3d.path_tracing as pt
+    from forge3d.geo import SolarTime
+
+    captured = {}
+
+    class Native:
+        @staticmethod
+        def hybrid_render_terrain_reference(*args, **kwargs):
+            captured.update(kwargs)
+            return {}
+
+    monkeypatch.setattr(pt, "_NATIVE", Native())
+    assert f3d.hybrid_render_terrain_reference is pt.hybrid_render_terrain_reference
+    when = SolarTime(
+        utc=(2003, 10, 17, 12, 30, 30),
+        observer_lat=39.742476,
+        observer_lon=-105.1786,
+        observer_elev_m=1830.14,
+        tz_offset_hours=-7.0,
+        delta_t_seconds=67.0,
+        pressure_mbar=820.0,
+        temperature_c=11.0,
+    )
+    result = f3d.hybrid_render_terrain_reference(
+        np.zeros((2, 2), dtype=np.float32),
+        2,
+        2,
+        solar_time=when,
+        min_frames=1,
+        max_frames=1,
+    )
+    expected = when.position()
+    assert captured["sun_azimuth_deg"] == pytest.approx(expected["azimuth_deg"])
+    assert captured["sun_elevation_deg"] == pytest.approx(expected["apparent_elevation_deg"])
+    assert "sun_source" not in captured
+    assert result["sun_source"] == "solar_time"
+    f3d.hybrid_render_terrain_reference(
+        np.zeros((2, 2), dtype=np.float32),
+        2,
+        2,
+        solar_time=when,
+        refraction_model="none",
+        min_frames=1,
+        max_frames=1,
+    )
+    assert captured["sun_elevation_deg"] == pytest.approx(expected["true_elevation_deg"])
+    with pytest.raises(ValueError, match="cannot be combined"):
+        pt.hybrid_render_terrain_reference(
+            np.zeros((2, 2), dtype=np.float32),
+            2,
+            2,
+            solar_time=when,
+            sun_azimuth_deg=123.0,
+            min_frames=1,
+            max_frames=1,
+        )
+    with pytest.raises(ValueError, match="cannot be combined"):
+        pt.hybrid_render_terrain_reference(
+            np.zeros((2, 2), dtype=np.float32),
+            2,
+            2,
+            solar_time=when,
+            pressure_mbar=900.0,
+            min_frames=1,
+            max_frames=1,
+        )

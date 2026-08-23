@@ -23,6 +23,7 @@ on:
           - f3dz
           - anamnesis
           - tessella
+          - helios
 
 permissions:
   contents: read
@@ -187,7 +188,8 @@ jobs:
     if: >-
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' &&
-       (inputs.scope == 'core' || inputs.scope == 'full' || inputs.scope == 'm06'))
+       (inputs.scope == 'core' || inputs.scope == 'full' || inputs.scope == 'm06' ||
+        inputs.scope == 'helios'))
     runs-on: ubuntu-latest
 
     steps:
@@ -258,6 +260,7 @@ jobs:
       terrain_goldens: ${{ steps.filter.outputs.terrain_goldens }}
       m06: ${{ steps.filter.outputs.m06 }}
       f3dz: ${{ steps.filter.outputs.f3dz }}
+      helios: ${{ steps.filter.outputs.helios }}
       anamnesis: ${{ steps.filter.outputs.anamnesis }}
       determinism_render: ${{ steps.filter.outputs.determinism_render }}
       determinism_f3dz: ${{ steps.filter.outputs.determinism_f3dz }}
@@ -473,6 +476,47 @@ jobs:
               - 'tests/test_f3dz_codec.py'
               - 'tests/data/codec_corpus/**'
               - '.github/workflows/determinism-matrix.yml'
+            helios:
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/build-wheel.yml'
+              - 'src/geo/refraction.rs'
+              - 'src/geo/solar.rs'
+              - 'src/geo/solar_coefficients.rs'
+              - 'src/geo/mod.rs'
+              - 'src/path_tracing/hybrid_compute/terrain_heightfield.rs'
+              - 'src/path_tracing/hybrid_compute/render_terrain.rs'
+              - 'src/py_functions/geodesy.rs'
+              - 'src/py_functions/path_tracing/terrain_reference.rs'
+              - 'src/py_module/functions/geodesy.rs'
+              - 'src/shaders/hybrid_terrain_traversal.wgsl'
+              - 'src/shaders/terrain_viewshed.wgsl'
+              - 'src/terrain/analysis/viewshed.rs'
+              - 'src/viewer/cmd/terrain_command.rs'
+              - 'src/viewer/ipc/protocol/translate/terrain.rs'
+              - 'src/viewer/state/viewer_helpers/core.rs'
+              - 'src/viewer/terrain/scene.rs'
+              - 'src/viewer/terrain/scene/terrain_load.rs'
+              - 'python/forge3d/geo.py'
+              - 'python/forge3d/geo.pyi'
+              - 'python/forge3d/path_tracing.py'
+              - 'python/forge3d/path_tracing.pyi'
+              - 'python/forge3d/terrain.py'
+              - 'python/forge3d/terrain.pyi'
+              - 'python/forge3d/viewer.py'
+              - 'python/forge3d/viewer.pyi'
+              - 'scripts/ci_pytest_lane.py'
+              - 'scripts/helios_evidence_report.py'
+              - 'scripts/terrain_ci_probe.py'
+              - 'scripts/assert_junit_zero_skips.py'
+              - 'scripts/install_compatible_wheel.py'
+              - 'tests/test_api_contracts.py'
+              - 'tests/test_solar_spa.py'
+              - 'tests/test_viewshed_curvature.py'
+              - 'tests/test_shadow_tip.py'
+              - 'tests/data/spa_reference.csv'
+              - 'tests/data/spa_reference.PROVENANCE.md'
+              - 'tests/golden/helios/**'
+              - 'tests/golden/viewshed/**'
             determinism_anamnesis:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -2158,6 +2202,175 @@ jobs:
           retention-days: 90
 
   # ============================================================================
+  # HELIOS conservative-descent proof
+  # ============================================================================
+  test-helios-rust-conservative:
+    name: HELIOS Conservative Descent (Rust)
+    needs: terrain-golden-paths
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.scope == 'helios' || inputs.scope == 'full')) ||
+      (github.event_name == 'schedule' && needs.terrain-golden-paths.outputs.helios == 'true')
+    runs-on: ubuntu-latest
+    outputs:
+      gate: ${{ steps.helios-rust-pass.outputs.gate || 'unknown' }}
+    env:
+      FORGE3D_HELIOS_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Bind Rust proof to exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/forge3d-helios-rust-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$artifact_dir"
+          echo "FORGE3D_HELIOS_RUST_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$FORGE3D_HELIOS_CANDIDATE_SHA"
+          printf '%s\n' "$actual" > "$artifact_dir/rust-checked-out-head.txt"
+      - name: Run the exact conservative-descent proof
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --release --lib \
+            path_tracing::hybrid_compute::terrain_heightfield::tests::curvature_descent_is_conservative \
+            -- --exact --nocapture 2>&1 | tee "$FORGE3D_HELIOS_RUST_ARTIFACT_DIR/rust-conservative-descent.log"
+      - name: Record conservative-descent PASS
+        id: helios-rust-pass
+        shell: bash
+        run: echo "gate=pass" >> "$GITHUB_OUTPUT"
+      - name: Upload HELIOS Rust proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: helios-rust-conservative-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/forge3d-helios-rust-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 90
+
+  # ============================================================================
+  # HELIOS physical-GPU acceptance
+  # ============================================================================
+  test-helios-gpu:
+    name: HELIOS (NVIDIA DX12 + Vulkan)
+    needs: [build-wheel-windows, prepare-lfs-fixtures, terrain-golden-paths, test-helios-rust-conservative]
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.scope == 'helios' || inputs.scope == 'full')) ||
+      (github.event_name == 'schedule' && needs.terrain-golden-paths.outputs.helios == 'true')
+    runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
+    timeout-minutes: 20
+    outputs:
+      lane: ${{ steps.helios-pass.outputs.lane || 'unknown' }}
+      verifier: ${{ steps.helios-pass.outputs.verifier || 'unknown' }}
+    env:
+      FORGE3D_NO_BOOTSTRAP: '1'
+      FORGE3D_RUN_TERRAIN_GOLDENS: '1'
+      FORGE3D_TEST_INSTALLED_WHEEL: '1'
+      FORGE3D_HELIOS_REQUIRE_PHYSICAL_GPU: '1'
+      FORGE3D_HELIOS_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      WGPU_BACKEND: vulkan
+      WGPU_BACKENDS: vulkan
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Initialize exact-candidate HELIOS evidence
+        shell: pwsh
+        run: |
+          $artifactDir = Join-Path $env:RUNNER_TEMP "forge3d-helios-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          "FORGE3D_HELIOS_ARTIFACT_DIR=$artifactDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+          $actual = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $env:FORGE3D_HELIOS_CANDIDATE_SHA) {
+            throw "HELIOS checkout mismatch: expected=$env:FORGE3D_HELIOS_CANDIDATE_SHA actual=$actual"
+          }
+          $dirty = (git status --porcelain --untracked-files=no | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $dirty) { throw "HELIOS tracked worktree is dirty: $dirty" }
+          $actual | Set-Content "$artifactDir/checked-out-head.txt"
+          @{
+            repository = $env:GITHUB_REPOSITORY
+            head_sha = $env:FORGE3D_HELIOS_CANDIDATE_SHA
+            checked_out_head = $actual
+            runner_name = $env:RUNNER_NAME
+            runner_os = $env:RUNNER_OS
+            runner_arch = $env:RUNNER_ARCH
+            required_backend = 'vulkan'
+            required_labels = @('self-hosted', 'Windows', 'X64', 'forge3d-gpu', 'gpu-nvidia')
+          } | ConvertTo-Json -Depth 4 | Set-Content "$artifactDir/run-context.json"
+      - name: Download conservative-descent proof
+        uses: actions/download-artifact@v4
+        with:
+          name: helios-rust-conservative-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/forge3d-helios-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: lfs-fixture-bundles
+          path: lfs-fixture-bundles
+      - name: Restore HELIOS real-DEM fixture
+        shell: pwsh
+        run: python -m zipfile -e lfs-fixture-bundles/python-tiffs.zip .
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-windows
+          path: dist/
+      - name: Install exact-head wheel and acceptance dependencies
+        shell: pwsh
+        run: |
+          python scripts/install_compatible_wheel.py dist *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/wheel-install.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install pytest numpy rasterio pyproj *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/dependency-install.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import hashlib, json, pathlib, forge3d._forge3d as native; p=pathlib.Path(native.__file__).resolve(); print(json.dumps({'native_extension': str(p), 'native_sha256': hashlib.sha256(p.read_bytes()).hexdigest()}, indent=2))" | Set-Content "$env:FORGE3D_HELIOS_ARTIFACT_DIR/installed-wheel-runtime.json"
+      - name: Require physical NVIDIA Vulkan
+        shell: pwsh
+        run: |
+          python scripts/terrain_ci_probe.py --mode terrain --require-nvidia-vulkan --json "$env:FORGE3D_HELIOS_ARTIFACT_DIR/adapter-probe.json" *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/adapter-probe.log"
+          exit $LASTEXITCODE
+      - name: Dispatch exact production terrain_trace proof on physical GPU
+        shell: pwsh
+        run: |
+          cargo test --release --lib path_tracing::hybrid_compute::terrain_heightfield::tests::curvature_descent_production_gpu_is_conservative -- --exact --nocapture *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/production-gpu-conservative-descent.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run all HELIOS wins with zero skips
+        shell: pwsh
+        run: |
+          $junit = Join-Path $env:FORGE3D_HELIOS_ARTIFACT_DIR "pytest-junit.xml"
+          python -m pytest tests/test_solar_spa.py tests/test_viewshed_curvature.py tests/test_shadow_tip.py -v --tb=short --capture=tee-sys --junitxml="$junit" *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/pytest.log"
+          $pytestCode = $LASTEXITCODE
+          python scripts/assert_junit_zero_skips.py "$junit" *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/junit-verifier.log"
+          $verifyCode = $LASTEXITCODE
+          if ($pytestCode -ne 0) { exit $pytestCode }
+          exit $verifyCode
+      - name: Verify and consolidate HELIOS evidence
+        shell: pwsh
+        run: |
+          python scripts/helios_evidence_report.py --artifact-dir "$env:FORGE3D_HELIOS_ARTIFACT_DIR" --candidate-sha "$env:FORGE3D_HELIOS_CANDIDATE_SHA" *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/evidence-verifier.log"
+          exit $LASTEXITCODE
+      - name: Record physical lane RAN and verifier PASS
+        id: helios-pass
+        shell: pwsh
+        run: |
+          $lane = Get-Content (Join-Path $env:FORGE3D_HELIOS_ARTIFACT_DIR "lane-ran.json") -Raw | ConvertFrom-Json
+          $verification = Get-Content (Join-Path $env:FORGE3D_HELIOS_ARTIFACT_DIR "verification.json") -Raw | ConvertFrom-Json
+          if ($lane.status -ne "RAN" -or $verification.status -ne "PASS") { throw "HELIOS evidence did not record RAN/PASS" }
+          "lane=ran" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "verifier=pass" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Upload SHA-, adapter-, and metric-bound HELIOS evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: helios-physical-gpu-evidence
+          path: ${{ runner.temp }}/forge3d-helios-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 90
+
+  # ============================================================================
   # Hosted determinism families. These consume the exact platform wheels above
   # and run only for nightly acceptance or an explicit manual scope. ABSENT
   # hosted GPU evidence never substitutes for the physical NVIDIA acceptance
@@ -2236,7 +2449,7 @@ jobs:
   # selected high-cost hosted and physical claims without delaying every merge.
   full-acceptance-summary:
     name: Full Acceptance Summary
-    needs: [pr-core-success, terrain-golden-paths, test-rust, test-python-full-linux, test-python-full-windows, test-python-full-macos, test-python-slow, test-terminus-fuzz, test-python-linux-arm, test-golden-images-nvidia, test-substratia-gpu-nvidia, build-docs, determinism-render, determinism-f3dz, determinism-anamnesis, test-m06-full-geospatial-viewer, test-f3dz-gpu, test-anamnesis-portability-seed, test-anamnesis-portability, test-anamnesis-production, test-tessella-gpu]
+    needs: [pr-core-success, terrain-golden-paths, test-rust, test-python-full-linux, test-python-full-windows, test-python-full-macos, test-python-slow, test-terminus-fuzz, test-python-linux-arm, test-golden-images-nvidia, test-substratia-gpu-nvidia, build-docs, determinism-render, determinism-f3dz, determinism-anamnesis, test-m06-full-geospatial-viewer, test-f3dz-gpu, test-anamnesis-portability-seed, test-anamnesis-portability, test-anamnesis-production, test-tessella-gpu, test-helios-rust-conservative, test-helios-gpu]
     runs-on: ubuntu-latest
     if: >-
       always() &&
@@ -2268,6 +2481,7 @@ jobs:
           f3dz_physical_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'f3dz')) }}"
           anamnesis_physical_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'anamnesis')) }}"
           tessella_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'tessella')) }}"
+          helios_selected="${{ (github.event_name == 'schedule' && needs.terrain-golden-paths.outputs.helios == 'true') || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'helios')) }}"
           render_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'determinism')) }}"
           f3dz_hosted_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'determinism' || inputs.scope == 'f3dz')) }}"
           anamnesis_hosted_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'determinism' || inputs.scope == 'anamnesis')) }}"
@@ -2314,4 +2528,20 @@ jobs:
           check_selected "$anamnesis_physical_selected" '${{ needs.test-anamnesis-portability.result }}' anamnesis-portability
           check_selected "$anamnesis_physical_selected" '${{ needs.test-anamnesis-production.result }}' anamnesis-production
           check_selected "$tessella_selected" '${{ needs.test-tessella-gpu.result }}' tessella-physical
+          check_selected "$helios_selected" '${{ needs.test-helios-rust-conservative.result }}' helios-rust-conservative
+          check_selected "$helios_selected" '${{ needs.test-helios-gpu.result }}' helios-physical
+          if [ "$helios_selected" = "true" ]; then
+            if [ '${{ needs.test-helios-rust-conservative.outputs.gate }}' != 'pass' ]; then
+              echo "::error::HELIOS conservative-descent proof did not record PASS"
+              failed=1
+            fi
+            if [ '${{ needs.test-helios-gpu.outputs.lane }}' != 'ran' ]; then
+              echo "::error::HELIOS physical lane did not record RAN"
+              failed=1
+            fi
+            if [ '${{ needs.test-helios-gpu.outputs.verifier }}' != 'pass' ]; then
+              echo "::error::HELIOS evidence verifier did not record PASS"
+              failed=1
+            fi
+          fi
           exit "$failed"

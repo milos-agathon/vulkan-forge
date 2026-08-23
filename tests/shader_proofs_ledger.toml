@@ -685,6 +685,12 @@ owner = "render-quality"
 expiry = "2027-01-17"
 
 [[unproven]]
+path = "src/shaders/terrain_viewshed.wgsl"
+reason = "terrain_viewshed.wgsl: storage-buffer dimensions and line-of-sight loop relations are not yet modeled"
+owner = "render-quality"
+expiry = "2027-01-17"
+
+[[unproven]]
 path = "src/shaders/terrain.wgsl"
 reason = "terrain.wgsl: texture/resource dimension and sampling relations are not yet modeled"
 owner = "render-quality"

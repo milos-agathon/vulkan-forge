@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "forge3d"
-version = "1.34.0"
+version = "1.35.0"
 description = "forge3d: Rust/WebGPU offline 3D maps with Rust-first GIS vector, rasterization, mask, thematic, CRS, affine, windowing, and reprojection support"
 requires-python = ">=3.10"
 dependencies = [

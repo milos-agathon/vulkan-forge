@@ -2,6 +2,16 @@ use super::*;
 
 #[cfg(feature = "extension-module")]
 pub(crate) fn register_geodesy_py_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(crate::py_functions::solar_position, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::py_functions::terrain_viewshed, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::py_functions::terrain_shadow_mask,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::py_functions::terrain_shadow_tip,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(crate::py_functions::body_info, m)?)?;
     m.add_function(wrap_pyfunction!(crate::py_functions::areoid_undulation, m)?)?;
     m.add_function(wrap_pyfunction!(crate::py_functions::geoid_undulation, m)?)?;

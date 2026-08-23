@@ -8,6 +8,8 @@ from typing import Tuple, Optional, Sequence, Any, Dict, List, Literal, Mapping,
 import os
 import numpy as np
 from . import gis
+from . import geo as geo
+from . import terrain as terrain
 from . import codec as codec
 from . import text as text
 from . import precision as precision
@@ -1512,29 +1514,41 @@ def render_adjudication_pair(
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Dict[str, float]]]: ...
 
 # PROMETHEUS: converged GPU path-traced terrain reference (sun + IBL)
+# ``earth_model="flat"`` requires ``refraction_model="none"``; unsupported
+# model names or pairs raise an exception and never silently fall back.
 def hybrid_render_terrain_reference(
     heightmap: np.ndarray,
     width: int,
     height: int,
-    cam: Dict[str, Any],
+    camera: dict | None = ...,
+    *,
     spacing: Tuple[float, float] = ...,
     exaggeration: float = ...,
     albedo: Tuple[float, float, float] = ...,
-    sun_azimuth_deg: float = ...,
-    sun_elevation_deg: float = ...,
+    sun_azimuth_deg: float | None = ...,
+    sun_elevation_deg: float | None = ...,
+    solar_time: object | None = ...,
     sun_intensity: float = ...,
-    env_map: Optional[np.ndarray] = ...,
+    sun_color: Sequence[float] | np.ndarray = ...,
+    env_map: np.ndarray | None = ...,
     env_intensity: float = ...,
-    mesh_vertices: Optional[np.ndarray] = ...,
-    mesh_indices: Optional[np.ndarray] = ...,
+    mesh_vertices: np.ndarray | None = ...,
+    mesh_indices: np.ndarray | None = ...,
     spp: int = ...,
     max_frames: int = ...,
     min_frames: int = ...,
     variance_threshold: float = ...,
     seed: int = ...,
     certificate: bool | str | PathLikeStr | None = ...,
-    sun_color: Optional[Sequence[float] | np.ndarray] = ...,
     cache: str | PathLikeStr | None = ...,
+    observer_latitude_deg: float | None = ...,
+    observer_longitude_deg: float | None = ...,
+    earth_model: str = ...,
+    sphere_radius_m: float = ...,
+    refraction_model: str = ...,
+    refraction_k: float = ...,
+    pressure_mbar: float | None = ...,
+    temperature_c: float | None = ...,
     atmosphere: AtmosphereSettings | Mapping[str, Any] | AtmosphereLutHandle | None = ...,
 ) -> Dict[str, Any]: ...
 

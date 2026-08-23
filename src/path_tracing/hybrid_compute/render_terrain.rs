@@ -34,6 +34,7 @@ fn record_runtime_contract(
     hybrid: &HybridUniforms,
     lighting: &LightingUniforms,
     terrain: &super::terrain_heightfield::TerrainPtUniforms,
+    earth_curvature: &super::terrain_heightfield::EarthCurvatureUniforms,
     frames: u32,
     reservoirs: &[Reservoir],
     accum: &[f32],
@@ -128,6 +129,24 @@ fn record_runtime_contract(
             &terrain.extra.map(|value| value as f32),
             0.0,
             32.0,
+        );
+        check(
+            "earth_curvature.inv_two_r_prime",
+            &[earth_curvature.inv_two_r_prime],
+            0.0,
+            1e-6,
+        );
+        check(
+            "earth_curvature.ray_origin_geodetic",
+            &earth_curvature.ray_origin_geodetic,
+            -180.0,
+            180.0,
+        );
+        check(
+            "earth_curvature.enabled",
+            &[earth_curvature.enabled as f32],
+            0.0,
+            1.0,
         );
         check("terrain_height_tex.samples", &desc.heights, 0.0, 0.0);
         check("accum_hdr.samples", accum, 0.0, 131_026.0);
@@ -233,6 +252,9 @@ pub struct TerrainReferenceDesc {
     pub sun_elevation_deg: f32,
     pub sun_intensity: f32,
     pub sun_color: [f32; 3],
+    pub observer_geodetic_deg: [f64; 2],
+    pub earth_model: crate::geo::refraction::EarthModel,
+    pub refraction_model: crate::geo::refraction::RefractionModel,
     /// Optional equirect environment map (RGB f32 rows) + dims; None uses the
     /// constant-white fallback scaled by `env_intensity`.
     pub env_map: Option<(Vec<f32>, u32, u32)>,
@@ -703,6 +725,21 @@ impl HybridPathTracer {
             },
         )?;
         tracked.buffer(&terrain_ubo);
+        let earth_curvature = super::terrain_heightfield::EarthCurvatureUniforms::new(
+            desc.earth_model,
+            desc.refraction_model,
+            desc.observer_geodetic_deg,
+            f64::from(desc.sun_azimuth_deg),
+        )?;
+        let earth_curvature_ubo = tracked_create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("hybrid-pt-earth-curvature-ubo"),
+                contents: bytemuck::bytes_of(&earth_curvature),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        )?;
+        tracked.buffer(&earth_curvature_ubo);
 
         // --- Scene buffers (the spheres slot needs 1 dummy element) ---
         let scene_buf = tracked_create_buffer(
@@ -937,6 +974,10 @@ impl HybridPathTracer {
                     binding: 7,
                     resource: reservoir_prev.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: earth_curvature_ubo.as_entire_binding(),
+                },
             ],
         });
         let mut bg3_entries = vec![wgpu::BindGroupEntry {
@@ -977,6 +1018,10 @@ impl HybridPathTracer {
                 wgpu::BindGroupEntry {
                     binding: 9,
                     resource: gbuffer_pos.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: earth_curvature_ubo.as_entire_binding(),
                 },
             ],
         });
@@ -1303,6 +1348,7 @@ impl HybridPathTracer {
             &hybrid_uniforms,
             &lighting,
             &terrain_uniforms,
+            &earth_curvature,
             frames,
             reservoirs,
             accum,

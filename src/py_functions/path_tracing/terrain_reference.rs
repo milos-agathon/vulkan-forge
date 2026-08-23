@@ -237,6 +237,14 @@ fn extract_atmosphere_lut_handle(
     certificate = None,
     sun_color = None,
     cache = None,
+    observer_latitude_deg = 0.0,
+    observer_longitude_deg = 0.0,
+    earth_model = "ellipsoid",
+    sphere_radius_m = 6371008.8,
+    refraction_model = "bennett",
+    refraction_k = 0.13,
+    pressure_mbar = 1013.25,
+    temperature_c = 15.0,
     atmosphere = None,
 ))]
 pub(crate) fn hybrid_render_terrain_reference(
@@ -263,6 +271,14 @@ pub(crate) fn hybrid_render_terrain_reference(
     certificate: Option<Bound<'_, PyAny>>,
     sun_color: Option<Bound<'_, PyAny>>,
     cache: Option<Bound<'_, PyAny>>,
+    observer_latitude_deg: f64,
+    observer_longitude_deg: f64,
+    earth_model: &str,
+    sphere_radius_m: f64,
+    refraction_model: &str,
+    refraction_k: f64,
+    pressure_mbar: f64,
+    temperature_c: f64,
     atmosphere: Option<Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let _ = cache;
@@ -273,6 +289,19 @@ pub(crate) fn hybrid_render_terrain_reference(
         None => [1.0, 0.97, 0.92],
         Some(obj) => extract_sun_color(obj)?,
     };
+    let earth_model = crate::geo::refraction::EarthModel::from_name(
+        earth_model,
+        observer_latitude_deg,
+        sphere_radius_m,
+    )
+    .map_err(PyValueError::new_err)?;
+    let refraction_model = crate::geo::refraction::RefractionModel::from_name(
+        refraction_model,
+        pressure_mbar,
+        temperature_c,
+        refraction_k,
+    )
+    .map_err(PyValueError::new_err)?;
     let atmosphere = extract_atmosphere_lut_handle(atmosphere.as_ref())?;
 
     let certificate_capture =
@@ -361,6 +390,9 @@ pub(crate) fn hybrid_render_terrain_reference(
         sun_elevation_deg,
         sun_intensity,
         sun_color,
+        observer_geodetic_deg: [observer_latitude_deg, observer_longitude_deg],
+        earth_model,
+        refraction_model,
         env_map: env,
         env_intensity,
         atmosphere,
@@ -405,6 +437,11 @@ pub(crate) fn hybrid_render_terrain_reference(
     d.set_item("peak_host_visible_bytes", out.peak_host_visible_bytes)?;
     d.set_item("minmax_pyramid_bytes", out.minmax_pyramid_bytes)?;
     d.set_item("gpu_resource_bytes", out.gpu_resource_bytes)?;
+    // This low-level native seam only accepts resolved angles. The public
+    // Python SolarTime wrapper replaces this diagnostic after resolution.
+    d.set_item("sun_source", "manual_angles")?;
+    d.set_item("solar_azimuth_deg", sun_azimuth_deg)?;
+    d.set_item("solar_elevation_deg", sun_elevation_deg)?;
     // The hybrid_pt.* passes (live gpu_ms when timestamps are granted) are
     // recorded inside HybridPathTracer::render_terrain_reference.
     certificate_capture.finish();

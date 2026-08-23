@@ -1,6 +1,6 @@
 [package]
 name = "forge3d"
-version = "1.34.0"
+version = "1.35.0"
 edition = "2021"
 autoexamples = false
 description = "GPU-accelerated offline 3D map rendering with Rust-first GIS vector, rasterization, mask, thematic, CRS, affine, windowing, and reprojection support"

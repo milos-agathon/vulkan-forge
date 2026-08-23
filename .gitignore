@@ -287,6 +287,11 @@ __pycache__/
 !tests/golden/
 !tests/golden/terrain/
 !tests/golden/terrain/*.png
+!tests/golden/helios/
+!tests/golden/helios/*.png
+!tests/golden/viewshed/
+!tests/golden/viewshed/*.png
+!tests/golden/viewshed/PROVENANCE.md
 !tests/golden/recipes/
 !tests/golden/recipes/*.png
 !tests/golden/presets/
@@ -407,6 +412,7 @@ scripts/*
 !scripts/tessella_evidence_provenance.py
 !scripts/tessella_evidence_thresholds.py
 !scripts/substratia_evidence_report.py
+!scripts/helios_evidence_report.py
 !scripts/run_nvidia_visual_acceptance.py
 !scripts/run_nvidia_determinism_acceptance.py
 
