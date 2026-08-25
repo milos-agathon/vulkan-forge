@@ -285,6 +285,10 @@ pub(crate) fn decode_family_mip_feedback(
     (mip_level < max_mip_levels).then_some((family_slot, material_index, mip_level))
 }
 
+pub(crate) const fn capture_resident_feedback_flag(aov_enabled: bool, source_id: bool) -> u32 {
+    (aov_enabled && source_id) as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +303,14 @@ mod tests {
             y,
             mip_level: 0,
         }
+    }
+
+    #[test]
+    fn resident_feedback_capture_is_source_id_only() {
+        assert_eq!(capture_resident_feedback_flag(false, false), 0);
+        assert_eq!(capture_resident_feedback_flag(false, true), 0);
+        assert_eq!(capture_resident_feedback_flag(true, false), 0);
+        assert_eq!(capture_resident_feedback_flag(true, true), 1);
     }
 
     #[test]

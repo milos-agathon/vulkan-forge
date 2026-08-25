@@ -21,7 +21,7 @@ LABELS = (
     ("summit", "Mount Fuji", 48.0, 24.0, 0.34),
     ("yoshida", "Yoshida Trail", 30.0, 42.0, 0.12),
     ("subashiri", "Subashiri", 66.0, 38.0, 0.10),
-    ("kawaguchi", "Lake Kawaguchi", 22.0, 18.0, 0.04),
+    ("kawaguchi", "Lake Kawaguchi", 70.0, 65.0, 0.04),
 )
 
 

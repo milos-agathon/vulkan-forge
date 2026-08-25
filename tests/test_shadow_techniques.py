@@ -13,7 +13,12 @@ import pytest
 
 from _terrain_runtime import HARDWARE_DEVICE_TYPES, SOFTWARE_ADAPTER_TOKENS
 from forge3d.terrain_params import ShadowSettings
-from forge3d.config import ShadowParams, _SHADOW_TECHNIQUES, validate_shadow_technique, load_renderer_config
+from forge3d.config import (
+    ShadowParams,
+    _SHADOW_TECHNIQUES,
+    load_renderer_config,
+    validate_shadow_technique,
+)
 
 
 def test_shadow_depth_height_curve_uses_receiver_primitives():
@@ -159,7 +164,9 @@ class TestShadowTechniqueValidation:
 class TestShadowConfigValidation:
     """Test shadow technique validation in config.py ShadowParams."""
 
-    @pytest.mark.parametrize("technique", ["hard", "pcf", "pcss", "vsm", "evsm", "msm"])
+    @pytest.mark.parametrize(
+        "technique", ["hard", "pcf", "pcss", "vsm", "evsm", "msm"]
+    )
     def test_shadow_params_from_mapping_supported(self, technique: str):
         """P0.2/M3: ShadowParams.from_mapping should accept all techniques including VSM/EVSM/MSM."""
         params = ShadowParams.from_mapping({"technique": technique})
@@ -387,7 +394,9 @@ class TestShadowMemoryBudget:
         assert settings._estimate_memory_bytes() == 4 * 1024 * 1024
 
 
-def _create_step_dem(width: int = 256, height: int = 256, cliff_height: float = 100.0) -> np.ndarray:
+def _create_step_dem(
+    width: int = 256, height: int = 256, cliff_height: float = 100.0
+) -> np.ndarray:
     """Create a synthetic step-DEM with a sharp cliff for shadow testing.
     
     Left half is low (0), right half is high (cliff_height).
@@ -457,7 +466,9 @@ class TestShadowTechniqueDifferentiation:
         _save_geotiff(dem, dem_path)
         return dem_path
     
-    def _render_with_technique(self, dem_path: Path, technique: str, output_path: Path) -> bytes:
+    def _render_with_technique(
+        self, dem_path: Path, hdr_path: Path, technique: str, output_path: Path
+    ) -> bytes:
         """Render the DEM with the specified shadow technique and return the image bytes."""
         import subprocess
         import sys
@@ -474,7 +485,7 @@ class TestShadowTechniqueDifferentiation:
             "--sun-elevation", "10",
             "--sun-azimuth", "45",
             "--ibl-intensity", "0",
-            "--hdr", "assets/hdri/snow_field_4k.hdr",
+            "--hdr", str(hdr_path),
             "--output", str(output_path),
             "--overwrite",
             "--camera-mode", "mesh",
@@ -484,71 +495,64 @@ class TestShadowTechniqueDifferentiation:
             raise RuntimeError(f"Render failed: {result.stderr}")
         return output_path.read_bytes()
     
-    @pytest.mark.xfail(reason="HARD vs PCF differences are subtle in this test scene")
-    @pytest.mark.skipif(
-        not Path("assets/hdri/snow_field_4k.hdr").exists(),
-        reason="HDR asset not available"
-    )
     def test_hard_vs_pcf_differ(self, step_dem_path: Path, tmp_path: Path):
         """HARD and PCF techniques must produce different outputs."""
         hard_path = tmp_path / "hard.png"
         pcf_path = tmp_path / "pcf.png"
         
-        hard_bytes = self._render_with_technique(step_dem_path, "hard", hard_path)
-        pcf_bytes = self._render_with_technique(step_dem_path, "pcf", pcf_path)
+        from _generated_assets import write_hdr
+
+        hdr = write_hdr(tmp_path / "test.hdr")
+        hard_bytes = self._render_with_technique(step_dem_path, hdr, "hard", hard_path)
+        pcf_bytes = self._render_with_technique(step_dem_path, hdr, "pcf", pcf_path)
         
         hard_hash = hashlib.md5(hard_bytes).hexdigest()
         pcf_hash = hashlib.md5(pcf_bytes).hexdigest()
         
         assert hard_hash != pcf_hash, f"HARD and PCF produced identical output: {hard_hash}"
     
-    @pytest.mark.skipif(
-        not Path("assets/hdri/snow_field_4k.hdr").exists(),
-        reason="HDR asset not available"
-    )
     def test_hard_vs_vsm_differ(self, step_dem_path: Path, tmp_path: Path):
         """P0.2/M3: HARD and VSM techniques must produce different outputs."""
         hard_path = tmp_path / "hard.png"
         vsm_path = tmp_path / "vsm.png"
         
-        hard_bytes = self._render_with_technique(step_dem_path, "hard", hard_path)
-        vsm_bytes = self._render_with_technique(step_dem_path, "vsm", vsm_path)
+        from _generated_assets import write_hdr
+
+        hdr = write_hdr(tmp_path / "test.hdr")
+        hard_bytes = self._render_with_technique(step_dem_path, hdr, "hard", hard_path)
+        vsm_bytes = self._render_with_technique(step_dem_path, hdr, "vsm", vsm_path)
         
         hard_hash = hashlib.md5(hard_bytes).hexdigest()
         vsm_hash = hashlib.md5(vsm_bytes).hexdigest()
         
         assert hard_hash != vsm_hash, f"HARD and VSM produced identical output: {hard_hash}"
 
-    @pytest.mark.xfail(reason="VSM vs EVSM differences are subtle - both use variance-based filtering")
-    @pytest.mark.skipif(
-        not Path("assets/hdri/snow_field_4k.hdr").exists(),
-        reason="HDR asset not available"
-    )
     def test_vsm_vs_evsm_differ(self, step_dem_path: Path, tmp_path: Path):
         """P0.2/M3: VSM and EVSM techniques must produce different outputs."""
         vsm_path = tmp_path / "vsm.png"
         evsm_path = tmp_path / "evsm.png"
         
-        vsm_bytes = self._render_with_technique(step_dem_path, "vsm", vsm_path)
-        evsm_bytes = self._render_with_technique(step_dem_path, "evsm", evsm_path)
+        from _generated_assets import write_hdr
+
+        hdr = write_hdr(tmp_path / "test.hdr")
+        vsm_bytes = self._render_with_technique(step_dem_path, hdr, "vsm", vsm_path)
+        evsm_bytes = self._render_with_technique(step_dem_path, hdr, "evsm", evsm_path)
         
         vsm_hash = hashlib.md5(vsm_bytes).hexdigest()
         evsm_hash = hashlib.md5(evsm_bytes).hexdigest()
         
         assert vsm_hash != evsm_hash, f"VSM and EVSM produced identical output: {vsm_hash}"
 
-    @pytest.mark.xfail(reason="EVSM vs MSM differences are subtle - both use moment-based filtering")
-    @pytest.mark.skipif(
-        not Path("assets/hdri/snow_field_4k.hdr").exists(),
-        reason="HDR asset not available"
-    )
     def test_evsm_vs_msm_differ(self, step_dem_path: Path, tmp_path: Path):
         """P0.2/M3: EVSM and MSM techniques must produce different outputs."""
         evsm_path = tmp_path / "evsm.png"
         msm_path = tmp_path / "msm.png"
         
-        evsm_bytes = self._render_with_technique(step_dem_path, "evsm", evsm_path)
-        msm_bytes = self._render_with_technique(step_dem_path, "msm", msm_path)
+        from _generated_assets import write_hdr
+
+        hdr = write_hdr(tmp_path / "test.hdr")
+        evsm_bytes = self._render_with_technique(step_dem_path, hdr, "evsm", evsm_path)
+        msm_bytes = self._render_with_technique(step_dem_path, hdr, "msm", msm_path)
         
         evsm_hash = hashlib.md5(evsm_bytes).hexdigest()
         msm_hash = hashlib.md5(msm_bytes).hexdigest()

@@ -521,7 +521,11 @@ def test_tessella_acceptance_is_absent_or_exactly_scoped() -> None:
         ), f"TESSELLA jobs require an explicit scoped contract: {tessella_jobs}"
         return
 
-    assert tessella_jobs == ["test-tessella-gpu", "full-acceptance-summary"]
+    assert tessella_jobs == [
+        "test-apple-metal-acceptance",
+        "test-tessella-gpu",
+        "full-acceptance-summary",
+    ]
 
     for path in tessella_markers[len(baseline_paths) :]:
         assert f"              - '{path}'" in paths

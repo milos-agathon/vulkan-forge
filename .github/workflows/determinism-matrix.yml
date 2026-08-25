@@ -2,9 +2,9 @@
 #
 # Renders the canonical terrain+CSM+IBL reference scene (forge3d.determinism)
 # on an {intel, amd, nvidia, wasm} matrix. Physical NVIDIA/Vulkan is the
-# required hardware anchor; every additional produced SHA-256 must equal it and
-# the committed tests/goldens/determinism/terra_determinata_v1.sha256. Zero-byte
-# tolerance.
+# required hardware anchor. Every produced SHA-256 must equal the committed
+# fixture selected from its physical adapter identity. Zero-byte tolerance;
+# one backend's fixture is never evidence for another.
 #
 # Gated vs informational legs (follows the repo convention of skipping visual
 # goldens on unsupported hosted GPUs, see ci.yml test-golden-images):
@@ -400,6 +400,7 @@ jobs:
             tests/test_anamnesis_hermeticity.py \
             tests/test_anamnesis_portability.py \
             tests/test_anamnesis_uniform_layout.py \
+            -m "not anamnesis_physical" \
             -v --tb=short
       - name: Render golden and populate portable store
         shell: bash
@@ -418,11 +419,6 @@ jobs:
               --out-png anamnesis-golden.png \
               | tee anamnesis-render.jsonl
             set +o pipefail
-            FORGE3D_RUN_GPU_ANAMNESIS=1 \
-            FORGE3D_ANAMNESIS_RESULT_PATH=anamnesis-gpu-result.json \
-              python -m pytest \
-                tests/test_anamnesis_incremental.py::test_real_gpu_600_frame_acceptance \
-                -v --tb=short
             python scripts/check_anamnesis_portability.py seed \
               --cache anamnesis-store --record anamnesis-record.json \
               --frame-blob anamnesis-golden.png \
@@ -435,7 +431,6 @@ jobs:
           path: |
             anamnesis-store/
             anamnesis-record.json
-            anamnesis-gpu-result.json
             anamnesis-seed-adapter.json
             ANAMNESIS.ABSENT
           if-no-files-found: error
@@ -531,7 +526,7 @@ jobs:
         with:
           pattern: determinism-hash-*
           path: hashes
-      - name: Fail on any pairwise or golden mismatch
+      - name: Fail on any backend golden mismatch
         if: inputs.run_render
         run: >-
           python scripts/check_determinism_hashes.py

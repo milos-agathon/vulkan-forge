@@ -659,7 +659,7 @@ def test_shader_carries_family_info_and_residency_gate() -> None:
         assert fullscreen_fn.index(declaration) < feedback_call_offset
 
     geometry_fn = visibility_shader.split("fn fs_visibility_geometry(", 1)[1]
-    discard_offset = geometry_fn.index("if (encoded != expected)")
+    discard_offset = geometry_fn.index("if (any(encoded != expected))")
     for declaration in (
         "let resolve_ddx_uv = dpdx(input.tex_coord);",
         "let resolve_ddy_uv = dpdy(input.tex_coord);",

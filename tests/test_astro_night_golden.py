@@ -23,6 +23,10 @@ import forge3d as f3d
 from forge3d import _forge3d as native
 from forge3d.diagnostics import render_certificate
 
+APPLE_METAL_ACCEPTANCE = os.environ.get("FORGE3D_APPLE_METAL_ACCEPTANCE") == "1"
+
+if not f3d.has_gpu() and APPLE_METAL_ACCEPTANCE:
+    raise RuntimeError("required Apple Metal SIDERA runtime has no GPU adapter")
 if not f3d.has_gpu():
     pytest.skip(
         "the SIDERA night golden is a GPU render; no adapter present",
@@ -138,8 +142,13 @@ REFERENCE_ADAPTER_INFO = f3d.device_probe("vulkan")
 _assert_expected_adapter(DETERMINISM_ADAPTER_INFO)
 HARDWARE_ADAPTER = _adapter_is_hardware(DETERMINISM_ADAPTER_INFO)
 REFERENCE_ADAPTER = _adapter_is_nvidia_vulkan(REFERENCE_ADAPTER_INFO)
+if APPLE_METAL_ACCEPTANCE and not HARDWARE_ADAPTER:
+    raise RuntimeError(
+        "required Apple Metal SIDERA adapter is unavailable or non-physical: "
+        f"{DETERMINISM_ADAPTER_INFO}"
+    )
 requires_hardware = pytest.mark.skipif(
-    not HARDWARE_ADAPTER,
+    not HARDWARE_ADAPTER and not APPLE_METAL_ACCEPTANCE,
     reason="cross-process deterministic render requires a proven physical adapter",
 )
 requires_reference_hardware = pytest.mark.skipif(
@@ -309,6 +318,7 @@ def test_night_golden_is_cross_process_repeatable_on_pinned_backend(tmp_path):
     )
 
 
+@pytest.mark.sidera_vulkan
 @requires_reference_hardware
 def test_night_golden_matches_committed_vulkan_bytes(tmp_path):
     """DoD 6: the pinned physical NVIDIA/Vulkan render equals the committed golden.
@@ -342,6 +352,7 @@ def test_night_golden_matches_committed_vulkan_bytes(tmp_path):
     assert np.array_equal(f3d.png_to_numpy(first_png), f3d.png_to_numpy(GOLDEN))
 
 
+@pytest.mark.sidera_vulkan
 @requires_reference_hardware
 def test_golden_refresh_does_not_rewrite_the_committed_file_when_disabled(
     tmp_path, monkeypatch

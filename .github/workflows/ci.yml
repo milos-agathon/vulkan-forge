@@ -835,6 +835,76 @@ jobs:
       test_mode: full
       restore_lfs: true
 
+  # Required physical Apple/Metal closure for the exact full-acceptance
+  # candidate. The checked manifest owns repeat and ordering semantics that a
+  # generic marker selector cannot express.
+  test-apple-metal-acceptance:
+    name: Apple Metal Acceptance
+    needs: [build-wheel-macos]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
+    runs-on: macos-14
+    env:
+      PYTHONNOUSERSITE: '1'
+      FORGE3D_NO_BOOTSTRAP: '1'
+      FORGE3D_TEST_INSTALLED_WHEEL: '1'
+      FORGE3D_APPLE_METAL_ACCEPTANCE: '1'
+      FORGE3D_ALLOW_HOSTED_MACOS_TERRAIN: '1'
+      FORGE3D_TESSELLA_REQUIRED_GPU: '1'
+      FORGE3D_RUN_LIVE_TEXT_GPU: '1'
+      FORGE3D_DETERMINISM_TEST_BACKEND: metal
+      FORGE3D_RECIPE_GOLDEN_VARIANT: metal
+      WGPU_BACKEND: metal
+      WGPU_BACKENDS: metal
+      FORGE3D_APPLE_METAL_ARTIFACT_DIR: ${{ runner.temp }}/forge3d-apple-metal-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Prove exact clean candidate
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-macos
+          path: dist/
+
+      - name: Install exact macOS wheel and acceptance dependencies
+        run: |
+          python scripts/install_compatible_wheel.py dist
+          python -m pip install -r tests/requirements.txt
+
+      - name: Run authoritative Apple Metal acceptance matrix
+        run: |
+          python scripts/run_apple_metal_acceptance.py \
+            --junit "$FORGE3D_APPLE_METAL_ARTIFACT_DIR/junit.xml" \
+            --evidence-dir "$FORGE3D_APPLE_METAL_ARTIFACT_DIR"
+
+      - name: Verify Apple Metal acceptance has zero skips
+        if: always()
+        run: python scripts/assert_junit_zero_skips.py "$FORGE3D_APPLE_METAL_ARTIFACT_DIR/junit.xml"
+
+      - name: Upload Apple Metal acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-metal-acceptance-evidence
+          path: ${{ env.FORGE3D_APPLE_METAL_ARTIFACT_DIR }}/
+          if-no-files-found: error
+          retention-days: 90
+
   # ============================================================================
   # Accounted slow Python tests (one hosted representative)
   # ============================================================================
@@ -873,12 +943,26 @@ jobs:
       - name: Install wheel and slow-lane dependencies
         run: |
           python scripts/install_compatible_wheel.py dist
-          pip install pytest pyyaml numpy pillow
+          python -m pip install -r tests/requirements.txt
 
       - name: Run accounted slow Python lane
         env:
           FORGE3D_NO_BOOTSTRAP: '1'
-        run: python scripts/ci_pytest_lane.py --profile full --slow-lane -v --tb=short
+        run: |
+          mkdir -p test-results
+          python scripts/ci_pytest_lane.py --profile full --slow-lane -v --tb=short --junitxml=test-results/python-slow.xml
+
+      - name: Verify slow Python lane has zero skips
+        if: always()
+        run: python scripts/assert_junit_zero_skips.py test-results/python-slow.xml
+
+      - name: Upload slow Python lane JUnit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-slow-junit
+          path: test-results/python-slow.xml
+          if-no-files-found: error
 
   # ============================================================================
   # TERMINUS deterministic CPU-only robustness fuzzer
@@ -1184,7 +1268,7 @@ jobs:
         run: |
           python scripts/install_compatible_wheel.py dist
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pip install pytest numpy pyproj pillow
+          python -m pip install -r tests/requirements.txt
           exit $LASTEXITCODE
 
       - name: Bind lane to exact clean candidate
@@ -1211,19 +1295,23 @@ jobs:
         run: |
           $junit = Join-Path $env:FORGE3D_VISUAL_ARTIFACT_DIR "visual-junit.xml"
           python scripts/run_nvidia_visual_acceptance.py --suite visual --junit "$junit"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pytestCode = $LASTEXITCODE
           python scripts/assert_junit_zero_skips.py "$junit"
-          exit $LASTEXITCODE
+          $verifyCode = $LASTEXITCODE
+          if ($pytestCode -ne 0) { exit $pytestCode }
+          exit $verifyCode
 
       - name: Run SIDERA NVIDIA Vulkan night golden
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path $env:FORGE3D_SIDERA_ARTIFACT_DIR | Out-Null
           $junit = Join-Path $env:FORGE3D_SIDERA_ARTIFACT_DIR "junit.xml"
-          python -m pytest tests/test_astro_night_golden.py -v --tb=short --junitxml="$junit"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/run_nvidia_visual_acceptance.py --suite sidera --junit "$junit"
+          $pytestCode = $LASTEXITCODE
           python scripts/assert_junit_zero_skips.py "$junit"
-          exit $LASTEXITCODE
+          $verifyCode = $LASTEXITCODE
+          if ($pytestCode -ne 0) { exit $pytestCode }
+          exit $verifyCode
 
       - name: Record visual golden lane RAN
         id: golden-pass
@@ -1595,7 +1683,8 @@ jobs:
             'tests/test_m06_full_geospatial_viewer.py',
             'tests/test_terrain_viewer_pbr.py',
             'tests/test_vector_overlay_rendering.py',
-            'tests/test_vector_coverage.py'
+            'tests/test_vector_coverage.py',
+            'tests/test_terrain_tv6_heterogeneous_volumetrics.py::test_tv6_example_renders_real_dem_and_reports_budget'
           )
           $tests -join "`n" | Set-Content "$env:FORGE3D_M06_ARTIFACT_DIR/pytest-files.txt"
           $started = Get-Date
@@ -2025,32 +2114,18 @@ jobs:
         shell: pwsh
         run: |
           python scripts/terrain_ci_probe.py --mode terrain --require-nvidia-vulkan --json "$env:RUNNER_TEMP/anamnesis-p0-adapter.json"
-      - name: Gate 600/600 bytes, exact recompute set, and 20x speedup
+      - name: Run the complete ANAMNESIS physical family with zero skips
         shell: pwsh
         env:
           FORGE3D_ANAMNESIS_RESULT_PATH: ${{ runner.temp }}/anamnesis-production-result.json
         run: |
-          python -m pytest tests/test_anamnesis_incremental.py::test_real_gpu_600_frame_acceptance -v --tb=short --basetemp="$env:FORGE3D_ANAMNESIS_BASE_TEMP"
-      - name: Reject native final-frame stale hits
-        shell: pwsh
-        run: |
-          $junit = Join-Path $env:RUNNER_TEMP "anamnesis-p0-native-junit.xml"
-          python -m pytest tests/test_anamnesis_inertness.py::test_native_terrain_cache_restores_all_graph_passes -v --tb=short --junitxml="$junit"
+          $junit = Join-Path $env:RUNNER_TEMP "anamnesis-physical-junit.xml"
+          python -m pytest tests/test_anamnesis_incremental.py tests/test_anamnesis_inertness.py tests/test_anamnesis_p1.py tests/test_anamnesis_portability.py -m anamnesis_physical -v --tb=short --basetemp="$env:FORGE3D_ANAMNESIS_BASE_TEMP" --junitxml="$junit"
           $pytestCode = $LASTEXITCODE
           python scripts/assert_junit_zero_skips.py "$junit"
           $verifyCode = $LASTEXITCODE
           if ($pytestCode -ne 0) { exit $pytestCode }
-          if ($verifyCode -ne 0) { exit $verifyCode }
-      - name: Prove per-pass GPU resource restoration
-        shell: pwsh
-        run: |
-          $junit = Join-Path $env:RUNNER_TEMP "anamnesis-p1-gpu-restore-junit.xml"
-          python -m pytest tests/test_anamnesis_p1.py::test_public_gpu_graph_cache_restores_intermediate_texture -v --tb=short --junitxml="$junit"
-          $pytestCode = $LASTEXITCODE
-          python scripts/assert_junit_zero_skips.py "$junit"
-          $verifyCode = $LASTEXITCODE
-          if ($pytestCode -ne 0) { exit $pytestCode }
-          if ($verifyCode -ne 0) { exit $verifyCode }
+          exit $verifyCode
       - name: Upload ANAMNESIS production evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -2058,8 +2133,7 @@ jobs:
           name: anamnesis-production-evidence
           path: |
             ${{ runner.temp }}/anamnesis-production-result.json
-            ${{ runner.temp }}/anamnesis-p0-native-junit.xml
-            ${{ runner.temp }}/anamnesis-p1-gpu-restore-junit.xml
+            ${{ runner.temp }}/anamnesis-physical-junit.xml
             ${{ runner.temp }}/anamnesis-p0-adapter.json
             ${{ runner.temp }}/anamnesis-checked-out-head.txt
           if-no-files-found: error
@@ -2341,7 +2415,7 @@ jobs:
         shell: pwsh
         run: |
           $junit = Join-Path $env:FORGE3D_HELIOS_ARTIFACT_DIR "pytest-junit.xml"
-          python -m pytest tests/test_solar_spa.py tests/test_viewshed_curvature.py tests/test_shadow_tip.py -v --tb=short --capture=tee-sys --junitxml="$junit" *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/pytest.log"
+          python -m pytest tests/test_solar_spa.py tests/test_viewshed_curvature.py tests/test_shadow_tip.py tests/test_determinism_hash.py::test_device_probe_reports_initialized_render_adapter -v --tb=short --capture=tee-sys --junitxml="$junit" *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/pytest.log"
           $pytestCode = $LASTEXITCODE
           python scripts/assert_junit_zero_skips.py "$junit" *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/junit-verifier.log"
           $verifyCode = $LASTEXITCODE
@@ -2449,7 +2523,7 @@ jobs:
   # selected high-cost hosted and physical claims without delaying every merge.
   full-acceptance-summary:
     name: Full Acceptance Summary
-    needs: [pr-core-success, terrain-golden-paths, test-rust, test-python-full-linux, test-python-full-windows, test-python-full-macos, test-python-slow, test-terminus-fuzz, test-python-linux-arm, test-golden-images-nvidia, test-substratia-gpu-nvidia, build-docs, determinism-render, determinism-f3dz, determinism-anamnesis, test-m06-full-geospatial-viewer, test-f3dz-gpu, test-anamnesis-portability-seed, test-anamnesis-portability, test-anamnesis-production, test-tessella-gpu, test-helios-rust-conservative, test-helios-gpu]
+    needs: [pr-core-success, terrain-golden-paths, test-rust, test-python-full-linux, test-python-full-windows, test-python-full-macos, test-apple-metal-acceptance, test-python-slow, test-terminus-fuzz, test-python-linux-arm, test-golden-images-nvidia, test-substratia-gpu-nvidia, build-docs, determinism-render, determinism-f3dz, determinism-anamnesis, test-m06-full-geospatial-viewer, test-f3dz-gpu, test-anamnesis-portability-seed, test-anamnesis-portability, test-anamnesis-production, test-tessella-gpu, test-helios-rust-conservative, test-helios-gpu]
     runs-on: ubuntu-latest
     if: >-
       always() &&
@@ -2490,6 +2564,7 @@ jobs:
           check_selected "$full_selected" '${{ needs.test-python-full-linux.result }}' python-full-linux
           check_selected "$full_selected" '${{ needs.test-python-full-windows.result }}' python-full-windows
           check_selected "$full_selected" '${{ needs.test-python-full-macos.result }}' python-full-macos
+          check_selected "$full_selected" '${{ needs.test-apple-metal-acceptance.result }}' apple-metal
           check_selected "$full_selected" '${{ needs.test-python-slow.result }}' python-slow
           check_selected "$full_selected" '${{ needs.test-terminus-fuzz.result }}' terminus-fuzz
           check_selected "$full_selected" '${{ needs.test-python-linux-arm.result }}' python-linux-arm

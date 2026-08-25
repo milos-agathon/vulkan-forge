@@ -147,6 +147,8 @@ class TestNativeModuleSymbols:
         "set_memory_budget_policy",
         "get_memory_budget_policy",
         "io_import_gltf_with_materials_py",
+        "project_3d_to_2d",
+        "project_2d_to_screen",
         "decode_b3dm_py",
         "tiles3d_traverse_py",
         "decode_pnts_py",

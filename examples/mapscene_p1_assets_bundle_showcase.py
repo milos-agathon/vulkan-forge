@@ -79,9 +79,10 @@ def build_scene(output_dir: str | Path) -> f3d.MapScene:
         target_crs="EPSG:3857",
         terrain_sampling="required",
         terrain_sampler=lambda x, y: 12.5 + float(x) * 0.01 + float(y) * 0.01,
+        occlusion="none",
         layer_id="p1_boundary_labels",
         typography=f3d.TypographySettings(
-            font_size=18,
+            font_size=14,
             tracking=0.5,
             line_height=24.0,
             multiline=True,
@@ -104,7 +105,7 @@ def build_scene(output_dir: str | Path) -> f3d.MapScene:
             "id": "p1-title-collision",
             "kind": "point",
             "text": "P1 Bundle",
-            "geometry": {"type": "Point", "coordinates": (24.0, 24.0, 0.0)},
+            "geometry": {"type": "Point", "coordinates": (60.0, 24.0, 0.0)},
             "priority_class": "asset-labels",
         },
     ]

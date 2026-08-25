@@ -506,7 +506,7 @@ class TestTerrainProbeLighting:
             overlay,
             probes=ProbeSettings(enabled=False),
             reflection_probes=None,
-            debug_mode=8,
+            debug_mode=53,
         )
         centered = _render_probe_scene(
             renderer,
@@ -523,7 +523,7 @@ class TestTerrainProbeLighting:
                 fallback_blend_distance=(0.18, 0.12),
                 ray_count=9,
             ),
-            debug_mode=8,
+            debug_mode=53,
         )
         out_of_bounds = _render_probe_scene(
             renderer,
@@ -540,7 +540,7 @@ class TestTerrainProbeLighting:
                 fallback_blend_distance=(0.18, 0.12),
                 ray_count=9,
             ),
-            debug_mode=8,
+            debug_mode=53,
         )
         assert _mean_abs_diff(baseline, centered) > 3.0
         assert _mean_abs_diff(baseline, out_of_bounds) <= 1.0

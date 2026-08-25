@@ -323,8 +323,11 @@ impl TerrainScene {
             );
         }
         let visibility_requested = params.shading == "visibility";
-        let visibility_enabled =
-            visibility_requested && geometry.is_clipmap() && render_targets.sample_count == 1;
+        // One pass-1 visibility ID owns every single-sample clipmap pixel in
+        // both shading modes. Asking two pipelines to establish coverage
+        // independently leaves backend-specific edge pixels where only one
+        // rasterization wins.
+        let visibility_enabled = geometry.is_clipmap() && render_targets.sample_count == 1;
         if visibility_requested && !visibility_enabled {
             crate::core::degradation::record_degradation(
                 "rendering_fallback",
@@ -333,13 +336,6 @@ impl TerrainScene {
             );
         }
         if visibility_enabled {
-            self.ensure_visibility_buffer(
-                render_targets.internal_width,
-                render_targets.internal_height,
-            )?;
-        } else if geometry.is_clipmap() && render_targets.sample_count == 1 {
-            // Reuse the counters readback to capture the actual forward
-            // material/feedback invocation baseline.
             self.ensure_visibility_buffer(
                 render_targets.internal_width,
                 render_targets.internal_height,
@@ -670,14 +666,7 @@ impl TerrainScene {
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &render_targets.depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
+            depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
         });

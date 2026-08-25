@@ -86,9 +86,9 @@ impl Scene {
     }
 
     /// Take the render-timing manager out of the scene, lazily constructing it
-    /// the first time when the device granted `TIMESTAMP_QUERY`. Returns `None`
-    /// when timestamps are unavailable (the certificate then reports the passes
-    /// with `gpu_ms == 0`). Returned via [`Scene::store_render_timing`].
+    /// on first use. Without `TIMESTAMP_QUERY`, the manager still preserves pass
+    /// labels and draw counts while reporting `gpu_ms == 0`. Returned via
+    /// [`Scene::store_render_timing`].
     pub(super) fn take_render_timing(&self) -> Option<crate::core::gpu_timing::GpuTimingManager> {
         let mut guard = match self.render_timing.lock() {
             Ok(guard) => guard,
@@ -110,24 +110,23 @@ impl Scene {
                 );
                 return None;
             };
-            if !g
+            let timestamps_available = g
                 .device
                 .features()
-                .contains(wgpu::Features::TIMESTAMP_QUERY)
-            {
+                .contains(wgpu::Features::TIMESTAMP_QUERY);
+            if !timestamps_available {
                 crate::core::degradation::record_degradation(
                     "capability_absent",
                     "timestamp_query",
                     "scene passes are reported with gpu_ms equal to 0",
                 );
-                return None;
             }
             // Timestamps only: this path never issues pipeline-statistics
             // queries, so enabling that query set would make `resolve_queries`
             // resolve a never-written statistics range and lose the device on
             // adapters that also advertise PIPELINE_STATISTICS_QUERY.
             let config = crate::core::gpu_timing::GpuTimingConfig {
-                enable_timestamps: true,
+                enable_timestamps: timestamps_available,
                 enable_pipeline_stats: false,
                 enable_debug_markers: false,
                 label_prefix: "forge3d".to_string(),

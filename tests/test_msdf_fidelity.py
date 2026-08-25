@@ -397,6 +397,10 @@ def test_live_gpu_shader_readback_matches_independent_quad_oracle():
     try:
         scene = forge3d.Scene(canvas_width, canvas_height)
     except Exception as error:
+        if os.environ.get("FORGE3D_APPLE_METAL_ACCEPTANCE") == "1":
+            raise RuntimeError(
+                "required Apple Metal live text runtime is unavailable"
+            ) from error
         pytest.skip(f"live GPU text readback unavailable: {error}")
     scene.disable_terrain()
     background = np.zeros((canvas_height, canvas_width, 4), dtype=np.uint8)

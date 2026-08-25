@@ -1000,15 +1000,15 @@ impl TerrainRenderer {
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 
-    /// VERITAS: resident-tile provenance for unresolved shader demand in the
-    /// last rendered frame.
+    /// VERITAS: resident-tile provenance for shader feedback in the last
+    /// rendered frame.
     ///
     /// Blocking drain of the VT feedback stream, resolved on the CPU to the
     /// resident mip each sampled texel actually landed on. Returns one dict
     /// per deduplicated tile: `{family, family_slot, source_id, tile_x,
     /// tile_y, mip_level, content_hash}` (hash hex-encoded). Empty when the
-    /// terrain VT/feedback path is inactive or the latest frame had no
-    /// unresolved desired pages.
+    /// terrain VT/feedback path is inactive or the latest frame emitted no
+    /// records.
     #[pyo3(text_signature = "(self)")]
     fn read_contributing_tiles(&self, py: Python<'_>) -> PyResult<PyObject> {
         use crate::core::provenance::{to_hex, FAMILY_NAMES};

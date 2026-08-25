@@ -18,6 +18,15 @@ ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests"
 UNRUN_TOML = TESTS / "UNRUN.toml"
 SLOW_LANE_SELECTOR = "--slow-lane"
+DEDICATED_LANE_MARKERS = (
+    "recipe_golden",
+    "anamnesis_physical",
+    "sidera_vulkan",
+    "cross_backend",
+    "nvidia_vulkan",
+    "limes_physical",
+    "helios_physical",
+)
 
 # tests/_toml_compat.py is the shared loader (stdlib tomllib on >=3.11, tiny
 # hand-rolled fallback on 3.10 where CI still runs).
@@ -127,6 +136,7 @@ def build_pytest_args(
         if slow
         else "not slow and not interactive_viewer"
     )
+    marker += "".join(f" and not {name}" for name in DEDICATED_LANE_MARKERS)
     return [*profile_files(profile), "-m", marker, *forwarded]
 
 

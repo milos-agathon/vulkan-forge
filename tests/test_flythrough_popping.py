@@ -1312,9 +1312,7 @@ def test_pop_gate_discriminates_at_this_resolution_and_dem():
     )
 
 
-@pytest.mark.gpu_lane
-@requires_terrain
-def test_visibility_shading_is_identical_and_hole_free_at_flythrough_settings():
+def _assert_visibility_shading_is_identical_and_hole_free(*, evidence_key):
     """GPU-side confirmation of the image-side hole gate.
 
     ``visibility_stats()`` counts the resolve pass's background pixels on the
@@ -1364,7 +1362,7 @@ def test_visibility_shading_is_identical_and_hole_free_at_flythrough_settings():
     assert background_pixel_count(forward) == 0
 
     record_tessella_result(
-        "flythrough_visibility_coverage",
+        evidence_key,
         {
             "render_size_px": list(SIZE),
             "visible_pixels": int(stats["visible_pixels"]),
@@ -1373,3 +1371,26 @@ def test_visibility_shading_is_identical_and_hole_free_at_flythrough_settings():
             "bitwise_identical_to_forward": True,
         },
     )
+
+
+@pytest.mark.gpu_lane
+@requires_terrain
+def test_visibility_shading_is_identical_and_hole_free_at_flythrough_settings():
+    _assert_visibility_shading_is_identical_and_hole_free(
+        evidence_key="flythrough_visibility_coverage"
+    )
+
+
+@pytest.mark.gpu_lane
+@requires_terrain
+def test_visibility_coverage_matches_forward_at_minimum_render_size(
+    monkeypatch, tmp_path
+):
+    """Lock visibility ownership to forward coverage at the smallest valid target."""
+    monkeypatch.setenv("FORGE3D_TESSELLA_ARTIFACT_DIR", str(tmp_path))
+    monkeypatch.setitem(globals(), "SIZE", (64, 64))
+    _assert_visibility_shading_is_identical_and_hole_free(
+        evidence_key="flythrough_visibility_coverage_minimum"
+    )
+    assert (tmp_path / "flythrough_visibility_coverage_minimum.json").exists()
+    assert not (tmp_path / "flythrough_visibility_coverage.json").exists()

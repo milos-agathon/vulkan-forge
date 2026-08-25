@@ -112,6 +112,7 @@ def test_terrain_rendering_available_uses_child_probe(monkeypatch) -> None:
         terrain_runtime._terrain_rendering_unavailable_reason.cache_clear()
 
 
+@pytest.mark.nvidia_vulkan
 def test_nvidia_vulkan_terrain_constructor_child_smoke() -> None:
     """The public terrain constructor must return on a qualifying Vulkan GPU.
 

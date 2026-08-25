@@ -10,8 +10,6 @@ from pathlib import Path
 import pytest
 
 DEMO_DEM = Path(__file__).parent.parent / "python" / "forge3d" / "data" / "mini_dem.npy"
-DEMO_HDR = Path(__file__).parent.parent / "assets" / "hdri" / "snow_field_4k.hdr"
-
 pytestmark = pytest.mark.offscreen
 
 
@@ -20,12 +18,13 @@ def _render_with_probe(
     fov: float,
     theta: float,
     output_name: str,
+    output_dir: Path,
+    hdr_path: Path,
     *,
     phi: float = 135.0,
     debug_mode: int = 41,
 ) -> str:
     """Render terrain with projection probe and return MD5 hash."""
-    output_dir = Path(__file__).parent.parent / "examples" / "out"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / output_name
 
@@ -38,7 +37,7 @@ def _render_with_probe(
         "128",
         "128",
         "--hdr",
-        str(DEMO_HDR),
+        str(hdr_path),
         "--camera-mode",
         camera_mode,
         "--cam-fov",
@@ -68,30 +67,62 @@ def _render_with_probe(
 class TestPerspectiveProjectionCli:
     """Ensure CLI plumbing preserves perspective controls."""
 
-    @pytest.mark.skipif(not DEMO_HDR.exists(), reason="HDR asset not available")
-    def test_mesh_mode_fov_changes_probe(self):
+    def test_mesh_mode_fov_changes_probe(self, tmp_path):
         """FOV variation should change NDC-depth probe in mesh mode."""
-        h1 = _render_with_probe("mesh", fov=30, theta=45, output_name="cli_probe_fov30.png")
-        h2 = _render_with_probe("mesh", fov=90, theta=45, output_name="cli_probe_fov90.png")
+        from _generated_assets import write_hdr
+
+        hdr = write_hdr(tmp_path / "probe.hdr")
+        h1 = _render_with_probe(
+            "mesh", fov=30, theta=45, output_name="cli_probe_fov30.png",
+            output_dir=tmp_path, hdr_path=hdr,
+        )
+        h2 = _render_with_probe(
+            "mesh", fov=90, theta=45, output_name="cli_probe_fov90.png",
+            output_dir=tmp_path, hdr_path=hdr,
+        )
         assert h1 != h2
 
-    @pytest.mark.skipif(not DEMO_HDR.exists(), reason="HDR asset not available")
-    def test_mesh_mode_theta_changes_probe(self):
+    def test_mesh_mode_theta_changes_probe(self, tmp_path):
         """Theta variation should change probe."""
-        h1 = _render_with_probe("mesh", fov=55, theta=25, output_name="cli_probe_theta25.png")
-        h2 = _render_with_probe("mesh", fov=55, theta=75, output_name="cli_probe_theta75.png")
+        from _generated_assets import write_hdr
+
+        hdr = write_hdr(tmp_path / "probe.hdr")
+        h1 = _render_with_probe(
+            "mesh", fov=55, theta=25, output_name="cli_probe_theta25.png",
+            output_dir=tmp_path, hdr_path=hdr,
+        )
+        h2 = _render_with_probe(
+            "mesh", fov=55, theta=75, output_name="cli_probe_theta75.png",
+            output_dir=tmp_path, hdr_path=hdr,
+        )
         assert h1 != h2
 
-    @pytest.mark.skipif(not DEMO_HDR.exists(), reason="HDR asset not available")
-    def test_mesh_mode_phi_rotates_probe(self):
+    def test_mesh_mode_phi_rotates_probe(self, tmp_path):
         """Phi variation should rotate probe output."""
-        h1 = _render_with_probe("mesh", fov=55, theta=45, phi=0.0, output_name="cli_probe_phi0.png")
-        h2 = _render_with_probe("mesh", fov=55, theta=45, phi=90.0, output_name="cli_probe_phi90.png")
+        from _generated_assets import write_hdr
+
+        hdr = write_hdr(tmp_path / "probe.hdr")
+        h1 = _render_with_probe(
+            "mesh", fov=55, theta=45, phi=0.0,
+            output_name="cli_probe_phi0.png", output_dir=tmp_path, hdr_path=hdr,
+        )
+        h2 = _render_with_probe(
+            "mesh", fov=55, theta=45, phi=90.0,
+            output_name="cli_probe_phi90.png", output_dir=tmp_path, hdr_path=hdr,
+        )
         assert h1 != h2
 
-    @pytest.mark.skipif(not DEMO_HDR.exists(), reason="HDR asset not available")
-    def test_screen_vs_mesh_differ(self):
+    def test_screen_vs_mesh_differ(self, tmp_path):
         """Legacy screen mode should differ from mesh mode for same angles."""
-        h_screen = _render_with_probe("screen", fov=55, theta=45, output_name="cli_probe_screen.png", debug_mode=41)
-        h_mesh = _render_with_probe("mesh", fov=55, theta=45, output_name="cli_probe_mesh.png", debug_mode=41)
+        from _generated_assets import write_hdr
+
+        hdr = write_hdr(tmp_path / "probe.hdr")
+        h_screen = _render_with_probe(
+            "screen", fov=55, theta=45, output_name="cli_probe_screen.png",
+            output_dir=tmp_path, hdr_path=hdr, debug_mode=41,
+        )
+        h_mesh = _render_with_probe(
+            "mesh", fov=55, theta=45, output_name="cli_probe_mesh.png",
+            output_dir=tmp_path, hdr_path=hdr, debug_mode=41,
+        )
         assert h_screen != h_mesh

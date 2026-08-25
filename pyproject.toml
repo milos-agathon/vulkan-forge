@@ -110,7 +110,7 @@ module-name = "forge3d._forge3d"
 # Optimize for size and performance in release builds
 cargo-extra-args = "--profile release-lto"
 # Generate abi3 wheels for Python 3.10+ compatibility
-features = ["extension-module", "weighted-oit", "enable-tbn", "enable-gpu-instancing", "enable-staging-rings", "copc_laz", "cog_streaming", "gis-remote", "geos-topology", "atmosphere-bake"]
+features = ["extension-module", "weighted-oit", "enable-tbn", "enable-gpu-instancing", "enable-staging-rings", "copc_laz", "cog_streaming", "gis-remote", "geos-topology", "atmosphere-bake", "shader-contract-asserts"]
 include = [
     { path = "assets/fonts/*.ttf", format = "sdist" },
     { path = "assets/fonts/*-OFL.txt", format = "sdist" },

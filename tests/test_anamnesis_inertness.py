@@ -28,7 +28,8 @@ def test_native_recompute_control_is_required_on_physical_gpu_ci():
         "runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]",
         "WGPU_BACKEND: vulkan",
         "FORGE3D_RUN_GPU_ANAMNESIS: '1'",
-        "test_native_terrain_cache_restores_all_graph_passes",
+        "-m anamnesis_physical",
+        "tests/test_anamnesis_inertness.py",
         "--junitxml",
         "scripts/assert_junit_zero_skips.py",
         "anamnesis-p0-adapter.json",
@@ -258,6 +259,7 @@ def test_offscreen_helper_cache_is_inert_and_serves_identical_bytes(tmp_path):
     assert uncached.tobytes() == first.tobytes() == second.tobytes()
 
 
+@pytest.mark.anamnesis_physical
 @pytest.mark.slow
 @pytest.mark.skipif(
     os.environ.get("FORGE3D_RUN_GPU_ANAMNESIS") != "1",
@@ -362,6 +364,7 @@ def test_native_terrain_cache_restores_all_graph_passes(tmp_path):
     assert changed.tobytes() != second.tobytes()
 
 
+@pytest.mark.anamnesis_physical
 @pytest.mark.slow
 @pytest.mark.skipif(
     os.environ.get("FORGE3D_RUN_GPU_ANAMNESIS") != "1",

@@ -1,8 +1,8 @@
 # tests/test_determinism_hash.py
 # TERRA-DETERMINATA: hash-diff harness for the deterministic reference render.
 # Renders the canonical terrain+CSM+IBL scene, asserts intra-backend
-# bit-identity (fast local proxy for the cross-vendor claim) and equality with
-# the committed golden SHA-256.
+# bit-identity across fresh processes and equality with the committed hash
+# selected by the rendering adapter's backend identity.
 # RELEVANT FILES: python/forge3d/determinism.py, src/core/gpu.rs,
 # tests/goldens/determinism/terra_determinata_v1.sha256,
 # .github/workflows/determinism-matrix.yml
@@ -20,6 +20,7 @@ import pytest
 from _terrain_runtime import terrain_rendering_available
 from forge3d import determinism
 from forge3d.determinism import CANONICAL_SCENE, render_reference
+from scripts.check_determinism_hashes import backend_golden_path
 
 if not terrain_rendering_available():
     pytest.skip(
@@ -27,7 +28,8 @@ if not terrain_rendering_available():
         allow_module_level=True,
     )
 
-GOLDEN_PATH = Path(__file__).parent / "goldens" / "determinism" / f"{CANONICAL_SCENE}.sha256"
+GOLDEN_DIR = Path(__file__).parent / "goldens" / "determinism"
+DEFAULT_GOLDEN_PATH = GOLDEN_DIR / f"{CANONICAL_SCENE}.sha256"
 
 
 def _assert_installed_wheel_child_paths(report: dict[str, object]) -> None:
@@ -36,9 +38,9 @@ def _assert_installed_wheel_child_paths(report: dict[str, object]) -> None:
     source_package = (Path(__file__).parents[1] / "python" / "forge3d").resolve()
     for key in ("package", "native"):
         resolved = Path(str(report[key])).resolve()
-        assert not resolved.is_relative_to(source_package), (
-            f"installed-wheel child resolved repo-local {key}: {resolved}"
-        )
+        assert not resolved.is_relative_to(
+            source_package
+        ), f"installed-wheel child resolved repo-local {key}: {resolved}"
 
 
 def _local_backend() -> str:
@@ -56,8 +58,8 @@ def _local_backend() -> str:
 def test_intra_backend_bit_identity(tmp_path):
     """Two renders of the canonical scene on the same backend must be byte-identical.
 
-    Zero-byte tolerance: the SHA-256 of the PNGs must match exactly. This is
-    the local, always-runnable proxy for the cross-vendor CI matrix.
+    Zero-byte tolerance: the SHA-256 of PNGs from two fresh processes on the
+    same backend must match exactly.
     """
     backend = _local_backend()
     first = render_reference(
@@ -104,7 +106,11 @@ def test_dupla_dd_demo_is_backend_pinned_and_byte_identical():
         "'native':os.path.realpath(f3d._forge3d.__file__)}))"
     )
     result = subprocess.run(
-        [sys.executable, "-c", script], env=env, check=True, capture_output=True, text=True
+        [sys.executable, "-c", script],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
     )
     report = json.loads(result.stdout)
     _assert_installed_wheel_child_paths(report)
@@ -115,21 +121,23 @@ def test_dupla_dd_demo_is_backend_pinned_and_byte_identical():
 
 def test_matches_committed_golden(tmp_path):
     """The canonical render must equal the committed golden hash, byte-exact."""
-    assert GOLDEN_PATH.exists(), (
-        f"missing golden hash file {GOLDEN_PATH}; generate it with\n"
-        f"  python -m forge3d.determinism --out-png ref.png\n"
-        f"under FORGE3D_DETERMINISTIC=1 + a pinned WGPU_BACKENDS and commit the hash"
-    )
-    golden = GOLDEN_PATH.read_text().split()[0].strip()
-    actual = render_reference(
+    record = determinism._render_reference_record(
         CANONICAL_SCENE,
         width=512,
         height=512,
         backend=_local_backend(),
         out_png=tmp_path / "render_golden_check.png",
     )
+    golden_path = backend_golden_path(DEFAULT_GOLDEN_PATH, record.get("adapter"))
+    assert golden_path.exists(), (
+        f"missing backend-specific golden hash file {golden_path}; generate it with\n"
+        f"  python -m forge3d.determinism --out-png ref.png\n"
+        f"under FORGE3D_DETERMINISTIC=1 + a pinned WGPU_BACKENDS and commit the hash"
+    )
+    golden = golden_path.read_text().split()[0].strip()
+    actual = record["sha256"]
     assert actual == golden, (
-        f"determinism hash mismatch against committed golden\n"
+        f"determinism hash mismatch against committed backend golden {golden_path.name}\n"
         f"  golden: {golden}\n  actual: {actual}\n"
         f"Zero-byte tolerance: if this diverges the pipeline picked up a "
         f"nondeterminism source (or the scene changed; regenerate the golden "
@@ -146,20 +154,21 @@ def test_sidera_night_golden_is_in_the_determinism_inventory():
     local backend: the golden has a SHA-256 sidecar alongside
     ``terra_determinata_v1`` and that sidecar matches the committed PNG.
     """
-    sidecar = GOLDEN_PATH.parent / "sidera_night.sha256"
+    sidecar = GOLDEN_DIR / "sidera_night.sha256"
     png = Path(__file__).parent / "golden" / "sidera_night.png"
     assert sidecar.exists(), f"missing {sidecar}; the night golden is not inventoried"
     committed = sidecar.read_text().split()[0].strip()
     assert hashlib.sha256(png.read_bytes()).hexdigest() == committed
 
 
+@pytest.mark.sidera_vulkan
 @pytest.mark.skipif(
     _local_backend().strip().lower() != "vulkan",
     reason="the committed SIDERA reference was generated on NVIDIA/Vulkan",
 )
 def test_sidera_night_vulkan_reference_replays(tmp_path):
     """A fresh pinned Vulkan process reproduces the committed NVIDIA reference."""
-    sidecar = GOLDEN_PATH.parent / "sidera_night.sha256"
+    sidecar = GOLDEN_DIR / "sidera_night.sha256"
     committed = sidecar.read_text().split()[0].strip()
 
     env = dict(os.environ)
@@ -240,6 +249,7 @@ def test_cli_attributes_hash_to_requested_backend(monkeypatch, tmp_path, capsys)
     assert '"device": 9348' in output
 
 
+@pytest.mark.cross_backend
 @pytest.mark.skipif(sys.platform != "win32", reason="requires local DX12 and Vulkan")
 def test_device_probe_reports_initialized_render_adapter(monkeypatch, tmp_path):
     """A post-render probe reports its process's active adapter, not its argument."""
@@ -262,7 +272,13 @@ def test_device_probe_reports_initialized_render_adapter(monkeypatch, tmp_path):
         "'package':os.path.realpath(f3d.__file__),"
         "'native':os.path.realpath(f3d._forge3d.__file__)}))"
     )
-    result = subprocess.run([sys.executable, "-c", script], env=env, check=True, capture_output=True, text=True)
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     report = json.loads(result.stdout)
     _assert_installed_wheel_child_paths(report)
     assert report["probe"]["backend"] == "Dx12"

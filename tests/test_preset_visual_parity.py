@@ -15,11 +15,7 @@ from _terrain_runtime import terrain_rendering_available
 from tests._ssim import ssim
 
 
-if os.environ.get("FORGE3D_RUN_PRESET_PARITY") != "1":
-    pytest.skip("Preset visual parity runs only in the dedicated GPU lane", allow_module_level=True)
-
-if not terrain_rendering_available():
-    pytest.skip("Preset visual parity requires GPU-backed terrain rendering", allow_module_level=True)
+pytestmark = pytest.mark.nvidia_vulkan
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -1,17 +1,16 @@
 //! TESSELLA terrain visibility buffer.
 //!
-//! Zero is reserved for background. Visible primitives are encoded as
-//! `1 + ((tile_lod_id & 0xffff) << 16) | (triangle_id & 0xffff)`. The extra one
-//! keeps tile zero / triangle zero distinct from background. That packing is
-//! defined by `src/shaders/terrain_visbuffer_write.wgsl` (pass 1) and decoded
-//! by `src/shaders/terrain_visibility_fullscreen.wgsl` (pass 2); the CPU oracle
-//! below is the third mirror of it. The material resolve is a full-screen
-//! fragment pass. It reads primitive identity and depth, reconstructs the
-//! visible surface, and invokes POM/material/feedback exactly once for every
-//! non-background visibility pixel. The runtime resolve replays the original
-//! clipmap geometry against the pass-1 depth/identity buffer; the fullscreen
-//! helper remains in the module for shader-contract coverage. `terrain_visbuffer_resolve.wgsl`
-//! is the compute pass that reads those counters back, not the resolve itself.
+//! Zero in the first channel is reserved for background. Visible primitives are
+//! encoded as `(tile_lod_id + 1, triangle_id)` in an `Rg32Uint` attachment, so
+//! neither component is truncated. That identity is defined by
+//! `src/shaders/terrain_visbuffer_write.wgsl` (pass 1) and consumed by the
+//! ID-owned geometry resolve in `terrain_visibility_fullscreen.wgsl` (pass 2);
+//! the CPU oracle below is the third mirror. The runtime resolve replays the
+//! original clipmap geometry and accepts only the pass-1 identity owner. It does
+//! not bind or replay-test pass-1 depth, so material/feedback runs exactly once
+//! per visible pixel without a second coverage decision. The full-screen entry
+//! point is retained only for static contracts/debugging. The similarly named
+//! `terrain_visbuffer_resolve.wgsl` is the compute counter readback pass.
 
 use crate::core::error::{RenderError, RenderResult};
 use crate::core::resource_tracker::{
@@ -19,6 +18,9 @@ use crate::core::resource_tracker::{
 };
 use bytemuck::{Pod, Zeroable};
 use std::sync::{Mutex, OnceLock};
+
+pub(in crate::terrain::renderer) const VISIBILITY_TILE_INDEX_CAPACITY: usize = 1 << 14;
+pub(in crate::terrain::renderer) const VISIBILITY_LOD_CAPACITY: u32 = 1 << 3;
 
 pub(in crate::terrain::renderer) struct CpuVisibilityOracle {
     mesh: crate::accel::cpu_bvh::MeshCPU,
@@ -86,7 +88,7 @@ impl CpuVisibilityOracle {
                 .ok_or_else(|| anyhow::anyhow!("clipmap fallback draw exceeds its index buffer"))?;
             for (primitive, triangle) in fallback_indices.chunks_exact(3).enumerate() {
                 indices.push([triangle[0], triangle[1], triangle[2]]);
-                identities.push((0, primitive as u32 & 0xffff));
+                identities.push((0, primitive as u32));
             }
         } else {
             let selected_tiles =
@@ -117,8 +119,8 @@ impl CpuVisibilityOracle {
                 for (primitive, triangle) in source.chunks_exact(3).enumerate() {
                     indices.push([triangle[0], triangle[1], triangle[2]]);
                     identities.push((
-                        ((visible.selected_lod & 0xf) << 12) | (template.tile_id & 0xfff),
-                        primitive as u32 & 0xffff,
+                        (visible.selected_lod << 14) | template.tile_id,
+                        primitive as u32,
                     ));
                 }
             }
@@ -714,7 +716,7 @@ pub struct VisibilityStats {
     pub feedback_records: u32,
     /// Feedback records emitted by the visibility-resolve path.
     pub visibility_feedback_records: u32,
-    /// Feedback records emitted by the forward path, including overdraw.
+    /// Feedback records emitted by the forward shading mode.
     pub forward_feedback_records: u32,
     pub material_invocations: u32,
     pub background_pixels: u32,
@@ -783,7 +785,7 @@ impl TerrainVisibilityBuffer {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R32Uint,
+                format: wgpu::TextureFormat::Rg32Uint,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::COPY_SRC,
@@ -974,13 +976,9 @@ impl super::TerrainScene {
     pub(super) fn create_visibility_resolve_bind_group_layout(
         device: &wgpu::Device,
     ) -> wgpu::BindGroupLayout {
-        // The runtime resolve entry point is `fs_visibility_geometry`. It only
-        // reads the visibility ID texture from group 7; vertices, indices,
-        // templates, meta, and sampled depth belong exclusively to the static
-        // fullscreen reconstruction helper. Do not put those resources in the
-        // geometry bind group: binding the live depth attachment as a sampled
-        // texture in this same depth-equal pass is a WebGPU usage conflict,
-        // even on backends that prune unused entry-point resources.
+        // The visibility ID is the sole ownership test for the geometry
+        // resolve. Rebinding or replay-testing depth would establish a second,
+        // backend-dependent coverage decision.
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("terrain.visibility.geometry_resolve.layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -1051,7 +1049,10 @@ impl super::TerrainScene {
         Ok(())
     }
 
-    pub(super) fn finish_visibility_frame(&self) -> anyhow::Result<VisibilityStats> {
+    pub(super) fn finish_visibility_frame(
+        &self,
+        visibility_resolve: bool,
+    ) -> anyhow::Result<VisibilityStats> {
         let mut visibility = self
             .visibility_buffer
             .lock()
@@ -1061,9 +1062,13 @@ impl super::TerrainScene {
             publish_stats(stats);
             return Ok(stats);
         };
-        let stats = buffer
+        let mut stats = buffer
             .finish_frame(self.device.as_ref())
             .map_err(anyhow::Error::msg)?;
+        if !visibility_resolve {
+            stats.forward_material_invocations = stats.material_invocations;
+            stats.material_invocations = 0;
+        }
         publish_stats(stats);
         Ok(stats)
     }

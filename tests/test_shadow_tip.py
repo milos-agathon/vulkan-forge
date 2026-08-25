@@ -180,6 +180,8 @@ def _assert_shadow_mask_golden(actual: np.ndarray) -> float:
     return mae
 
 
+@pytest.mark.recipe_golden
+@pytest.mark.helios_physical
 def test_shadow_mask_golden() -> None:
     if os.environ.get("FORGE3D_RUN_TERRAIN_GOLDENS") != "1":
         pytest.skip("set FORGE3D_RUN_TERRAIN_GOLDENS=1 to run GPU goldens")
@@ -201,6 +203,8 @@ def test_shadow_mask_golden_negative_control(monkeypatch) -> None:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="DX12/Vulkan comparison is Windows-only")
+@pytest.mark.recipe_golden
+@pytest.mark.cross_backend
 def test_shadow_mask_is_identical_on_dx12_and_vulkan() -> None:
     if os.environ.get("FORGE3D_RUN_TERRAIN_GOLDENS") != "1":
         pytest.skip("set FORGE3D_RUN_TERRAIN_GOLDENS=1 to run GPU goldens")

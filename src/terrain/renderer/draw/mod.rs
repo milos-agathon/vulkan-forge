@@ -626,7 +626,7 @@ impl TerrainScene {
             crate::terrain::culling::two_phase::publish_stats(self.culling_stats);
         }
         if visibility_frame_staged {
-            self.finish_visibility_frame()?;
+            self.finish_visibility_frame(params.shading == "visibility")?;
         } else {
             super::visibility_buffer::publish_stats(Default::default());
         }

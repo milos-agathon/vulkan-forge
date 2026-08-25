@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -112,6 +113,8 @@ def test_two_phase_conservativeness_is_backed_by_the_real_shader():
 
 @requires_terrain
 def test_two_phase_hzb_is_bitwise_identical_to_unculled_render():
+    require_performance = os.environ.get("FORGE3D_TESSELLA_REQUIRED_GPU") == "1"
+
     with tempfile.TemporaryDirectory() as td:
         hdr_path = Path(td) / "probe.hdr"
         _write_test_hdr(hdr_path)
@@ -122,8 +125,8 @@ def test_two_phase_hzb_is_bitwise_identical_to_unculled_render():
         baseline_timings = []
         for _ in range(7):
             baseline = _render_rgba(baseline_renderer, _win2_params("none"), dem, ibl)
-            baseline_timings.append(_terrain_main_gpu_ms())
-        baseline_gpu_ms = float(np.median(baseline_timings[2:]))
+            if require_performance:
+                baseline_timings.append(_terrain_main_gpu_ms())
 
         culled_renderer = f3d.TerrainRenderer(f3d.Session(window=False))
         culled_timings = []
@@ -131,14 +134,22 @@ def test_two_phase_hzb_is_bitwise_identical_to_unculled_render():
             culled = _render_rgba(
                 culled_renderer, _win2_params("hzb_two_phase"), dem, ibl
             )
-            culled_timings.append(_terrain_main_gpu_ms())
-        culled_gpu_ms = float(np.median(culled_timings[2:]))
+            if require_performance:
+                culled_timings.append(_terrain_main_gpu_ms())
 
     np.testing.assert_array_equal(culled, baseline)
     stats = culling_stats()
     assert stats["cull_percent"] >= 60.0, stats
     assert stats["phase1_drawn"] + stats["phase2_recovered"] == stats["final_drawn"]
     certificate = render_certificate(sign=False)
+    assert "hzb_cull" in certificate["engine"]["wgsl_module_hashes"]
+    assert "p5.hzb.build.shader" in certificate["engine"]["wgsl_module_hashes"]
+
+    if not require_performance:
+        return
+
+    baseline_gpu_ms = float(np.median(baseline_timings[2:]))
+    culled_gpu_ms = float(np.median(culled_timings[2:]))
     assert "timestamp_query" in certificate["capabilities"]["granted"], certificate[
         "capabilities"
     ]
@@ -148,8 +159,6 @@ def test_two_phase_hzb_is_bitwise_identical_to_unculled_render():
         "culled_gpu_ms": culled_gpu_ms,
         "gate": HZB_SPEEDUP_GATE,
     }
-    assert "hzb_cull" in certificate["engine"]["wgsl_module_hashes"]
-    assert "p5.hzb.build.shader" in certificate["engine"]["wgsl_module_hashes"]
     record_tessella_result(
         "hzb_occlusion",
         {

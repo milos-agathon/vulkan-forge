@@ -141,15 +141,27 @@ def test_dem_synthetic_procedural():
     assert 0 <= dem.stats["mean"] <= 1000.0
 
 
-@pytest.mark.skipif(
-    True,  # Skip by default as it requires rasterio
-    reason="Requires rasterio and test GeoTIFF file"
-)
-def test_load_dem_from_geotiff():
+def test_load_dem_from_geotiff(tmp_path):
     """Test loading DEM from GeoTIFF file."""
-    # This test requires a test GeoTIFF file
-    # Skip in CI unless test data is available
-    dem = f3d.io.load_dem("test_data/elevation.tif", fill_nodata_values=True)
+    import rasterio
+    from rasterio.transform import from_origin
+
+    path = tmp_path / "elevation.tif"
+    elevation = np.arange(16, dtype=np.float32).reshape(4, 4)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=4,
+        height=4,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32610",
+        transform=from_origin(500_000.0, 5_200_000.0, 30.0, 30.0),
+    ) as dataset:
+        dataset.write(elevation, 1)
+
+    dem = f3d.io.load_dem(path, fill_nodata_values=True)
 
     assert dem is not None
     assert dem.data.ndim == 2

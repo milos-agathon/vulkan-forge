@@ -1,8 +1,8 @@
 // TESSELLA pass 2 visibility resolve module. `shader_sources::terrain_visbuffer_resolve`
 // appends this file to the shared terrain module, which supplies VertexOutput,
-// FragmentOutput and `shade_main`. The runtime depth-equal geometry entry point
-// replays the R32Uint identity written by terrain_visbuffer_write.wgsl (which
-// defines the packing); the fullscreen reconstruction below remains a static
+// FragmentOutput and `shade_main`. The runtime geometry entry point accepts
+// only the Rg32Uint identity written by terrain_visbuffer_write.wgsl; the
+// fullscreen reconstruction below remains a static
 // contract/debug path.
 
 @group(7) @binding(0)
@@ -203,15 +203,15 @@ fn visibility_sample_surface(
     return sample;
 }
 
-// The packed pass-1 identity at `pixel`, or 0 when the pixel is background.
+// The pass-1 identity at `pixel`, or vec2(0) when the pixel is background.
 // Out-of-range coordinates (an odd-sized target's last quad) clamp to the edge,
 // which can only ever return a real neighbour's identity or 0.
-fn visibility_pixel_identity(pixel: vec2<i32>) -> u32 {
+fn visibility_pixel_identity(pixel: vec2<i32>) -> vec2<u32> {
     let limit = vec2<i32>(textureDimensions(terrain_visibility_ids)) - vec2<i32>(1);
     let clamped = clamp(pixel, vec2<i32>(0), limit);
-    let encoded = textureLoad(terrain_visibility_ids, clamped, 0).x;
+    let encoded = textureLoad(terrain_visibility_ids, clamped, 0).xy;
     let depth = textureLoad(terrain_visibility_depth, clamped, 0);
-    return select(encoded, 0u, depth >= 1.0);
+    return select(encoded, vec2<u32>(0u), depth >= 1.0);
 }
 
 @vertex
@@ -243,17 +243,17 @@ fn fs_visibility_resolve_fullscreen(
     // reproduces exactly what the rasteriser would have interpolated here.
     let quad_base = pixel & vec2<i32>(-2, -2);
     var identity = covered;
-    if (identity == 0u) {
+    if (identity.x == 0u) {
         for (var lane = 0u; lane < 4u; lane = lane + 1u) {
             let partner = visibility_pixel_identity(
                 quad_base + vec2<i32>(i32(lane & 1u), i32(lane >> 1u)),
             );
-            if (identity == 0u) {
+            if (identity.x == 0u) {
                 identity = partner;
             }
         }
     }
-    if (identity == 0u) {
+    if (identity.x == 0u) {
         // Every lane of this quad is background, so no derivative depends on
         // it. All four lanes take this branch together: quad uniformity, and
         // therefore derivative uniformity, is preserved.
@@ -264,11 +264,10 @@ fn fs_visibility_resolve_fullscreen(
     // `@builtin(position).xy` is ALREADY the pixel centre in framebuffer space
     // ((0.5, 0.5) is the centre of the top-left pixel), so adding another half
     // texel shifted every reconstructed attribute one half pixel down-right.
-    let payload = encoded - 1u;
-    let tile_lod_id = payload >> 16u;
-    let primitive = payload & 0xffffu;
-    let selected_lod = (tile_lod_id >> 12u) & 0xfu;
-    let tile_index = tile_lod_id & 0xfffu;
+    let tile_lod_id = encoded.x - 1u;
+    let primitive = encoded.y;
+    let selected_lod = (tile_lod_id >> 14u) & 0x7u;
+    let tile_index = tile_lod_id & 0x3fffu;
     let draw_template = terrain_visibility_templates[
         tile_index * terrain_visibility_meta.variant_count + selected_lod
     ];
@@ -319,7 +318,7 @@ fn fs_visibility_resolve_fullscreen(
     surface.tex_coord = here.uv;
     surface.tile_id = tile_lod_id;
     let out = shade_main(surface);
-    if (covered == 0u) {
+    if (covered.x == 0u) {
         // An emulated helper lane. It has now contributed its derivatives to
         // the covered lanes of this quad and must contribute nothing else: no
         // colour, no material-invocation count and no feedback record. That is
@@ -348,11 +347,11 @@ fn fs_visibility_resolve_fullscreen(
     return out;
 }
 
-// Depth-equal geometry resolve. Replaying the exact pass-1 clipmap vertex
-// path preserves the fixed-function interpolants and quad derivatives that a
+// ID-owned geometry resolve. Replaying the exact pass-1 clipmap vertex path
+// preserves the fixed-function interpolants and quad derivatives that a
 // full-screen reconstruction cannot reproduce bit-for-bit. The visibility ID
-// check keeps overlapping/equal-depth geometry from paying the material cost
-// more than once.
+// is the sole ownership test, so overlapping geometry pays the material cost
+// only once without asking a second rasterization to reproduce pass-1 depth.
 @fragment
 fn fs_visibility_geometry(
     input: VertexOutput,
@@ -369,10 +368,9 @@ fn fs_visibility_geometry(
     let resolve_ddx_world = dpdx(input.world_position);
     let resolve_ddy_world = dpdy(input.world_position);
     let pixel = vec2<i32>(input.clip_position.xy);
-    let encoded = textureLoad(terrain_visibility_ids, pixel, 0).x;
-    let expected = (((input.tile_id & 0xffffu) << 16u)
-        | (primitive_index & 0xffffu)) + 1u;
-    if (encoded != expected) {
+    let encoded = textureLoad(terrain_visibility_ids, pixel, 0).xy;
+    let expected = vec2<u32>(input.tile_id + 1u, primitive_index);
+    if (any(encoded != expected)) {
         discard;
     }
     terrain_explicit_ddx_uv = resolve_ddx_uv;

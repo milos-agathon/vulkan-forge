@@ -7,6 +7,7 @@ mod atmosphere;
 mod camera;
 mod codec;
 mod diagnostics;
+mod export;
 mod geodesy;
 mod geometry;
 mod gis;
@@ -28,6 +29,7 @@ pub(crate) fn register_py_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     geometry::register_geometry_py_functions(m)?;
     io_import::register_io_import_py_functions(m)?;
     diagnostics::register_diagnostics_py_functions(m)?;
+    export::register_export_py_functions(m)?;
     license::register_license_py_functions(m)?;
     provenance::register_provenance_py_functions(m)?;
     precision::register_precision_py_functions(m)?;

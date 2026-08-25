@@ -176,7 +176,8 @@ fn terrain_base(bindless: bool) -> String {
 }
 
 /// TESSELLA pass 1: the shared terrain module plus the visibility-write
-/// fragment stage. Depth + R32Uint primitive identity only, no material work.
+/// fragment stage. Depth plus an `Rg32Uint` identity carrying a 3-bit LOD,
+/// 14-bit tile index, and full-u32 primitive index; no material work.
 pub(crate) fn terrain_visbuffer_write(bindless: bool) -> String {
     [
         terrain_base(bindless),
@@ -185,8 +186,10 @@ pub(crate) fn terrain_visbuffer_write(bindless: bool) -> String {
     .join("\n")
 }
 
-/// TESSELLA pass 2: the shared terrain module plus the full-screen material
-/// resolve that decodes pass 1's identity and shades each visible pixel once.
+/// TESSELLA pass 2: the shared terrain module plus the ID-owned geometry
+/// material resolve that shades each pass-1 owner once without a second depth
+/// test. The same module retains a full-screen reconstruction entry point only
+/// for static contracts and debugging.
 pub(crate) fn terrain_visbuffer_resolve(bindless: bool) -> String {
     [
         terrain_base(bindless),
@@ -220,6 +223,14 @@ mod tests {
             ),
             ("visbuffer_stats", stats),
         ]
+    }
+
+    #[test]
+    fn resident_feedback_shader_gate_preserves_streaming_optimization() {
+        let shader = include_str!("shaders/terrain_pbr_pom.wgsl");
+        assert!(
+            shader.contains("if (desired_entry.z > 0.5 && terrain_vt_uniforms.config3.w == 0u)")
+        );
     }
 
     #[test]
@@ -345,14 +356,15 @@ mod tests {
         }
     }
 
-    /// The visibility packing is defined by real files now, not by rewriting
+    /// The visibility identity is defined by real files now, not by rewriting
     /// the forward module's text at assembly time.
     #[test]
-    fn visibility_passes_are_distinct_modules_with_one_packing() {
+    fn visibility_passes_are_distinct_modules_with_one_identity() {
         let write = terrain_visbuffer_write(false);
         let resolve = terrain_visbuffer_resolve(false);
         assert!(write.contains("fn fs_visibility("));
-        assert!(write.contains("fn terrain_visbuffer_pack("));
+        assert!(write.contains("vec2<u32>(input.tile_id + 1u, primitive_index)"));
+        assert!(!write.contains("PRIMITIVE_MASK"));
         assert!(!write.contains("fn fs_visibility_resolve_fullscreen("));
         assert!(resolve.contains("fn fs_visibility_resolve_fullscreen("));
         assert!(!resolve.contains("fn fs_visibility("));
@@ -363,7 +375,7 @@ mod tests {
                 "the two visibility pipelines must not share one source"
             );
         }
-        // The forward module carries the packed tile/LOD identity itself; the
+        // The forward module carries the tile/LOD identity itself; the
         // stale 24|8 packing and its string rewrite are gone.
         //
         // The retired mask is FORMATTED rather than written as a literal: this
@@ -374,7 +386,7 @@ mod tests {
         let terrain = terrain();
         assert!(!terrain.contains("fn fs_visibility("));
         assert!(!terrain.contains(&retired_primitive_mask));
-        assert!(terrain.contains("out.tile_id = ((_tile_id_lod.y & 0xfu) << 12u)"));
+        assert!(terrain.contains("out.tile_id = (_tile_id_lod.y << 14u) | _tile_id_lod.x"));
     }
 
     /// Guards the one remaining source substitution: if either atlas pattern

@@ -52,7 +52,9 @@ def test_terrain_shader_declares_vt_sampling_and_feedback_bindings() -> None:
     assert "family_info: array<TerrainVtFamilyInfo, 3>" in source
     assert "TERRAIN_VT_FAMILY_NORMAL,\n            grid_uv," in source
     assert "TERRAIN_VT_FAMILY_MASK,\n            grid_uv," in source
-    assert "if (desired_entry.z > 0.5)" in source
+    assert (
+        "if (desired_entry.z > 0.5 && terrain_vt_uniforms.config3.w == 0u)" in source
+    )
     assert "terrain_vt_page_table_layer(family_slot, material_index)," in source
     assert "mip_level," in source
 

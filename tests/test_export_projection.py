@@ -193,11 +193,30 @@ class TestRustProjection:
 
     def test_rust_3d_to_2d_center(self):
         """Test 3D to 2D projection of center point."""
-        assert callable(rust_project_3d)
+        identity = [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]
+        assert rust_project_3d((0.0, 0.0, 0.0), identity, (800, 600)) == pytest.approx(
+            (400.0, 300.0)
+        )
 
     def test_rust_3d_behind_camera(self):
-        """Test 3D point behind camera returns None."""
-        assert callable(rust_project_2d)
+        """Test behind-camera rejection and the paired Rust 2D export."""
+        behind_camera = [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, -1.0,
+        ]
+        assert rust_project_3d(
+            (0.0, 0.0, 0.0), behind_camera, (800, 600)
+        ) is None
+        assert rust_project_2d(
+            (50.0, 25.0), (0.0, 0.0, 100.0, 100.0), (800, 600)
+        ) == pytest.approx((400.0, 450.0))
 
 
 class TestProjectionEdgeCases:

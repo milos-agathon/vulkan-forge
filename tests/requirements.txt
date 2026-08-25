@@ -1,13 +1,17 @@
-# Optional test dependencies for enhanced functionality
-# These are not required for basic testing but provide additional features
-
-# Scientific computing for chi-square tests and statistical analysis
-scipy>=1.7.0
-
-# Enhanced numerical operations
+# Dependencies imported by the complete Python acceptance profiles.
+geopandas
+ipywidgets
+maturin>=1.5,<2.0
+mypy
 numpy>=1.20.0
-
-# WebGPU Python bindings for TBN vertex layout validation testing
-wgpu>=0.14
+packaging
+pillow
+pyproj
+pyoidn>=2.5.0.1
 pytest
-pytest-asyncio
+pyyaml
+rasterio
+requests
+scipy>=1.7.0
+shapely
+xarray

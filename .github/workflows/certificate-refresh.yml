@@ -39,6 +39,7 @@ jobs:
     timeout-minutes: 30
     env:
       WGPU_BACKEND: vulkan
+      FORGE3D_RECIPE_GOLDEN_VARIANT: nvidia-vulkan
       FORGE3D_ALLOW_HOSTED_WINDOWS_TERRAIN: '1'
       FORGE3D_CERT_SIGNING_KEY: ${{ secrets.FORGE3D_CERT_SIGNING_KEY }}
       FORGE3D_REQUIRE_PRODUCTION_SIGNING: '1'
@@ -67,7 +68,7 @@ jobs:
         shell: pwsh
         run: |
           python scripts/install_compatible_wheel.py dist
-          python -m pip install pytest numpy pyproj pillow
+          python -m pip install -r tests/requirements.txt
 
       - name: Require production signing and physical NVIDIA Vulkan
         shell: pwsh

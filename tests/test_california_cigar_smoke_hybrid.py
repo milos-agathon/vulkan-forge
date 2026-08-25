@@ -16,12 +16,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_PATH = REPO_ROOT / "examples" / "california_cigar_smoke_demo.py"
 
 
-def skip_missing_california_cache(exc: RuntimeError) -> None:
-    if "Cached California terrain assets are missing" in str(exc):
-        pytest.skip(str(exc))
-    raise exc
-
-
 def load_module():
     examples_dir = str(EXAMPLE_PATH.parent)
     added_examples_dir = examples_dir not in sys.path
@@ -937,13 +931,42 @@ def test_reference_smoke_layer_excludes_fire_and_static_background() -> None:
     assert mae <= 1.0
 
 
-def test_map_film_plate_uses_regional_reference_extent() -> None:
-    module = load_module()
+def _write_california_extent(module, root: Path, stem: str, size: tuple[int, int]):
+    from _generated_assets import write_geotiff
 
-    try:
-        local_texture, _local_dem, _local_fire = module.crop_fire_extent()
-    except RuntimeError as exc:
-        skip_missing_california_cache(exc)
+    width, height = size
+    dem = write_geotiff(root / f"{stem}.tif", width=width, height=height)
+    yy, xx = np.mgrid[0:height, 0:width]
+    overlay = np.empty((height, width, 4), dtype=np.uint8)
+    overlay[..., 0] = 28 + (xx % 96)
+    overlay[..., 1] = 40 + (yy % 112)
+    overlay[..., 2] = 52 + ((xx + yy) % 80)
+    overlay[..., 3] = 255
+    overlay_path = root / f"{stem}_overlay.png"
+    module.Image.fromarray(overlay, mode="RGBA").save(overlay_path)
+    west, south = module.lonlat_to_web_mercator(-124.5, 31.0)
+    east, north = module.lonlat_to_web_mercator(-114.0, 43.0)
+    meta_path = root / f"{stem}.json"
+    meta_path.write_text(
+        json.dumps({"bounds_mercator": [west, south, east, north]}),
+        encoding="utf-8",
+    )
+    return dem, overlay_path, meta_path
+
+
+def test_map_film_plate_uses_regional_reference_extent(tmp_path, monkeypatch) -> None:
+    module = load_module()
+    local = _write_california_extent(module, tmp_path, "local", (400, 300))
+    regional = _write_california_extent(module, tmp_path, "regional", (1200, 675))
+    for name, path in zip(("DEM_PATH", "OVERLAY_PATH", "META_PATH"), local):
+        monkeypatch.setattr(module, name, path)
+    for name, path in zip(
+        ("REGIONAL_DEM_PATH", "REGIONAL_OVERLAY_PATH", "REGIONAL_META_PATH"),
+        regional,
+    ):
+        monkeypatch.setattr(module, name, path)
+
+    local_texture, _local_dem, _local_fire = module.crop_fire_extent()
     plate = module.map_film_plate(320, 180)
 
     assert plate.extent_kind == "regional-california"

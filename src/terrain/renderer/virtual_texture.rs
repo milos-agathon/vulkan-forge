@@ -18,8 +18,8 @@ use crate::core::tile_cache::{TileCache, TileData, TileId};
 use crate::terrain::vt::VirtualTextureStore;
 #[cfg(feature = "extension-module")]
 use crate::terrain::vt_family_residency::{
-    decode_family_mip_feedback, fair_family_budget_admit, logical_resident_slot_bytes,
-    validate_material_atlas_capacity, validate_material_family_names,
+    capture_resident_feedback_flag, decode_family_mip_feedback, fair_family_budget_admit,
+    logical_resident_slot_bytes, validate_material_atlas_capacity, validate_material_family_names,
     validate_material_residency_budget, FamilyResidency, FamilyResidencyTracker, TileKey,
     VT_FAMILY_COUNT,
 };
@@ -109,8 +109,9 @@ struct TerrainVTUniformsGpu {
     /// `prepare_frame`.
     family_info: [TerrainVtFamilyInfoGpu; TERRAIN_VT_FAMILY_COUNT as usize],
     /// Bounded feedback append (TESSELLA win 1). x = slot capacity (power of
-    /// two), y/z = physical page-table base width/height, w reserved. Matches
-    /// `config3` in `terrain_pbr_pom.wgsl`.
+    /// two), y/z = physical page-table base width/height, w = capture resident
+    /// feedback for source-id provenance. Matches `config3` in
+    /// `terrain_pbr_pom.wgsl`.
     config3: [u32; 4],
 }
 
@@ -921,7 +922,13 @@ impl TerrainMaterialVT {
         runtime.reset_frame_stats(decoded.vt.residency_budget_mb);
 
         let fallback_colors = runtime.fallback_colors();
-        Self::write_uniforms(queue.as_ref(), vt_uniform_buffer, runtime, true);
+        Self::write_uniforms(
+            queue.as_ref(),
+            vt_uniform_buffer,
+            runtime,
+            true,
+            capture_resident_feedback_flag(decoded.aov.enabled, decoded.aov.source_id),
+        );
         queue.write_buffer(
             vt_fallback_uniform_buffer,
             0,
@@ -1059,8 +1066,10 @@ impl TerrainMaterialVT {
             .collect())
     }
 
-    /// VERITAS: resolve each unresolved shader-demand record from the latest
-    /// frame to the resident mip the shader actually landed on.
+    /// VERITAS: resolve each shader-feedback record from the latest frame to
+    /// the resident mip the shader actually landed on. Source-id capture keeps
+    /// these records for resident desired pages; ordinary streaming feedback
+    /// records only unresolved demand.
     ///
     /// The GPU walk starts at the desired mip and climbs coarser until a
     /// page-table entry is resident; this replays the identical walk against
@@ -1141,6 +1150,7 @@ impl TerrainMaterialVT {
         vt_uniform_buffer: &wgpu::Buffer,
         runtime: &TerrainMaterialVTRuntime,
         enabled: bool,
+        capture_resident_feedback: u32,
     ) {
         let mut family_info = [TerrainVtFamilyInfoGpu::zeroed(); TERRAIN_VT_FAMILY_COUNT as usize];
         for (slot, info) in family_info.iter_mut().enumerate() {
@@ -1196,7 +1206,7 @@ impl TerrainMaterialVT {
                 runtime.feedback_capacity,
                 runtime.page_table_width,
                 runtime.page_table_height,
-                0,
+                capture_resident_feedback,
             ],
         };
         queue.write_buffer(vt_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));

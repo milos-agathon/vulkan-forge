@@ -144,11 +144,18 @@ def test_p1_portability_and_production_lanes_fail_closed():
     assert "--machine-id-file" in physical_consumer
     assert "--runner-name '${{ runner.name }}'" in physical_seed
     assert "--runner-name '${{ runner.name }}'" in physical_consumer
-    assert "test_real_gpu_600_frame_acceptance" in production
-    assert "test_public_gpu_graph_cache_restores_intermediate_texture" in production
+    assert "-m anamnesis_physical" in production
+    for path in (
+        "tests/test_anamnesis_incremental.py",
+        "tests/test_anamnesis_inertness.py",
+        "tests/test_anamnesis_p1.py",
+        "tests/test_anamnesis_portability.py",
+    ):
+        assert production.count(path) == 1
     assert "scripts/assert_junit_zero_skips.py" in production
 
 
+@pytest.mark.anamnesis_physical
 @pytest.mark.slow
 @pytest.mark.skipif(
     os.environ.get("FORGE3D_RUN_GPU_ANAMNESIS") != "1",

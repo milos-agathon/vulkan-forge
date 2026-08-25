@@ -23,14 +23,7 @@ from tests._golden_variants import (
 from tests._ssim import ssim
 
 
-if os.environ.get("FORGE3D_RUN_TERRAIN_GOLDENS") != "1":
-    pytest.skip("TV10 golden tests run only in the dedicated GPU lane", allow_module_level=True)
-
-if not f3d.has_gpu() or not all(
-    hasattr(f3d, name)
-    for name in ("TerrainRenderer", "TerrainRenderParams", "OverlayLayer", "MaterialSet", "IBL", "Session")
-):
-    pytest.skip("TV10 golden tests require GPU-backed native module", allow_module_level=True)
+pytestmark = pytest.mark.nvidia_vulkan
 
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden" / "terrain"

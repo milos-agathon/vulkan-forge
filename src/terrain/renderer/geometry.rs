@@ -755,8 +755,9 @@ impl TerrainScene {
                     );
                     tile = tile.with_height_bounds(bounds.0, bounds.1);
                 }
-                // Visibility IDs use a compact dense tile index so the
-                // full-screen pass can index draw metadata without a search.
+                // Visibility IDs use a compact dense tile index. The runtime
+                // geometry resolve compares it directly; the static/debug
+                // full-screen helper can also index draw metadata without a search.
                 tile.tile_id = lod_tiles.len() as u32;
                 for chunks in &variant_chunks {
                     let selected = chunks[chunk_index];
@@ -774,6 +775,15 @@ impl TerrainScene {
                 }
                 lod_tiles.push(tile);
             }
+        }
+        if lod_tiles.len() > super::visibility_buffer::VISIBILITY_TILE_INDEX_CAPACITY
+            || variant_count > super::visibility_buffer::VISIBILITY_LOD_CAPACITY
+        {
+            return Err(anyhow!(
+                "clipmap identity exceeds visibility capacity: {} tiles, {} LOD variants",
+                lod_tiles.len(),
+                variant_count
+            ));
         }
         let vertex_buffer = tracked_create_buffer_init(
             self.device.as_ref(),

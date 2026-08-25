@@ -23,8 +23,9 @@ paths: ["Cargo.toml", "pyproject.toml", ".cargo/**", ".github/workflows/**", "py
   routine invariants. Candidate-selected physical NVIDIA/Vulkan goldens and
   GPU lanes are acceptance evidence summarized by `Full Acceptance Summary`;
   a probe crash or pixel mismatch remains fatal whenever that lane is selected.
-  Metal coverage is an opt-in support diagnostic and is never a prerequisite
-  for moonshot, pull-request, or release acceptance.
+  Generic Metal support diagnostics remain opt-in. The checked
+  `test-apple-metal-acceptance` manifest is a required physical Apple/Metal
+  prerequisite for scheduled and explicitly selected full acceptance.
 - Production signing is required only by protected acceptance/release work.
   Routine internal and fork PRs remain explicitly untrusted and verify schema,
   canonicalization, and tamper rejection without the production secret.

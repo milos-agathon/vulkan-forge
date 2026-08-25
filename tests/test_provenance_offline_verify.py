@@ -20,18 +20,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VERIFIER = REPO_ROOT / "tools" / "verify_provenance.py"
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "provenance"
-IMAGE = FIXTURE_DIR / "image.png"
 SOURCE_MAP = FIXTURE_DIR / "source_map.npy"
 MANIFEST = FIXTURE_DIR / "provenance.json"
-
-pytestmark = pytest.mark.skipif(
-    not (IMAGE.exists() and SOURCE_MAP.exists() and MANIFEST.exists()),
-    reason=(
-        "committed provenance fixture missing; regenerate on a GPU host with "
-        "FORGE3D_UPDATE_PROVENANCE_FIXTURE=1 python -m pytest "
-        "tests/test_provenance_veritas.py -k measurable_win"
-    ),
-)
 
 # Bootstrap that masks the compiled extension before anything imports it,
 # then runs the standalone verifier exactly as a third party would.
@@ -64,8 +54,28 @@ def _run_verifier_without_native(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_offline_verifier_verifies_native_manifest_without_extension() -> None:
-    result = _run_verifier_without_native(IMAGE, SOURCE_MAP, MANIFEST)
+@pytest.fixture()
+def provenance_fixture(tmp_path):
+    from PIL import Image
+
+    assert SOURCE_MAP.is_file(), "tracked provenance source map is required"
+    assert MANIFEST.is_file(), "tracked provenance manifest is required"
+    source_map = np.asarray(np.load(SOURCE_MAP), dtype=np.uint32)
+    rgba = np.zeros(source_map.shape + (4,), dtype=np.uint8)
+    rgba[..., 0] = np.where(source_map == 1, 220, 30)
+    rgba[..., 1] = np.where(source_map == 2, 220, 30)
+    rgba[..., 2] = 30
+    rgba[..., 3] = 255
+    image = tmp_path / "image.png"
+    Image.fromarray(rgba, mode="RGBA").save(image)
+    return image, SOURCE_MAP, MANIFEST
+
+
+def test_offline_verifier_verifies_native_manifest_without_extension(
+    provenance_fixture,
+) -> None:
+    image, source_map, manifest = provenance_fixture
+    result = _run_verifier_without_native(image, source_map, manifest)
     assert result.returncode == 0, f"verifier failed:\n{result.stdout}\n{result.stderr}"
     assert "merkle_root_match: True" in result.stdout
     assert "signature_valid: True" in result.stdout
@@ -79,26 +89,30 @@ def test_offline_verifier_verifies_native_manifest_without_extension() -> None:
     assert len(coverage_lines) >= 2, result.stdout
 
 
-def test_offline_verifier_detects_tampered_source_map(tmp_path) -> None:
-    source_map = np.load(SOURCE_MAP)
+def test_offline_verifier_detects_tampered_source_map(
+    tmp_path, provenance_fixture
+) -> None:
+    image, source_map_path, manifest = provenance_fixture
+    source_map = np.load(source_map_path)
     source_map = np.asarray(source_map, dtype=np.uint32).copy()
     source_map[0, 0] ^= 1
     tampered_path = tmp_path / "source_map_tampered.npy"
     np.save(tampered_path, source_map)
 
-    result = _run_verifier_without_native(IMAGE, tampered_path, MANIFEST)
+    result = _run_verifier_without_native(image, tampered_path, manifest)
     assert result.returncode != 0
     assert "merkle_root_match: False" in result.stdout
     assert "verified: False" in result.stdout
 
 
-def test_pure_python_report_on_fixture() -> None:
+def test_pure_python_report_on_fixture(provenance_fixture) -> None:
     """In-process check of the pure-Python path (no native calls involved)."""
     from forge3d import provenance as prov
 
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    _image, source_map_path, manifest_path = provenance_fixture
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["schema_version"] == prov.SCHEMA_VERSION
-    source_map = np.asarray(np.load(SOURCE_MAP), dtype=np.uint32)
+    source_map = np.asarray(np.load(source_map_path), dtype=np.uint32)
 
     report = prov.verify_provenance_offline(source_map, manifest)
     assert report["ok"] is True

@@ -144,53 +144,66 @@ class TestRainierShowcasePreset:
 class TestCLIIntegration:
     """Test CLI integration (requires subprocess)."""
 
-    @pytest.mark.skipif(True, reason="Requires DEM file - run manually")
-    def test_warning_printed_when_aligned(self):
+    def test_warning_printed_when_aligned(self, tmp_path):
         """Verify warning is printed when camera-sun are aligned."""
         import subprocess
         import sys
         
-        # Run with aligned config
+        from _generated_assets import write_geotiff, write_hdr
+
+        dem = write_geotiff(tmp_path / "aligned.tif")
+        hdr = write_hdr(tmp_path / "aligned.hdr")
+        output = tmp_path / "aligned.png"
         result = subprocess.run(
             [
                 sys.executable, "-B", "examples/terrain_demo.py",
-                "--dem", "assets/Gore_Range_Albers_1m.tif",
-                "--hdr", "assets/hdri/snow_field_4k.hdr",
+                "--dem", str(dem),
+                "--hdr", str(hdr),
                 "--size", "64", "64",
-                "--cam-phi", "90",
-                "--sun-azimuth", "90",  # Same as camera - should trigger warning
-                "--output", "examples/output/test_aligned.png",
+                "--cam-phi", "0",
+                "--sun-azimuth", "90",  # Both use +X after convention conversion
+                "--output", str(output),
                 "--overwrite",
             ],
             capture_output=True,
             text=True,
             cwd=".",
         )
+        assert result.returncode == 0, result.stderr
+        assert output.is_file()
         # Warning should be in output
         assert "[WARNING]" in result.stdout or "[WARNING]" in result.stderr
-        assert "nearly aligned" in result.stdout.lower() or "nearly aligned" in result.stderr.lower()
+        assert (
+            "nearly aligned" in result.stdout.lower()
+            or "nearly aligned" in result.stderr.lower()
+        )
 
-    @pytest.mark.skipif(True, reason="Requires DEM file - run manually")
-    def test_no_warning_when_offset(self):
+    def test_no_warning_when_offset(self, tmp_path):
         """Verify no warning when camera-sun are offset."""
         import subprocess
         import sys
-        
-        # Run with offset config
+
+        from _generated_assets import write_geotiff, write_hdr
+
+        dem = write_geotiff(tmp_path / "offset.tif")
+        hdr = write_hdr(tmp_path / "offset.hdr")
+        output = tmp_path / "offset.png"
         result = subprocess.run(
             [
                 sys.executable, "-B", "examples/terrain_demo.py",
-                "--dem", "assets/Gore_Range_Albers_1m.tif",
-                "--hdr", "assets/hdri/snow_field_4k.hdr",
+                "--dem", str(dem),
+                "--hdr", str(hdr),
                 "--size", "64", "64",
                 "--cam-phi", "0",
                 "--sun-azimuth", "135",  # 135° offset - should NOT trigger warning
-                "--output", "examples/output/test_offset.png",
+                "--output", str(output),
                 "--overwrite",
             ],
             capture_output=True,
             text=True,
             cwd=".",
         )
+        assert result.returncode == 0, result.stderr
+        assert output.is_file()
         # Warning should NOT be in output
         assert "[WARNING]" not in result.stdout

@@ -398,6 +398,12 @@ examples/out/
 examples/output/
 examples/**/*.py
 !examples/moon_south_pole.py
+!examples/_terrain_feature_demo.py
+!examples/terrain_tv4_material_variation_demo.py
+!examples/terrain_tv6_heterogeneous_volumetrics_demo.py
+!examples/terrain_tv10_subsurface_demo.py
+!examples/terrain_tv21_blending_demo.py
+!examples/terrain_tv24_reflection_probe_demo.py
 tests/test_*example*.py
 tests/test_*examples*.py
 !tests/test_italy_forest_cover_example.py
@@ -415,6 +421,7 @@ scripts/*
 !scripts/helios_evidence_report.py
 !scripts/run_nvidia_visual_acceptance.py
 !scripts/run_nvidia_determinism_acceptance.py
+!scripts/run_apple_metal_acceptance.py
 
 # forge3d outputs (A13) 
 out/

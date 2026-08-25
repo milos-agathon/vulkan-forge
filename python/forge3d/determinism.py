@@ -7,8 +7,8 @@
 
 ``render_reference`` renders the canonical TERRA-DETERMINATA scene through the
 existing offscreen ``Session``/``TerrainRenderer`` path and returns the SHA-256
-of the output PNG. The measurable claim: the same scene renders to the same
-bytes on every backend/vendor, proven by diffing these hashes.
+of the output PNG. The measurable claim is byte identity across fresh processes
+on one physical backend; committed hashes are routed by proven adapter identity.
 
 Backend pinning happens in a fresh subprocess because the wgpu backend is
 locked process-wide at the FIRST GPU context creation (``src/core/gpu.rs``)
@@ -135,7 +135,20 @@ def _canonical_params_config():
             light=LightSettings("Directional", 135.0, 35.0, 2.5, [1.0, 1.0, 1.0]),
             ibl=IblSettings(True, 1.0, 0.0),
             shadows=ShadowSettings(
-                True, "PCF", 512, 2, 250.0, 1.0, 0.8, 0.002, 0.001, 0.3, 1e-4, 0.5, 2.0, 0.9
+                True,
+                "PCF",
+                512,
+                2,
+                250.0,
+                1.0,
+                0.8,
+                0.002,
+                0.001,
+                0.3,
+                1e-4,
+                0.5,
+                2.0,
+                0.9,
             ),
             triplanar=TriplanarSettings(6.0, 4.0, 1.0),
             pom=PomSettings(False, "Occlusion", 0.0, 1, 1, 0, False, False),
@@ -204,7 +217,7 @@ def _render_reference_inprocess(
     return hashlib.sha256(out_png.read_bytes()).hexdigest()
 
 
-def render_reference(
+def _render_reference_record(
     scene_spec: Optional[str] = None,
     *,
     width: int = 512,
@@ -213,8 +226,8 @@ def render_reference(
     out_png: Union[str, Path],
     certificate: Union[bool, str, Path] = False,
     cache: Union[str, Path, None] = None,
-) -> str:
-    """Render the canonical deterministic scene and return the PNG's SHA-256.
+) -> dict:
+    """Render in a pinned child and return its hash plus actual adapter record.
 
     Args:
         scene_spec: scene name; ``None`` selects :data:`CANONICAL_SCENE`.
@@ -257,6 +270,22 @@ def render_reference(
     if backend is not None:
         env["WGPU_BACKENDS"] = backend
         env.pop("WGPU_BACKEND", None)
+    configured_backends = {
+        value.strip().lower()
+        for key in ("WGPU_BACKENDS", "WGPU_BACKEND")
+        if (value := env.get(key, "")).strip()
+    }
+    if len(configured_backends) != 1:
+        raise ValueError(
+            "render_reference requires one unambiguous supported backend, got "
+            f"{sorted(configured_backends)!r}"
+        )
+    requested_backend = configured_backends.pop()
+    if requested_backend not in {"dx12", "gl", "metal", "vulkan", "webgpu"}:
+        raise ValueError(
+            "render_reference requires one unambiguous supported backend, got "
+            f"{requested_backend!r}"
+        )
 
     cmd = [
         sys.executable,
@@ -287,7 +316,37 @@ def render_reference(
     # The child prints a single JSON line last; tolerate warnings above it.
     last_line = proc.stdout.strip().splitlines()[-1]
     result = json.loads(last_line)
-    return result["sha256"]
+    actual_backend = str(result.get("adapter", {}).get("backend", "")).lower()
+    if actual_backend == "browserwebgpu":
+        actual_backend = "webgpu"
+    if actual_backend != requested_backend:
+        raise RuntimeError(
+            "deterministic render adapter did not honor the requested backend: "
+            f"requested={requested_backend!r}, actual={actual_backend!r}"
+        )
+    return result
+
+
+def render_reference(
+    scene_spec: Optional[str] = None,
+    *,
+    width: int = 512,
+    height: int = 512,
+    backend: Optional[str] = None,
+    out_png: Union[str, Path],
+    certificate: Union[bool, str, Path] = False,
+    cache: Union[str, Path, None] = None,
+) -> str:
+    """Render the canonical deterministic scene and return the PNG's SHA-256."""
+    return _render_reference_record(
+        scene_spec,
+        width=width,
+        height=height,
+        backend=backend,
+        out_png=out_png,
+        certificate=certificate,
+        cache=cache,
+    )["sha256"]
 
 
 def _main(argv: Optional[list] = None) -> int:

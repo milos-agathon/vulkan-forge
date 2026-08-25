@@ -14,7 +14,23 @@ if not terrain_rendering_available():
     )
 
 
-def test_terrain_render_no_horizontal_banding():
+def _test_ibl(tmp_path):
+    from _generated_assets import write_hdr
+
+    return forge3d.IBL.from_hdr(
+        str(write_hdr(tmp_path / "test.hdr")), intensity=1.0
+    )
+
+
+def _test_overlay():
+    colormap = forge3d.Colormap1D.from_stops(
+        [(0.0, "#7a8a9a"), (1.0, "#7a8a9a")],
+        domain=(0.0, 3000.0),
+    )
+    return forge3d.OverlayLayer.from_colormap1d(colormap, strength=1.0)
+
+
+def test_terrain_render_no_horizontal_banding(tmp_path):
     """Test that terrain rendering doesn't produce horizontal banding artifacts."""
     # Create session and renderer
     sess = forge3d.Session(window=False)
@@ -26,12 +42,7 @@ def test_terrain_render_no_horizontal_banding():
     # Create materials and params
     materials = forge3d.MaterialSet.terrain_default()
 
-    # Create simple IBL (just use default if available)
-    try:
-        ibl = forge3d.IBL.from_hdr("assets/snow_field_4k.hdr", intensity=1.0)
-    except Exception:
-        # If HDR not available, skip this test
-        pytest.skip("HDR file not available for testing")
+    ibl = _test_ibl(tmp_path)
 
     # Create rendering params with full configuration
     from forge3d import (
@@ -66,11 +77,13 @@ def test_terrain_render_no_horizontal_banding():
         lod=LodSettings(0, 0.0, -0.5),
         sampling=SamplingSettings("Linear", "Linear", "Linear", 4, "Repeat", "Repeat", "Repeat"),
         clamp=ClampSettings((0.0, 3000.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0)),
-        overlays=[],
+        overlays=[_test_overlay()],
         exposure=1.0,
         gamma=2.2,
-        albedo_mode="mix",
-        colormap_strength=0.5,
+        colormap_srgb=True,
+        output_srgb_eotf=True,
+        albedo_mode="colormap",
+        colormap_strength=1.0,
     )
     params = forge3d.TerrainRenderParams(config)
 
@@ -111,7 +124,7 @@ def test_terrain_render_no_horizontal_banding():
     assert color_std > 1.0, f"No color variation: std={color_std:.2f}"
 
 
-def test_terrain_render_color_space_correct():
+def test_terrain_render_color_space_correct(tmp_path):
     """Test that color-space conversion is working correctly."""
     sess = forge3d.Session(window=False)
     renderer = forge3d.TerrainRenderer(sess)
@@ -121,10 +134,7 @@ def test_terrain_render_color_space_correct():
 
     materials = forge3d.MaterialSet.terrain_default()
 
-    try:
-        ibl = forge3d.IBL.from_hdr("assets/snow_field_4k.hdr", intensity=1.0)
-    except Exception:
-        pytest.skip("HDR file not available")
+    ibl = _test_ibl(tmp_path)
 
     from forge3d import (
         TerrainRenderParamsConfig,
@@ -158,11 +168,13 @@ def test_terrain_render_color_space_correct():
         lod=LodSettings(0, 0.0, -0.5),
         sampling=SamplingSettings("Linear", "Linear", "Linear", 4, "Repeat", "Repeat", "Repeat"),
         clamp=ClampSettings((0.0, 3000.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0)),
-        overlays=[],
+        overlays=[_test_overlay()],
         exposure=2.0,
         gamma=2.2,
-        albedo_mode="mix",
-        colormap_strength=0.5,
+        colormap_srgb=True,
+        output_srgb_eotf=True,
+        albedo_mode="colormap",
+        colormap_strength=1.0,
     )
     params = forge3d.TerrainRenderParams(config)
 
@@ -187,7 +199,7 @@ def test_terrain_render_color_space_correct():
     assert pixels[:, :, :3].max() < 250, "Too much white clipping"
 
 
-def test_terrain_render_non_aligned_dimensions():
+def test_terrain_render_non_aligned_dimensions(tmp_path):
     """Test that non-256-aligned dimensions work correctly (padding test)."""
     sess = forge3d.Session(window=False)
     renderer = forge3d.TerrainRenderer(sess)
@@ -197,10 +209,7 @@ def test_terrain_render_non_aligned_dimensions():
 
     materials = forge3d.MaterialSet.terrain_default()
 
-    try:
-        ibl = forge3d.IBL.from_hdr("assets/snow_field_4k.hdr", intensity=1.0)
-    except Exception:
-        pytest.skip("HDR file not available")
+    ibl = _test_ibl(tmp_path)
 
     from forge3d import (
         TerrainRenderParamsConfig,
@@ -234,11 +243,13 @@ def test_terrain_render_non_aligned_dimensions():
         lod=LodSettings(0, 0.0, -0.5),
         sampling=SamplingSettings("Linear", "Linear", "Linear", 4, "Repeat", "Repeat", "Repeat"),
         clamp=ClampSettings((0.0, 3000.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0)),
-        overlays=[],
+        overlays=[_test_overlay()],
         exposure=1.0,
         gamma=2.2,
-        albedo_mode="mix",
-        colormap_strength=0.5,
+        colormap_srgb=True,
+        output_srgb_eotf=True,
+        albedo_mode="colormap",
+        colormap_strength=1.0,
     )
     params = forge3d.TerrainRenderParams(config)
 

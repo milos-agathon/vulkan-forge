@@ -1,0 +1,36 @@
+version = 1
+# Owner contract: 22 recipe specs; 2 fresh TV20 normal processes plus
+# 13 other exact nodes and those 22 parameterized recipe cases = 37 tests.
+recipe_cases = 22
+expected_tests = 37
+
+[[phases]]
+name = "tv20-normal-fresh-1"
+nodes = [
+  "tests/test_tv20_virtual_texturing.py::TestTerrainMaterialVirtualTexturing::test_vt_normal_family_changes_normal_aov_and_reports_dual_residency",
+]
+
+[[phases]]
+name = "tv20-normal-fresh-2"
+nodes = [
+  "tests/test_tv20_virtual_texturing.py::TestTerrainMaterialVirtualTexturing::test_vt_normal_family_changes_normal_aov_and_reports_dual_residency",
+]
+
+[[phases]]
+name = "contract-matrix"
+nodes = [
+  "tests/test_tv20_virtual_texturing.py::TestTerrainMaterialVirtualTexturing::test_vt_enabled_changes_albedo_and_reports_residency",
+  "tests/test_aov.py::TestAovRendering::test_aov_numpy_outputs_are_real_and_normalized",
+  "tests/test_aov.py::TestAovRendering::test_aov_outputs_match_beauty_size_after_scaling_and_msaa",
+  "tests/test_flythrough_popping.py::test_depth_aov_matches_known_flat_plane_distance",
+  "tests/test_msdf_fidelity.py::test_live_gpu_shader_readback_matches_independent_quad_oracle",
+  "tests/test_msdf_fidelity.py::test_live_gpu_native_text_is_exact_across_two_scenes",
+  "tests/test_astro_night_golden.py::test_night_golden_is_cross_process_repeatable_on_pinned_backend",
+  "tests/test_cam_phi_wiring.py::test_cam_phi_changes_output",
+  "tests/test_cam_phi_wiring.py::test_cam_phi_four_quadrants",
+  "tests/test_determinism_hash.py::test_intra_backend_bit_identity",
+  "tests/test_determinism_hash.py::test_matches_committed_golden",
+  "tests/test_visibility_buffer.py::test_visibility_resolve_pays_once_and_picking_is_stable_for_10000_pixels",
+  "tests/test_flythrough_popping.py::test_visibility_shading_is_identical_and_hole_free_at_flythrough_settings",
+  "tests/test_recipe_goldens.py::test_recipe_goldens_render_and_match",
+]

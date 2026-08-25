@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -21,26 +22,84 @@ SCENE = "terra_determinata_v1"
 SHA = "d" * 64
 
 
+def _temporary_git_candidate(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+    source = repository / "candidate.py"
+    source.write_text("candidate = True\n")
+    subprocess.run(
+        ["git", "-C", str(repository), "add", source.name],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=Forge3D Test",
+            "-c",
+            "user.email=forge3d@example.invalid",
+            "-C",
+            str(repository),
+            "commit",
+            "-m",
+            "candidate",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    candidate_sha = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return repository, candidate_sha, source
+
+
+def _load_determinism_module():
+    path = Path(__file__).parents[1] / "python" / "forge3d" / "determinism.py"
+    spec = importlib.util.spec_from_file_location("determinism_backend_guard", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _apple_metal_adapter():
+    return {
+        "status": "ok",
+        "name": "Apple M4",
+        "backend": "Metal",
+        "device_type": "IntegratedGpu",
+        "vendor": 0,
+        "device": 0,
+        "software_fallback": False,
+    }
+
+
 def _artifact(root, leg, *, sha=None, adapter=True, marker=None):
     path = root / f"determinism-hash-{leg}"
     path.mkdir(parents=True)
     if sha:
         (path / f"{SCENE}.sha256").write_text(sha + "\n")
         if adapter:
-            (path / f"{SCENE}.json").write_text(
-                json.dumps(
-                    {
-                        "adapter": {
-                            "name": "NVIDIA GeForce RTX 3070",
-                            "backend": "Vulkan",
-                            "device_type": "DiscreteGpu",
-                            "vendor": 0x10DE,
-                            "device": 0x2484,
-                            "software_fallback": False,
-                        }
-                    }
-                )
+            adapter_record = (
+                adapter
+                if isinstance(adapter, dict)
+                else {
+                    "name": "NVIDIA GeForce RTX 3070",
+                    "backend": "Vulkan",
+                    "device_type": "DiscreteGpu",
+                    "vendor": 0x10DE,
+                    "device": 0x2484,
+                    "software_fallback": False,
+                }
             )
+            (path / f"{SCENE}.json").write_text(json.dumps({"adapter": adapter_record}))
     if marker:
         (path / f"{SCENE}.{marker}").write_text(f"{leg} {marker.lower()}\n")
     return path
@@ -64,6 +123,204 @@ def _run(tmp_path, golden=SHA):
         capture_output=True,
         text=True,
     )
+
+
+def test_backend_golden_identity_routes_physical_adapters_and_fails_closed(tmp_path):
+    from scripts.check_determinism_hashes import (
+        backend_golden_identity,
+        backend_golden_path,
+    )
+
+    nvidia = _nvidia_adapter()
+    metal = _apple_metal_adapter()
+    dx12 = {**nvidia, "backend": "Dx12"}
+    golden = tmp_path / f"{SCENE}.sha256"
+
+    assert backend_golden_identity(nvidia) == "nvidia-vulkan"
+    assert backend_golden_identity(dx12) == "dx12"
+    assert backend_golden_identity(metal) == "metal"
+    assert backend_golden_path(golden, nvidia) == golden
+    assert backend_golden_path(golden, dx12) == tmp_path / f"{SCENE}.dx12.sha256"
+    assert backend_golden_path(golden, metal) == tmp_path / f"{SCENE}.metal.sha256"
+
+    rejected = (
+        {**metal, "backend": "Gl"},
+        {**metal, "name": "Mystery GPU"},
+        {**metal, "backend": "Vulkan"},
+        {**metal, "backend": "Dx12", "name": "AMD Radeon", "vendor": 0x1002},
+        {**metal, "software_fallback": True},
+        {**metal, "software_fallback": None},
+        {**metal, "name": "Apple Paravirtual Device"},
+        {**metal, "device_type": "VirtualGpu"},
+    )
+    for adapter in rejected:
+        with pytest.raises(ValueError):
+            backend_golden_identity(adapter)
+
+
+def test_golden_provenance_records_exact_candidate_and_artifact_hashes(tmp_path):
+    from scripts.check_determinism_hashes import write_golden_provenance
+
+    repository, candidate_sha, _ = _temporary_git_candidate(tmp_path)
+    wheel = tmp_path / "forge3d.whl"
+    native = tmp_path / "_forge3d.so"
+    fixture = repository / f"{SCENE}.metal.png"
+    wheel.write_bytes(b"release-lto-wheel")
+    native.write_bytes(b"native-library")
+    fixture.write_bytes(b"metal-fixture-image")
+    adapter = _apple_metal_adapter()
+
+    provenance = repository / f"{SCENE}.metal.provenance.json"
+    record = write_golden_provenance(
+        provenance,
+        repository=repository,
+        candidate_sha=candidate_sha,
+        wheel=wheel,
+        native=native,
+        adapter=adapter,
+        width=512,
+        height=512,
+        generation_command="python -m forge3d.determinism --scene terra_determinata_v1",
+        fixture=fixture,
+    )
+
+    assert record == {
+        "schema": "forge3d.determinism-golden.v1",
+        "candidate_sha": candidate_sha,
+        "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+        "native_sha256": hashlib.sha256(native.read_bytes()).hexdigest(),
+        "backend": "metal",
+        "golden_identity": "metal",
+        "adapter": adapter,
+        "software_fallback": False,
+        "dimensions": {"width": 512, "height": 512},
+        "generation_command": "python -m forge3d.determinism --scene terra_determinata_v1",
+        "fixture_sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
+    }
+    assert json.loads(provenance.read_text(encoding="utf-8")) == record
+
+
+def test_golden_provenance_rejects_existing_non_head_candidate(tmp_path):
+    from scripts.check_determinism_hashes import write_golden_provenance
+
+    repository, candidate_sha, source = _temporary_git_candidate(tmp_path)
+    source.write_text("candidate = 'second commit'\n")
+    subprocess.run(
+        ["git", "-C", str(repository), "add", source.name],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=Forge3D Test",
+            "-c",
+            "user.email=forge3d@example.invalid",
+            "-C",
+            str(repository),
+            "commit",
+            "-m",
+            "new head",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    fixture = repository / f"{SCENE}.metal.png"
+    fixture.write_bytes(b"metal-fixture-image")
+
+    with pytest.raises(ValueError, match="repository HEAD"):
+        write_golden_provenance(
+            repository / f"{SCENE}.metal.provenance.json",
+            repository=repository,
+            candidate_sha=candidate_sha,
+            wheel=fixture,
+            native=fixture,
+            adapter=_apple_metal_adapter(),
+            width=512,
+            height=512,
+            generation_command="generate fixture",
+            fixture=fixture,
+        )
+
+
+@pytest.mark.parametrize("dirt", ["tracked", "staged", "untracked"])
+def test_golden_provenance_rejects_other_uncommitted_source(tmp_path, dirt):
+    from scripts.check_determinism_hashes import write_golden_provenance
+
+    repository, candidate_sha, source = _temporary_git_candidate(tmp_path)
+    fixture = repository / f"{SCENE}.metal.png"
+    fixture.write_bytes(b"metal-fixture-image")
+    if dirt == "untracked":
+        (repository / "uncommitted.py").write_text("uncommitted = True\n")
+    else:
+        source.write_text("candidate = False\n")
+        if dirt == "staged":
+            subprocess.run(
+                ["git", "-C", str(repository), "add", source.name],
+                check=True,
+                capture_output=True,
+            )
+
+    with pytest.raises(ValueError, match="uncommitted source changes"):
+        write_golden_provenance(
+            repository / f"{SCENE}.metal.provenance.json",
+            repository=repository,
+            candidate_sha=candidate_sha,
+            wheel=fixture,
+            native=fixture,
+            adapter=_apple_metal_adapter(),
+            width=512,
+            height=512,
+            generation_command="generate fixture",
+            fixture=fixture,
+        )
+
+
+def test_render_reference_rejects_requested_actual_backend_mismatch(
+    monkeypatch, tmp_path
+):
+    determinism = _load_determinism_module()
+    child = subprocess.CompletedProcess(
+        [],
+        0,
+        stdout=json.dumps({"sha256": "a" * 64, "adapter": {"backend": "Vulkan"}}),
+        stderr="",
+    )
+    monkeypatch.setattr(determinism.subprocess, "run", lambda *args, **kwargs: child)
+
+    with pytest.raises(RuntimeError, match="requested='metal', actual='vulkan'"):
+        determinism._render_reference_record(
+            backend="metal", out_png=tmp_path / "reference.png"
+        )
+
+
+@pytest.mark.parametrize(
+    ("backend", "plural", "singular"),
+    (("metal,vulkan", None, None), (None, "metal", "vulkan")),
+)
+def test_render_reference_rejects_ambiguous_backend_request(
+    monkeypatch, tmp_path, backend, plural, singular
+):
+    determinism = _load_determinism_module()
+    monkeypatch.delenv("WGPU_BACKENDS", raising=False)
+    monkeypatch.delenv("WGPU_BACKEND", raising=False)
+    if plural:
+        monkeypatch.setenv("WGPU_BACKENDS", plural)
+    if singular:
+        monkeypatch.setenv("WGPU_BACKEND", singular)
+    monkeypatch.setattr(
+        determinism.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("ambiguous backend launched a child"),
+    )
+
+    with pytest.raises(ValueError, match="unambiguous supported backend"):
+        determinism._render_reference_record(
+            backend=backend, out_png=tmp_path / "reference.png"
+        )
 
 
 def _dupla_proof() -> dict:
@@ -214,9 +471,7 @@ def test_nvidia_acceptance_binds_two_matching_frames_to_probe(monkeypatch, tmp_p
     assert not (artifact_dir / f"{SCENE}.FAILED").exists()
 
 
-def test_nvidia_acceptance_rejects_probe_render_identity_drift(
-    monkeypatch, tmp_path
-):
+def test_nvidia_acceptance_rejects_probe_render_identity_drift(monkeypatch, tmp_path):
     pixels = b"physical-nvidia-vulkan-frame"
     result, artifact_dir = _run_nvidia_acceptance(
         monkeypatch,
@@ -336,8 +591,24 @@ def test_matrix_accepts_matching_hardware_hash_with_documented_gated_failure(tmp
     assert "GATED-FAILURE" in result.stdout
 
 
+def test_matrix_routes_each_physical_backend_to_its_own_golden(tmp_path):
+    dx12_sha = "e" * 64
+    hashes = tmp_path / "hashes"
+    _artifact(hashes, "nvidia", sha=SHA)
+    _artifact(
+        hashes, "amd", sha=dx12_sha, adapter={**_nvidia_adapter(), "backend": "Dx12"}
+    )
+    (tmp_path / "golden.dx12.sha256").write_text(dx12_sha + "\n")
+
+    result = _run(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert f"committed golden (nvidia): {SHA}" in result.stdout
+    assert f"committed golden (amd): {dx12_sha}" in result.stdout
+
+
 @pytest.mark.parametrize("actual", ["e" * 64, "f" * 64])
-def test_matrix_rejects_golden_or_pairwise_mismatch(tmp_path, actual):
+def test_matrix_rejects_backend_golden_mismatch(tmp_path, actual):
     _artifact(tmp_path / "hashes", "nvidia", sha=SHA)
     _artifact(tmp_path / "hashes", "amd", sha=actual)
     result = _run(tmp_path)
@@ -364,9 +635,9 @@ def test_shadow_shader_classifier_is_retained_without_pr_path_gating():
     assert "'src/shaders/includes/shadow_moments.wgsl'" in classifier
     assert "'src/shaders/csm.wgsl'" not in classifier
 
-    caller = ci.split("  determinism-render:", 1)[1].split(
-        "\n  determinism-f3dz:", 1
-    )[0]
+    caller = ci.split("  determinism-render:", 1)[1].split("\n  determinism-f3dz:", 1)[
+        0
+    ]
     assert "needs.terrain-golden-paths.outputs.determinism_render" not in caller
     assert "github.event_name == 'schedule'" in caller
     assert "inputs.scope == 'full'" in caller
@@ -383,7 +654,9 @@ def test_matrix_reuses_caller_wheels_instead_of_rebuilding_extensions():
     assert "PyO3/maturin-action" not in workflow
     for artifact in ("wheels-linux", "wheels-windows"):
         assert artifact in workflow
-    acceptance = workflow.split("  render:\n", 1)[1].split("\n  metal-diagnostic:\n", 1)[0]
+    acceptance = workflow.split("  render:\n", 1)[1].split(
+        "\n  metal-diagnostic:\n", 1
+    )[0]
     diagnostic = workflow.split("  metal-diagnostic:\n", 1)[1].split(
         "\n  wasm-policy:\n", 1
     )[0]
@@ -407,6 +680,24 @@ def test_matrix_reuses_caller_wheels_instead_of_rebuilding_extensions():
         "anamnesis-portability",
     ):
         assert f"needs.{family}.result" in summary
+
+
+def test_hosted_anamnesis_deselects_the_required_physical_family():
+    workflow = WORKFLOW.read_text()
+    hosted = workflow.split("  anamnesis-seed:", 1)[1].split(
+        "\n  anamnesis-portability:", 1
+    )[0]
+    contract_step = hosted.split(
+        "- name: Gate ANAMNESIS incrementality, speed, hermeticity, and corruption handling",
+        1,
+    )[1].split("\n      - name:", 1)[0]
+
+    assert '-m "not anamnesis_physical"' in contract_step
+    assert (
+        "tests/test_anamnesis_incremental.py::test_real_gpu_600_frame_acceptance"
+        not in hosted
+    )
+    assert "FORGE3D_RUN_GPU_ANAMNESIS" not in hosted
 
 
 def test_dupla_aggregation_accepts_verified_and_explicit_absence(tmp_path):

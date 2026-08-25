@@ -13,15 +13,18 @@
 """Static + behavioural honesty gates for CENSOR."""
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shlex
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from datetime import date
 from pathlib import Path
 
 import pytest
+import yaml
 
 from _toml_compat import load_toml
 from tests._golden_variants import (
@@ -282,6 +285,7 @@ WHEEL_REQUIRED_FEATURES = {
     # AETHER exposes an explicit offline bake API in the shipped wheel while
     # normal rendering still consumes its shipped LUT bank.
     "atmosphere-bake",
+    "shader-contract-asserts",
 }
 
 
@@ -389,6 +393,94 @@ def _workflow_job(workflow: str, name: str) -> str:
     return match.group(0)
 
 
+def _workflow_step(job: str, name: str) -> str:
+    return job.split(f"- name: {name}", 1)[1].split("\n      - name:", 1)[0]
+
+
+def _assert_pwsh_pytest_and_verifier_are_both_authoritative(
+    step: str, pytest_command: str
+) -> None:
+    lines = [line.strip() for line in step.splitlines()]
+    pytest_index = lines.index(pytest_command)
+    pytest_status_index = lines.index("$pytestCode = $LASTEXITCODE")
+    verifier_index = next(
+        index
+        for index, line in enumerate(lines)
+        if line.startswith("python scripts/assert_junit_zero_skips.py")
+    )
+    verifier_status_index = lines.index("$verifyCode = $LASTEXITCODE")
+    pytest_exit_index = lines.index("if ($pytestCode -ne 0) { exit $pytestCode }")
+    verifier_exit_index = lines.index("exit $verifyCode")
+
+    assert (
+        pytest_index
+        < pytest_status_index
+        < verifier_index
+        < verifier_status_index
+        < pytest_exit_index
+        < verifier_exit_index
+    )
+
+
+PHYSICAL_FAMILY_NODES = {
+    "anamnesis_physical": {
+        "tests/test_anamnesis_portability.py::test_portable_store_hits_and_capability_mismatch_misses",
+        "tests/test_anamnesis_incremental.py::test_real_gpu_600_frame_acceptance",
+        "tests/test_anamnesis_inertness.py::test_native_terrain_cache_restores_all_graph_passes",
+        "tests/test_anamnesis_inertness.py::test_native_terrain_cache_rejects_moment_shadow_techniques",
+        "tests/test_anamnesis_p1.py::test_public_gpu_graph_cache_restores_intermediate_texture",
+    },
+    "sidera_vulkan": {
+        "tests/test_astro_night_golden.py::test_night_golden_matches_committed_vulkan_bytes",
+        "tests/test_astro_night_golden.py::test_golden_refresh_does_not_rewrite_the_committed_file_when_disabled",
+        "tests/test_determinism_hash.py::test_sidera_night_vulkan_reference_replays",
+    },
+    "cross_backend": {
+        "tests/test_determinism_hash.py::test_device_probe_reports_initialized_render_adapter",
+        "tests/test_shadow_tip.py::test_shadow_mask_is_identical_on_dx12_and_vulkan",
+    },
+    "nvidia_vulkan": {
+        "tests/test_recipe_goldens.py::test_nvidia_vulkan_recipe_pixel_golden_render_and_match",
+        "tests/test_terrain_runtime.py::test_nvidia_vulkan_terrain_constructor_child_smoke",
+    },
+    "limes_physical": {
+        "tests/test_vector_coverage.py::test_torture_plus_100k_road_segments_frame_time_within_budget",
+    },
+    "helios_physical": {
+        "tests/test_shadow_tip.py::test_shadow_mask_golden",
+    },
+}
+
+PHYSICAL_FAMILY_MODULES = {
+    "tests/test_preset_visual_parity.py": "nvidia_vulkan",
+    "tests/test_terrain_tv10_goldens.py": "nvidia_vulkan",
+    "tests/test_terrain_visual_goldens.py": "nvidia_vulkan",
+}
+
+
+def _function_markers(nodeid: str) -> set[str]:
+    path_text, function_name = nodeid.split("::", 1)
+    tree = ast.parse((ROOT / path_text).read_text(encoding="utf-8"))
+    functions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == function_name
+    ]
+    assert len(functions) == 1, nodeid
+    markers = set()
+    for decorator in functions[0].decorator_list:
+        call = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if (
+            isinstance(call, ast.Attribute)
+            and isinstance(call.value, ast.Attribute)
+            and isinstance(call.value.value, ast.Name)
+            and call.value.value.id == "pytest"
+            and call.value.attr == "mark"
+        ):
+            markers.add(call.attr)
+    return markers
+
+
 def test_e_validation_profiles_are_exhaustive_and_honest():
     universe = _tracked_test_files()
     unrun = set(ci_pytest_lane.unrun_files())
@@ -465,11 +557,14 @@ def test_e_slow_lane_is_marker_selected_and_accounted():
     slow_args = ci_pytest_lane.build_pytest_args(
         "full", [ci_pytest_lane.SLOW_LANE_SELECTOR]
     )
+    dedicated = "".join(
+        f" and not {marker}" for marker in ci_pytest_lane.DEDICATED_LANE_MARKERS
+    )
     assert default_args[default_args.index("-m") + 1] == (
-        "not slow and not interactive_viewer"
+        "not slow and not interactive_viewer" + dedicated
     )
     assert slow_args[slow_args.index("-m") + 1] == (
-        "slow and not interactive_viewer"
+        "slow and not interactive_viewer" + dedicated
     )
     assert ci_pytest_lane.SLOW_LANE_SELECTOR not in slow_args
 
@@ -484,6 +579,497 @@ def test_e_slow_lane_is_marker_selected_and_accounted():
     acceptance = _workflow_job(ci_yml, "full-acceptance-summary")
     assert "test-python-slow" not in pr_core.split("\n    runs-on:", 1)[0]
     assert "test-python-slow" in acceptance.split("\n    runs-on:", 1)[0]
+
+
+def test_e_recipe_goldens_are_routed_only_by_explicit_backend_lane(monkeypatch):
+    monkeypatch.delenv("FORGE3D_RECIPE_GOLDEN_VARIANT", raising=False)
+    generic_args = ci_pytest_lane.build_pytest_args("full", [])
+    generic_marker = generic_args[generic_args.index("-m") + 1]
+    assert "not recipe_golden" in generic_marker
+
+    monkeypatch.setenv("WGPU_BACKEND", "metal")
+    monkeypatch.setenv("FORGE3D_RECIPE_GOLDEN_VARIANT", "metal")
+    physical_args = ci_pytest_lane.build_pytest_args("full", [])
+    physical_marker = physical_args[physical_args.index("-m") + 1]
+    assert "not recipe_golden" in physical_marker
+
+
+def test_e_helios_pixel_golden_is_owned_by_the_existing_dedicated_lane():
+    source = (ROOT / "tests" / "test_shadow_tip.py").read_text(encoding="utf-8")
+    routed_nodes = (
+        "test_shadow_mask_golden",
+        "test_shadow_mask_is_identical_on_dx12_and_vulkan",
+    )
+    for name in routed_nodes:
+        decorators = source.split(f"def {name}()", 1)[0].rsplit("\n\n", 1)[-1]
+        assert "@pytest.mark.recipe_golden" in decorators
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    lane = workflow.split("test-helios-gpu:", 1)[1]
+    assert "FORGE3D_RUN_TERRAIN_GOLDENS: '1'" in lane
+    assert lane.count("tests/test_shadow_tip.py") == 1
+    assert (
+        "tests/test_determinism_hash.py::test_device_probe_reports_initialized_render_adapter"
+        in lane
+    )
+    assert "assert_junit_zero_skips.py" in lane
+
+    reusable = (
+        ROOT / ".github" / "workflows" / "test-python-wheel.yml"
+    ).read_text(encoding="utf-8")
+    assert "FORGE3D_RECIPE_GOLDEN_VARIANT" not in reusable
+    assert "WGPU_BACKEND" not in reusable
+
+    ci_yml = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    nvidia_job = _workflow_job(ci_yml, "test-golden-images-nvidia")
+    assert "WGPU_BACKEND: vulkan" in nvidia_job
+    assert "FORGE3D_RECIPE_GOLDEN_VARIANT: nvidia-vulkan" in nvidia_job
+    assert "python -m pip install -r tests/requirements.txt" in nvidia_job
+
+    certificate_refresh = (
+        ROOT / ".github" / "workflows" / "certificate-refresh.yml"
+    ).read_text(encoding="utf-8")
+    assert "WGPU_BACKEND: vulkan" in certificate_refresh
+    assert "FORGE3D_RECIPE_GOLDEN_VARIANT: nvidia-vulkan" in certificate_refresh
+    assert "python -m pip install -r tests/requirements.txt" in certificate_refresh
+
+    recipe_source = (ROOT / "tests" / "test_recipe_goldens.py").read_text(
+        encoding="utf-8"
+    )
+    assert "@pytest.mark.recipe_golden" in recipe_source
+    render_helper = recipe_source.split("def _render_recipe_golden_pixels", 1)[1]
+    assert render_helper.index("report = scene.render()") < render_helper.index(
+        "active_adapter = _active_render_adapter()"
+    )
+    assert render_helper.index("active_adapter = _active_render_adapter()") < render_helper.index(
+        "_assert_active_recipe_golden_adapter(active_adapter)"
+    )
+    nvidia_decorators = recipe_source.split(
+        "def test_nvidia_vulkan_recipe_pixel_golden_render_and_match", 1
+    )[0].rsplit("\n\n", 1)[-1]
+    assert '@pytest.mark.parametrize("spec", RECIPE_GOLDENS' in nvidia_decorators
+
+
+def test_e_tv6_example_is_owned_by_the_existing_m06_viewer_lane():
+    source = (
+        ROOT / "tests" / "test_terrain_tv6_heterogeneous_volumetrics.py"
+    ).read_text(encoding="utf-8")
+    target = source.split(
+        "def test_tv6_example_renders_real_dem_and_reports_budget", 1
+    )[0]
+    assert target.rstrip().endswith("@pytest.mark.interactive_viewer")
+
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    lane = _workflow_job(workflow, "test-m06-full-geospatial-viewer")
+    assert "RUN_M06_VIEWER_CI: '1'" in lane
+    assert "FORGE3D_VIEWER_BINARY" in lane
+    assert (
+        "tests/test_terrain_tv6_heterogeneous_volumetrics.py::"
+        "test_tv6_example_renders_real_dem_and_reports_budget"
+    ) in lane
+    assert "assert_junit_zero_skips.py" in lane
+
+
+def test_e_local_asset_closure_examples_are_shipped_and_skip_gates_do_not_return():
+    examples = (
+        "_terrain_feature_demo.py",
+        "terrain_tv4_material_variation_demo.py",
+        "terrain_tv6_heterogeneous_volumetrics_demo.py",
+        "terrain_tv10_subsurface_demo.py",
+        "terrain_tv21_blending_demo.py",
+        "terrain_tv24_reflection_probe_demo.py",
+    )
+    assert all((ROOT / "examples" / name).is_file() for name in examples)
+
+    former_gates = {
+        "test_california_cigar_smoke_hybrid.py": "California cache fixtures unavailable",
+        "test_lighting_alignment.py": "sample_dem.tif and studio_small_08_4k.hdr required",
+        "test_perspective_projection.py": "studio_small_08_4k.hdr not found",
+        "test_provenance_offline_verify.py": "Provenance fixture missing",
+        "test_shadow_techniques.py": "studio_small_08_4k.hdr not found",
+        "test_terrain_render_color_space.py": "studio_small_08_4k.hdr missing",
+        "test_terrain_tv6_heterogeneous_volumetrics.py": "interactive_viewer binary not found",
+    }
+    for filename, text in former_gates.items():
+        source = (TESTS / filename).read_text(encoding="utf-8")
+        assert text not in source, f"skip gate returned in {filename}: {text}"
+
+
+def test_e_full_python_profiles_install_one_manifest_and_reject_skips():
+    ci = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
+    reusable = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "test-python-wheel.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    profiles = (
+        (
+            reusable["jobs"]["test"]["steps"],
+            "Install wheel and full-suite dependencies",
+            "Run full default Python lane",
+            "Verify full Python lane has zero skips",
+            "Upload full Python lane JUnit",
+        ),
+        (
+            ci["jobs"]["test-python-slow"]["steps"],
+            "Install wheel and slow-lane dependencies",
+            "Run accounted slow Python lane",
+            "Verify slow Python lane has zero skips",
+            "Upload slow Python lane JUnit",
+        ),
+    )
+    full_steps = reusable["jobs"]["test"]["steps"]
+    slow_steps = ci["jobs"]["test-python-slow"]["steps"]
+    full_pip_installs = [
+        line.strip()
+        for step in full_steps
+        if "compatibility" not in str(step.get("if", ""))
+        for line in str(step.get("run", "")).splitlines()
+        if "pip install" in line
+    ]
+    slow_pip_installs = [
+        line.strip()
+        for step in slow_steps
+        for line in str(step.get("run", "")).splitlines()
+        if "pip install" in line
+    ]
+    manifest_install = ["python -m pip install -r tests/requirements.txt"]
+    assert full_pip_installs == manifest_install
+    assert slow_pip_installs == manifest_install
+
+    artifact_names = []
+    for steps, install_name, lane_name, verifier_name, upload_name in profiles:
+        indexes = {step.get("name"): index for index, step in enumerate(steps)}
+        install = steps[indexes[install_name]]
+        lane = steps[indexes[lane_name]]
+        verifier = steps[indexes[verifier_name]]
+        upload = steps[indexes[upload_name]]
+
+        pip_installs = [
+            line.strip()
+            for line in install["run"].splitlines()
+            if "pip install" in line
+        ]
+        assert pip_installs == ["python -m pip install -r tests/requirements.txt"]
+        assert indexes[lane_name] < indexes[verifier_name] < indexes[upload_name]
+        assert lane["run"].count("python scripts/ci_pytest_lane.py") == 1
+        assert "python -m pytest" not in lane["run"]
+        assert "always()" in verifier["if"] and "always()" in upload["if"]
+        assert upload["uses"] == "actions/upload-artifact@v4"
+        assert upload["with"]["if-no-files-found"] == "error"
+
+        junit = re.search(r"--junitxml=([^\s]+)", lane["run"])
+        assert junit is not None
+        junit_path = junit.group(1)
+        assert verifier["run"].split()[-1] == junit_path
+        assert upload["with"]["path"] == junit_path
+        artifact_names.append(upload["with"]["name"])
+
+    assert len(artifact_names) == len(set(artifact_names))
+    assert "${{ runner.os }}" in artifact_names[0]
+    assert "${{ matrix.python-version }}" in artifact_names[0]
+
+    requirements = {
+        re.split(r"[<>=!~\[]", line, maxsplit=1)[0].strip().lower()
+        for line in (TESTS / "requirements.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    required = {
+        "geopandas",
+        "ipywidgets",
+        "maturin",
+        "mypy",
+        "numpy",
+        "packaging",
+        "pillow",
+        "pyproj",
+        "pytest",
+        "pyyaml",
+        "rasterio",
+        "requests",
+        "scipy",
+        "shapely",
+        "xarray",
+    }
+    assert required <= requirements, (
+        f"full-profile dependencies missing: {sorted(required - requirements)}"
+    )
+    assert {"pytest-asyncio", "wgpu"}.isdisjoint(requirements)
+
+
+def test_e_full_acceptance_requires_authoritative_apple_metal_lane():
+    ci = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
+    job = ci["jobs"]["test-apple-metal-acceptance"]
+    assert job["runs-on"] == "macos-14"
+    assert job["needs"] == ["build-wheel-macos"]
+    assert "continue-on-error" not in job
+    assert "vars." not in str(job["if"])
+
+    env = job["env"]
+    assert env["PYTHONNOUSERSITE"] == "1"
+    assert env["FORGE3D_NO_BOOTSTRAP"] == "1"
+    assert env["FORGE3D_TEST_INSTALLED_WHEEL"] == "1"
+    assert env["FORGE3D_APPLE_METAL_ACCEPTANCE"] == "1"
+    assert env["WGPU_BACKEND"] == "metal"
+    assert env["WGPU_BACKENDS"] == "metal"
+    assert env["FORGE3D_RECIPE_GOLDEN_VARIANT"] == "metal"
+    assert env["FORGE3D_TESSELLA_REQUIRED_GPU"] == "1"
+    assert env["FORGE3D_RUN_LIVE_TEXT_GPU"] == "1"
+
+    steps = {step["name"]: step for step in job["steps"] if "name" in step}
+    install = steps["Install exact macOS wheel and acceptance dependencies"]["run"]
+    assert "python scripts/install_compatible_wheel.py dist" in install
+    assert "python -m pip install -r tests/requirements.txt" in install
+    assert "maturin" not in install
+
+    run = steps["Run authoritative Apple Metal acceptance matrix"]["run"]
+    assert run.count("python scripts/run_apple_metal_acceptance.py") == 1
+    assert "--junit" in run and "--evidence-dir" in run
+    assert "!scripts/run_apple_metal_acceptance.py" in (ROOT / ".gitignore").read_text(
+        encoding="utf-8"
+    )
+    verifier = steps["Verify Apple Metal acceptance has zero skips"]
+    assert "always()" in verifier["if"]
+    assert "scripts/assert_junit_zero_skips.py" in verifier["run"]
+    upload = steps["Upload Apple Metal acceptance evidence"]
+    assert "always()" in upload["if"]
+    assert upload["uses"] == "actions/upload-artifact@v4"
+    assert upload["with"]["if-no-files-found"] == "error"
+
+    summary = ci["jobs"]["full-acceptance-summary"]
+    assert "test-apple-metal-acceptance" in summary["needs"]
+    summary_run = summary["steps"][0]["run"]
+    assert (
+        "check_selected \"$full_selected\" "
+        "'${{ needs.test-apple-metal-acceptance.result }}' apple-metal"
+    ) in summary_run
+    policy = (ROOT / ".claude" / "rules" / "build-and-ci.md").read_text(
+        encoding="utf-8"
+    )
+    assert "test-apple-metal-acceptance" in policy
+    assert "required physical Apple/Metal" in policy
+
+
+def test_e_apple_metal_selection_is_one_checked_fail_closed_manifest():
+    from scripts import run_apple_metal_acceptance as metal
+
+    phases = metal.load_manifest()
+    assert [phase.name for phase in phases] == [
+        "tv20-normal-fresh-1",
+        "tv20-normal-fresh-2",
+        "contract-matrix",
+    ]
+    normal_node = (
+        "tests/test_tv20_virtual_texturing.py::TestTerrainMaterialVirtualTexturing::"
+        "test_vt_normal_family_changes_normal_aov_and_reports_dual_residency"
+    )
+    assert phases[0].nodes == (normal_node,)
+    assert phases[1].nodes == (normal_node,)
+
+    matrix = phases[2].nodes
+    required = {
+        "tests/test_tv20_virtual_texturing.py::TestTerrainMaterialVirtualTexturing::test_vt_enabled_changes_albedo_and_reports_residency",
+        "tests/test_aov.py::TestAovRendering::test_aov_numpy_outputs_are_real_and_normalized",
+        "tests/test_aov.py::TestAovRendering::test_aov_outputs_match_beauty_size_after_scaling_and_msaa",
+        "tests/test_flythrough_popping.py::test_depth_aov_matches_known_flat_plane_distance",
+        "tests/test_msdf_fidelity.py::test_live_gpu_shader_readback_matches_independent_quad_oracle",
+        "tests/test_msdf_fidelity.py::test_live_gpu_native_text_is_exact_across_two_scenes",
+        "tests/test_astro_night_golden.py::test_night_golden_is_cross_process_repeatable_on_pinned_backend",
+        "tests/test_cam_phi_wiring.py::test_cam_phi_changes_output",
+        "tests/test_cam_phi_wiring.py::test_cam_phi_four_quadrants",
+        "tests/test_determinism_hash.py::test_intra_backend_bit_identity",
+        "tests/test_determinism_hash.py::test_matches_committed_golden",
+        "tests/test_visibility_buffer.py::test_visibility_resolve_pays_once_and_picking_is_stable_for_10000_pixels",
+        "tests/test_flythrough_popping.py::test_visibility_shading_is_identical_and_hole_free_at_flythrough_settings",
+        "tests/test_recipe_goldens.py::test_recipe_goldens_render_and_match",
+    }
+    assert set(matrix) == required
+    ordered = (
+        "tests/test_cam_phi_wiring.py::test_cam_phi_changes_output",
+        "tests/test_cam_phi_wiring.py::test_cam_phi_four_quadrants",
+        "tests/test_determinism_hash.py::test_intra_backend_bit_identity",
+    )
+    start = matrix.index(ordered[0])
+    assert matrix[start : start + len(ordered)] == ordered
+    recipe_ids = metal.expected_recipe_ids()
+    assert len(recipe_ids) == 22
+    assert len(set(recipe_ids)) == len(recipe_ids)
+
+    valid_adapter = {
+        "backend": "Metal",
+        "device_type": "IntegratedGpu",
+        "software_fallback": False,
+        "name": "Apple M4",
+    }
+    metal._require_physical_apple_metal(valid_adapter, "test")
+    for invalid in (
+        {**valid_adapter, "backend": "Vulkan"},
+        {**valid_adapter, "device_type": "VirtualGpu"},
+        {**valid_adapter, "software_fallback": True},
+        {**valid_adapter, "name": "Apple Paravirtual GPU"},
+        {**valid_adapter, "name": "NVIDIA RTX"},
+    ):
+        with pytest.raises(RuntimeError):
+            metal._require_physical_apple_metal(invalid, "test")
+
+    manifest = metal._read_manifest()
+    assert manifest["recipe_cases"] == 22
+    assert manifest["expected_tests"] == 37
+    runner_source = (ROOT / "scripts" / "run_apple_metal_acceptance.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'os.environ["FORGE3D_APPLE_METAL_ACCEPTANCE"] = "1"' in runner_source
+    assert "--runxfail" not in runner_source
+    assert "--maxfail" not in runner_source
+    assert "retry" not in runner_source.casefold()
+    assert "_validate_phase_adapter_records(before, phases, evidence_dir)" in runner_source
+    assert "_phase_result_junits(phase, phase_junit, code, evidence_dir)" in runner_source
+    for filename in ("test_msdf_fidelity.py", "test_astro_night_golden.py"):
+        required_source = (TESTS / filename).read_text(encoding="utf-8")
+        assert "FORGE3D_APPLE_METAL_ACCEPTANCE" in required_source
+        assert "raise RuntimeError" in required_source
+
+
+def test_e_apple_metal_merged_junit_preserves_failures(tmp_path):
+    from scripts import run_apple_metal_acceptance as metal
+    from scripts.assert_junit_zero_skips import JUnitValidationError, verify_junit
+
+    clean = tmp_path / "clean.xml"
+    clean.write_text(
+        '<testsuite tests="1" failures="0" errors="0" skipped="0">'
+        '<testcase name="clean"/></testsuite>',
+        encoding="utf-8",
+    )
+    failed = tmp_path / "failed.xml"
+    metal._failure_junit(failed, "required adapter missing")
+    merged = tmp_path / "merged.xml"
+    metal._merge_junit([clean, failed], merged)
+
+    with pytest.raises(JUnitValidationError, match="zero-skip"):
+        verify_junit(merged)
+    assert metal._junit_test_count([merged]) == 2
+
+
+def test_e_apple_metal_phase_process_records_rendered_adapter(
+    monkeypatch, tmp_path
+):
+    from scripts import run_apple_metal_acceptance as metal
+
+    phase = metal.Phase("rendered-phase", ("tests/test_pixels.py::test_render",))
+    adapter = {
+        "backend": "metal",
+        "adapter_name": "Apple M4",
+        "device_name": "Apple M4",
+        "device_type": "integratedgpu",
+        "software_fallback": False,
+    }
+    events = []
+
+    def fake_pytest_main(args):
+        events.append(("render", tuple(args)))
+        return 0
+
+    def fake_engine_info():
+        events.append(("engine_info", None))
+        return adapter
+
+    monkeypatch.setattr(metal, "_pytest_main", fake_pytest_main)
+    monkeypatch.setattr(metal, "_initialized_engine_info", fake_engine_info)
+    record = tmp_path / "phase-adapter.json"
+
+    assert metal._run_phase_in_process(phase, tmp_path / "phase.xml", record) == 0
+    assert [event[0] for event in events] == ["render", "engine_info"]
+    assert json.loads(record.read_text(encoding="utf-8")) == {
+        "phase": phase.name,
+        "active_adapter": adapter,
+    }
+
+
+def test_e_apple_metal_requires_every_render_phase_adapter_and_exact_identity(
+    tmp_path,
+):
+    from scripts import run_apple_metal_acceptance as metal
+
+    probe = {
+        "backend": "Metal",
+        "name": "Apple M4",
+        "device_type": "IntegratedGpu",
+        "software_fallback": False,
+    }
+    active = {
+        "backend": "metal",
+        "adapter_name": "Apple M4",
+        "device_name": "Apple M4",
+        "device_type": "integratedgpu",
+        "software_fallback": False,
+    }
+    before = {"requested_backend": "metal", "probe": probe, "active_adapter": active}
+    phases = (
+        metal.Phase("first", ("tests/test_pixels.py::test_first",)),
+        metal.Phase("second", ("tests/test_pixels.py::test_second",)),
+        metal.Phase("third", ("tests/test_pixels.py::test_third",)),
+    )
+    for phase in phases:
+        (tmp_path / f"{phase.name}-adapter.json").write_text(
+            json.dumps({"phase": phase.name, "active_adapter": active}),
+            encoding="utf-8",
+        )
+
+    metal._validate_phase_adapter_records(before, phases, tmp_path)
+    mismatched = {**active, "adapter_name": "Apple M3", "device_name": "Apple M3"}
+    (tmp_path / "second-adapter.json").write_text(
+        json.dumps({"phase": "second", "active_adapter": mismatched}),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="second.*identity"):
+        metal._validate_phase_adapter_records(before, phases, tmp_path)
+    (tmp_path / "second-adapter.json").unlink()
+    with pytest.raises(RuntimeError, match="second.*missing"):
+        metal._validate_phase_adapter_records(before, phases, tmp_path)
+
+
+def test_e_apple_metal_nonzero_phase_exit_adds_authoritative_junit_error(tmp_path):
+    from scripts import run_apple_metal_acceptance as metal
+    from scripts.assert_junit_zero_skips import JUnitValidationError, verify_junit
+
+    phase = metal.Phase("rendered-phase", ("tests/test_pixels.py::test_render",))
+    clean = tmp_path / "clean.xml"
+    clean.write_text(
+        '<testsuite tests="1" failures="0" errors="0" skipped="0" time="2.5">'
+        '<testcase name="clean" time="2.5"/></testsuite>',
+        encoding="utf-8",
+    )
+    other = tmp_path / "other.xml"
+    other.write_text(
+        '<testsuite tests="1" failures="0" errors="0" skipped="0" time="1.25">'
+        '<testcase name="other" time="1.25"/></testsuite>',
+        encoding="utf-8",
+    )
+    inputs = [other, *metal._phase_result_junits(phase, clean, 1, tmp_path)]
+    merged = tmp_path / "merged.xml"
+    metal._merge_junit(inputs, merged)
+    root = ET.parse(merged).getroot()
+
+    assert root.attrib == {
+        "name": "Apple Metal acceptance",
+        "tests": "3",
+        "failures": "0",
+        "errors": "1",
+        "skipped": "0",
+        "time": "3.75",
+    }
+    assert "rendered-phase exited 1" in ET.tostring(root, encoding="unicode")
+    with pytest.raises(JUnitValidationError, match="zero-skip"):
+        verify_junit(merged)
 
 
 def test_e_anamnesis_physical_jobs_are_acceptance_scoped_honestly():
@@ -576,7 +1162,14 @@ def test_e_anamnesis_physical_jobs_are_acceptance_scoped_honestly():
     production = ci_yml.split("  test-anamnesis-production:", 1)[1].split(
         "\n  # ============================================================================\n  # Hosted determinism families", 1
     )[0]
-    assert "test_real_gpu_600_frame_acceptance" in production
+    assert "-m anamnesis_physical" in production
+    for path in (
+        "tests/test_anamnesis_incremental.py",
+        "tests/test_anamnesis_inertness.py",
+        "tests/test_anamnesis_p1.py",
+        "tests/test_anamnesis_portability.py",
+    ):
+        assert production.count(path) == 1
     aggregate = ci_yml.split("  full-acceptance-summary:", 1)[1]
     assert "anamnesis_physical_selected=" in aggregate
     for job_name in (
@@ -705,7 +1298,9 @@ def test_f_nvidia_visual_acceptance_is_physical_and_fail_closed():
     assert "FORGE3D_CERT_SIGNING_KEY" not in golden_job
     assert "FORGE3D_REQUIRE_PRODUCTION_SIGNING" not in golden_job
     assert "assert_junit_zero_skips.py" in pytest_step
-    assert "tests/test_astro_night_golden.py" in sidera_step
+    assert "run_nvidia_visual_acceptance.py --suite sidera" in sidera_step
+    for nodeid in PHYSICAL_FAMILY_NODES["sidera_vulkan"]:
+        assert visual_runner.count(f'"{nodeid}"') == 1
     assert "assert_junit_zero_skips.py" in sidera_step
     assert "continue-on-error" not in sidera_step
     assert "sidera_lane:" in golden_job
@@ -716,9 +1311,12 @@ def test_f_nvidia_visual_acceptance_is_physical_and_fail_closed():
         ("test_recipe_goldens.py", "recipe-render-adapter.json"),
     ):
         source = (TESTS / path).read_text(encoding="utf-8")
-        assert "assert_nvidia_vulkan_golden_adapter" in source
         assert evidence_name in source
-        if path != "test_recipe_goldens.py":
+        if path == "test_recipe_goldens.py":
+            assert "_active_render_adapter" in source
+            assert "engine_info" in source
+        else:
+            assert "assert_nvidia_vulkan_golden_adapter" in source
             assert "selected_golden_path(" in source
     assert "visual-gpu-evidence" in golden_job and "retention-days: 90" in golden_job
     assert "Require production certificate signing key" not in golden_job
@@ -845,3 +1443,126 @@ def test_substratia_physical_evidence_is_exact_head_and_cannot_be_bypassed():
     assert "FORGE3D_RUN_METAL_DIAGNOSTIC" in metal_diagnostic
     assert "continue-on-error: true" in metal_diagnostic
     assert "test-substratia-gpu," not in acceptance.split("\n    runs-on:", 1)[0]
+
+
+def test_physical_records_have_semantic_family_markers():
+    for marker, nodes in PHYSICAL_FAMILY_NODES.items():
+        for nodeid in nodes:
+            assert marker in _function_markers(nodeid), nodeid
+
+    for path, marker in PHYSICAL_FAMILY_MODULES.items():
+        source = (ROOT / path).read_text(encoding="utf-8")
+        assert f"pytestmark = pytest.mark.{marker}" in source
+        assert "allow_module_level=True" not in source
+
+
+def test_generic_profiles_semantically_deselect_physical_families():
+    registered = (ROOT / "pytest.ini").read_text(encoding="utf-8")
+    excluded = {*PHYSICAL_FAMILY_NODES, *PHYSICAL_FAMILY_MODULES.values()}
+    for marker in excluded:
+        assert f"    {marker}:" in registered
+
+    for slow in (False, True):
+        args = ci_pytest_lane.build_pytest_args("full", [], slow=slow)
+        expression = args[args.index("-m") + 1]
+        for marker in excluded:
+            assert f"not {marker}" in expression
+
+
+def test_nvidia_visual_and_sidera_families_have_complete_zero_skip_evidence():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    runner = (ROOT / "scripts/run_nvidia_visual_acceptance.py").read_text(
+        encoding="utf-8"
+    )
+    job = _workflow_job(workflow, "test-golden-images-nvidia")
+    summary = _workflow_job(workflow, "full-acceptance-summary")
+    visual_step = _workflow_step(job, "Run visual golden tests")
+    sidera_step = _workflow_step(job, "Run SIDERA NVIDIA Vulkan night golden")
+
+    for path in PHYSICAL_FAMILY_MODULES:
+        assert runner.count(f'"{path}"') == 1
+    for nodeid in PHYSICAL_FAMILY_NODES["nvidia_vulkan"]:
+        assert runner.count(f'"{nodeid}"') == 1
+    for nodeid in PHYSICAL_FAMILY_NODES["sidera_vulkan"]:
+        assert runner.count(f'"{nodeid}"') == 1
+    assert "--suite visual" in job
+    assert "--suite sidera" in job
+    _assert_pwsh_pytest_and_verifier_are_both_authoritative(
+        visual_step,
+        'python scripts/run_nvidia_visual_acceptance.py --suite visual --junit "$junit"',
+    )
+    _assert_pwsh_pytest_and_verifier_are_both_authoritative(
+        sidera_step,
+        'python scripts/run_nvidia_visual_acceptance.py --suite sidera --junit "$junit"',
+    )
+    assert "if: always()" in job and "uses: actions/upload-artifact@v4" in job
+    assert "test-golden-images-nvidia" in summary
+
+
+def test_anamnesis_family_has_one_complete_zero_skip_junit():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    job = _workflow_job(workflow, "test-anamnesis-production")
+    summary = _workflow_job(workflow, "full-acceptance-summary")
+    hosted_workflow = (
+        ROOT / ".github" / "workflows" / "determinism-matrix.yml"
+    ).read_text(encoding="utf-8")
+    hosted = _workflow_job(hosted_workflow, "anamnesis-seed")
+    physical_step = _workflow_step(
+        job, "Run the complete ANAMNESIS physical family with zero skips"
+    )
+
+    for nodeid in PHYSICAL_FAMILY_NODES["anamnesis_physical"]:
+        path = nodeid.split("::", 1)[0]
+        assert job.count(path) == 1
+    assert "-m anamnesis_physical" in job
+    assert "FORGE3D_RUN_GPU_ANAMNESIS: '1'" in job
+    assert job.count("--junitxml=") == 1
+    assert job.count("assert_junit_zero_skips.py") == 1
+    _assert_pwsh_pytest_and_verifier_are_both_authoritative(
+        physical_step,
+        "python -m pytest tests/test_anamnesis_incremental.py "
+        "tests/test_anamnesis_inertness.py tests/test_anamnesis_p1.py "
+        "tests/test_anamnesis_portability.py -m anamnesis_physical -v "
+        '--tb=short --basetemp="$env:FORGE3D_ANAMNESIS_BASE_TEMP" '
+        '--junitxml="$junit"',
+    )
+    assert "if: always()" in job and "uses: actions/upload-artifact@v4" in job
+    assert "test-anamnesis-production" in summary
+    assert '-m "not anamnesis_physical"' in hosted
+    assert (
+        "tests/test_anamnesis_incremental.py::test_real_gpu_600_frame_acceptance"
+        not in hosted
+    )
+
+
+def test_cross_backend_family_is_selected_once_by_required_helios():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    job = _workflow_job(workflow, "test-helios-gpu")
+    summary = _workflow_job(workflow, "full-acceptance-summary")
+    device_probe = (
+        "tests/test_determinism_hash.py::"
+        "test_device_probe_reports_initialized_render_adapter"
+    )
+
+    assert job.count(device_probe) == 1
+    assert job.count("tests/test_shadow_tip.py") == 1
+    assert job.count("--junitxml=") == 1
+    assert job.count("assert_junit_zero_skips.py") == 1
+    assert "if: always()" in job and "uses: actions/upload-artifact@v4" in job
+    assert "test-helios-gpu" in summary
+
+
+def test_limes_and_approved_tv6_share_required_m06_evidence_once():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    job = _workflow_job(workflow, "test-m06-full-geospatial-viewer")
+    summary = _workflow_job(workflow, "full-acceptance-summary")
+
+    assert job.count("'tests/test_vector_coverage.py'") == 1
+    assert job.count(
+        "'tests/test_terrain_tv6_heterogeneous_volumetrics.py::"
+        "test_tv6_example_renders_real_dem_and_reports_budget'"
+    ) == 1
+    assert job.count("--junitxml=") == 1
+    assert job.count("assert_junit_zero_skips.py") == 1
+    assert "if: always()" in job and "uses: actions/upload-artifact@v4" in job
+    assert "test-m06-full-geospatial-viewer" in summary

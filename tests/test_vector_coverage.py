@@ -538,6 +538,7 @@ def test_analytic_output_is_byte_identical_across_two_runs():
     ]
 
 
+@pytest.mark.limes_physical
 @pytest.mark.skipif(
     not (_hardware_adapter_available() and os.environ.get("RUN_LIMES_GPU_CI") == "1"),
     reason="LIMES throughput gate runs on the designated physical-GPU lane",

@@ -537,7 +537,8 @@ struct TerrainVTUniforms {
     // source of truth for family enablement, addressing, size, and encoding.
     family_info: array<TerrainVtFamilyInfo, 3>,
     // Bounded feedback append (TESSELLA win 1). x = slot capacity (a power of
-    // two), y/z = physical page-table base width/height, w unused.
+    // two), y/z = physical page-table base width/height, w = capture resident
+    // feedback for source-id provenance.
     config3: vec4<u32>,
 }
 
@@ -1490,9 +1491,10 @@ struct VertexOutput {
     @location(0) world_position : vec3<f32>,
     @location(1) world_normal : vec3<f32>,
     @location(2) tex_coord : vec2<f32>,
-    // TESSELLA visibility identity: ((selected_lod & 0xf) << 12) | (tile_index & 0xfff).
-    // terrain_visbuffer_write.wgsl packs this with the primitive index; no
-    // forward shading path reads it.
+    // TESSELLA visibility identity: (selected_lod << 14) | tile_index.
+    // Validated host limits reserve 3 LOD bits and 14 tile bits; pass 1 writes
+    // this in Rg32Uint.x and the full-u32 primitive index in Rg32Uint.y. No
+    // forward shading path reads tile_id.
     @location(3) @interpolate(flat) tile_id : u32,
 };
 
@@ -1693,22 +1695,18 @@ fn sample_height_geom_level(uv: vec2<f32>, lod: f32) -> f32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TESSELLA: explicit screen-space gradients for the deferred visibility resolve
+// TESSELLA: explicit screen-space gradients for the visibility resolve
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// The forward pass rasterises a 2x2 quad PER TRIANGLE, so `dpdx`/`dpdy` of an
-// interpolated attribute is always that one triangle's own screen gradient --
-// uncovered lanes are helper invocations carrying the same triangle's
-// extrapolated attributes. The visibility resolve shades from a full-screen
-// triangle instead, where a quad can straddle two terrain triangles at different
-// clipmap LODs, so the hardware quad derivative there is a mixture of two
-// surfaces and drives LOD selection, the LOD-aware height normal, the
-// virtual-texture mip and the triplanar footprint to different values than the
-// forward path computed for the same pixel.
+// The runtime pass-2 geometry replay captures each triangle's `dpdx`/`dpdy`
+// before the pass-1 identity ownership discard. Downstream shading runs after
+// that divergent discard, where implicit derivatives are undefined, so it
+// consumes the captured values here. The static/debug full-screen helper cannot
+// use geometry derivatives and reconstructs the covering triangle's gradients.
 //
-// Pass 2 therefore reconstructs the covering triangle's own quad-aligned
-// gradients and publishes them here. The forward pipeline never writes these,
-// so `terrain_explicit_gradients` stays 0 and every `select` below returns the
+// Both pass-2 entry points publish their authoritative gradients here. The
+// forward pipeline never writes these, so `terrain_explicit_gradients` stays 0
+// and every `select` below returns the
 // hardware derivative bit-for-bit: the forward image is unchanged.
 var<private> terrain_explicit_gradients: u32 = 0u;
 var<private> terrain_explicit_ddx_uv: vec2<f32> = vec2<f32>(0.0, 0.0);
@@ -2195,7 +2193,7 @@ fn terrain_vt_write_family_feedback_uv(
         terrain_vt_page_table_layer(family_slot, material_index),
         desired_mip,
     );
-    if (desired_entry.z > 0.5) {
+    if (desired_entry.z > 0.5 && terrain_vt_uniforms.config3.w == 0u) {
         return;
     }
     terrain_vt_write_feedback(
@@ -5121,11 +5119,11 @@ fn fs_aov_main(input : VertexOutput) -> FragmentOutput {
 }
 // TERRAIN_AOV_ENTRY_END
 
-// TESSELLA pass 1 (`fs_visibility`) lives in src/shaders/terrain_visbuffer_write.wgsl
-// and pass 2 (`fs_visibility_resolve_fullscreen`) in
-// src/shaders/terrain_visibility_fullscreen.wgsl; both are appended to this
-// module at assembly time by `shader_sources`. Neither is defined here, so the
-// forward module cannot drift from the packing those two files agree on.
+// TESSELLA pass 1 (`fs_visibility`) lives in terrain_visbuffer_write.wgsl. The
+// ID-owned geometry resolve (`fs_visibility_geometry`) and the static/debug
+// full-screen reconstruction helper live in terrain_visibility_fullscreen.wgsl.
+// `shader_sources` appends the appropriate file to this shared module so all
+// paths use the same validated 3-bit-LOD/14-bit-tile vertex identity.
 
 // ──────────────────────────────────────────────────────────────────────────
 // BOP-P2-02: Clipmap ring/skirt vertex path.
@@ -5189,10 +5187,10 @@ fn vs_clipmap_main(
     out.world_position = vec3<f32>(instance_position.xy, world_z_original);
     out.world_normal = vec3<f32>(0.0, 0.0, 1.0);
     out.tex_coord = uv;
-    // TESSELLA: the clipmap vertex stage always emits the packed tile/LOD
-    // identity terrain_visbuffer_write.wgsl consumes. No forward shading path
-    // reads tile_id, so both pipelines share this one vertex stage.
-    out.tile_id = ((_tile_id_lod.y & 0xfu) << 12u) | (_tile_id_lod.x & 0xfffu);
+    // TESSELLA: the shared clipmap vertex stage emits the validated 3-bit LOD /
+    // 14-bit tile identity consumed by both visibility passes. No forward
+    // shading path reads tile_id.
+    out.tile_id = (_tile_id_lod.y << 14u) | _tile_id_lod.x;
     out.clip_position = det_mat4_mul_vec4(
         u_terrain.proj,
         det_mat4_mul_vec4(

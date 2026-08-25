@@ -78,6 +78,7 @@ def test_engine_wgsl_fingerprint_uses_portable_relative_paths():
     assert native["wgsl_tree_sha256"] == digest.hexdigest()
 
 
+@pytest.mark.anamnesis_physical
 def test_portable_store_hits_and_capability_mismatch_misses(tmp_path):
     if os.environ.get("FORGE3D_RUN_GPU_ANAMNESIS") != "1":
         pytest.skip(

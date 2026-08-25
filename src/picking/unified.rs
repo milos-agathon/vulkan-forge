@@ -11,9 +11,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::{Buffer, Device, Queue};
 
-pub(crate) fn unpack_visibility_id(packed: u32) -> Option<(u32, u32)> {
-    let value = packed.checked_sub(1)?;
-    Some((value >> 16, value & 0xffff))
+pub(crate) fn unpack_visibility_id(encoded_tile: u32, primitive: u32) -> Option<(u32, u32)> {
+    Some((encoded_tile.checked_sub(1)?, primitive))
 }
 
 /// Rich pick result with full feature attributes
@@ -165,7 +164,7 @@ impl UnifiedPickingSystem {
     }
 
     /// Read terrain tile/triangle identities directly from TESSELLA's
-    /// R32Uint visibility buffer. One aligned row is reserved per requested
+    /// Rg32Uint visibility buffer. One aligned row is reserved per requested
     /// pixel so arbitrary batches, including the 10,000-pixel differential
     /// gate, use one submission and one map rather than a CPU ray loop.
     pub fn pick_visibility_pixels(
@@ -236,9 +235,11 @@ impl UnifiedPickingSystem {
             .enumerate()
             .map(|(index, _)| {
                 let offset = index * ROW_BYTES as usize;
-                let packed =
+                let encoded_tile =
                     u32::from_le_bytes(mapped[offset..offset + 4].try_into().expect("4 bytes"));
-                unpack_visibility_id(packed)
+                let primitive =
+                    u32::from_le_bytes(mapped[offset + 4..offset + 8].try_into().expect("4 bytes"));
+                unpack_visibility_id(encoded_tile, primitive)
             })
             .collect();
         drop(mapped);
@@ -583,8 +584,10 @@ mod tests {
 
     #[test]
     fn visibility_id_reserves_zero_for_background() {
-        assert_eq!(unpack_visibility_id(0), None);
-        let packed = ((0x1234 << 16) | 0x56) + 1;
-        assert_eq!(unpack_visibility_id(packed), Some((0x1234, 0x56)));
+        assert_eq!(unpack_visibility_id(0, u32::MAX), None);
+        assert_eq!(
+            unpack_visibility_id(0x1234 + 1, 0x1_0056),
+            Some((0x1234, 0x1_0056))
+        );
     }
 }

@@ -245,14 +245,32 @@ class TestCogOverviews:
         not cog_available() and not rasterio_available(),
         reason="Neither native COG nor rasterio available"
     )
-    def test_overview_dimensions_decrease(self, local_dem_url):
+    def test_overview_dimensions_decrease(self, tmp_path):
         """Test that overview dimensions decrease with level."""
+        import rasterio
+        from rasterio.enums import Resampling
+        from rasterio.transform import from_origin
         from forge3d.cog import open_cog
-        
-        ds = open_cog(local_dem_url, cache_size_mb=64)
-        
-        if ds.overview_count < 2:
-            pytest.skip("COG has no overviews")
+
+        path = tmp_path / "overviewed.tif"
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            width=64,
+            height=64,
+            count=1,
+            dtype="float32",
+            tiled=True,
+            blockxsize=16,
+            blockysize=16,
+            transform=from_origin(0.0, 64.0, 1.0, 1.0),
+        ) as dataset:
+            dataset.write(np.arange(64 * 64, dtype=np.float32).reshape(64, 64), 1)
+            dataset.build_overviews([2, 4], Resampling.average)
+
+        ds = open_cog(f"file://{path}", cache_size_mb=64)
+        assert ds.overview_count >= 2
         
         info0 = ds.ifd_info(0)
         info1 = ds.ifd_info(1)
@@ -417,15 +435,13 @@ class TestCogAvailability:
         result = is_cog_available()
         assert isinstance(result, bool)
     
-    def test_cog_dataset_unavailable_error(self):
+    def test_cog_dataset_unavailable_error(self, monkeypatch):
         """Test error when COG not available and no fallback."""
-        from forge3d.cog import is_cog_available, CogDataset
-        
-        if is_cog_available():
-            pytest.skip("COG is available")
-        
+        from forge3d import cog
+
+        monkeypatch.setattr(cog, "_COG_AVAILABLE", False)
         with pytest.raises(RuntimeError, match="COG streaming is not available"):
-            CogDataset("file:///nonexistent.tif")
+            cog.CogDataset("file:///nonexistent.tif")
 
 
 class TestRemoteCog:

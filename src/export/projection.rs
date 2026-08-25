@@ -4,6 +4,8 @@
 //! 2D bounds to screen coordinate mapping.
 
 use glam::{Mat4, Vec2, Vec3};
+#[cfg(feature = "extension-module")]
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 /// 2D axis-aligned bounding box for coordinate mapping.
 #[derive(Debug, Clone, Copy)]
@@ -176,6 +178,40 @@ pub fn project_2d_to_screen(point: Vec2, bounds: &Bounds2D, viewport: (u32, u32)
     let y = (1.0 - normalized_y) * viewport.1 as f32;
 
     (x, y)
+}
+
+#[cfg(feature = "extension-module")]
+#[pyfunction(name = "project_3d_to_2d")]
+pub fn project_3d_to_2d_py(
+    point: (f32, f32, f32),
+    view_proj: Vec<f32>,
+    viewport: (u32, u32),
+) -> PyResult<Option<(f32, f32)>> {
+    if view_proj.len() != 16 {
+        return Err(PyValueError::new_err(
+            "view_proj must contain 16 column-major values",
+        ));
+    }
+    let matrix = Mat4::from_cols_slice(&view_proj);
+    Ok(project_3d_to_2d(
+        Vec3::new(point.0, point.1, point.2),
+        &matrix,
+        viewport,
+    ))
+}
+
+#[cfg(feature = "extension-module")]
+#[pyfunction(name = "project_2d_to_screen")]
+pub fn project_2d_to_screen_py(
+    point: (f32, f32),
+    bounds: (f32, f32, f32, f32),
+    viewport: (u32, u32),
+) -> (f32, f32) {
+    project_2d_to_screen(
+        Vec2::new(point.0, point.1),
+        &Bounds2D::from_extents(bounds.0, bounds.1, bounds.2, bounds.3),
+        viewport,
+    )
 }
 
 /// Project multiple 2D points from bounds coordinates to screen coordinates.

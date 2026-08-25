@@ -85,7 +85,7 @@ def test_visibility_write_and_resolve_are_separate_shader_sources():
 
     Before the split both visibility pipelines compiled one string produced by
     two `String::replace` calls over terrain_pbr_pom.wgsl, so the literal
-    `fs_visibility` in that file was dead code carrying a packing the runtime
+    `fs_visibility` in that file was dead code carrying an identity the runtime
     never used.
     """
     root = Path(__file__).resolve().parents[1]
@@ -93,15 +93,17 @@ def test_visibility_write_and_resolve_are_separate_shader_sources():
         encoding="utf-8"
     )
     assert "fn fs_visibility(" in write
-    assert "TERRAIN_VISBUFFER_TILE_SHIFT" in write
+    assert ") -> @location(0) vec2<u32>" in write
+    assert "vec2<u32>(input.tile_id + 1u, primitive_index)" in write
+    assert "PRIMITIVE_MASK" not in write
 
     pbr = (root / "src/shaders/terrain_pbr_pom.wgsl").read_text(encoding="utf-8")
     assert "fn fs_visibility(" not in pbr  # pass 1 moved to its own file
     assert "fn fs_visibility_resolve(" not in pbr  # dead depth-equal variant
     assert "0x00ffffffu" not in pbr  # stale 24|8 packing comment and code
-    # The packed tile/LOD identity is written unconditionally now, so no
+    # The tile/LOD identity is written unconditionally now, so no
     # assembly-time rewrite decides what pass 1 reads.
-    assert "out.tile_id = ((_tile_id_lod.y & 0xfu) << 12u)" in pbr
+    assert "out.tile_id = (_tile_id_lod.y << 14u) | _tile_id_lod.x" in pbr
 
     sources = (root / "src/shader_sources.rs").read_text(encoding="utf-8")
     assert "fn terrain_visbuffer_write(" in sources
@@ -115,6 +117,7 @@ def test_visibility_write_and_resolve_are_separate_shader_sources():
     )
     assert "preprocess_visibility_write_shader" in pipeline
     assert "preprocess_visibility_resolve_shader" in pipeline
+    assert "format: wgpu::TextureFormat::Rg32Uint" in pipeline
     # The atlas variant is selected, and the compatibility path is recorded.
     assert "shader_sources::terrain_bindless()" in pipeline
     assert "terrain_vt_bindless_atlas" in pipeline
@@ -169,7 +172,7 @@ def test_visibility_resolve_pays_once_and_picking_is_stable_for_10000_pixels():
         # near-origin relief and makes the visibility differential vacuous on
         # some adapters. Span several rings at a real view distance and keep
         # the indirect frustum path active so the 10,000-pixel differential
-        # covers tile/LOD packing as well as primitive identity.
+        # covers the tile/LOD component as well as the full primitive identity.
         forward_params = _make_params(
             size_px=size,
             theta_deg=10.0,
@@ -327,6 +330,58 @@ def test_visibility_resolve_pays_once_and_picking_is_stable_for_10000_pixels():
             "bitwise_identical_to_forward": True,
         },
     )
+
+
+@pytest.mark.gpu_lane
+@requires_terrain
+def test_visibility_maximum_valid_direct_path_is_injective_and_pays_once():
+    size = (64, 64)
+    camera_mode = "clipmap:8:256:256:10:0.3"
+    dem = _steep_dem(96)
+
+    with tempfile.TemporaryDirectory() as td:
+        hdr = Path(td) / "probe.hdr"
+        _write_test_hdr(hdr)
+        ibl = f3d.IBL.from_hdr(str(hdr), intensity=1.0)
+
+        forward_renderer = f3d.TerrainRenderer(f3d.Session(window=False))
+        forward = _render_rgba(
+            forward_renderer,
+            _make_params(
+                camera_mode=camera_mode,
+                size_px=size,
+                theta_deg=10.0,
+                cam_radius=50_000.0,
+                culling="none",
+            ),
+            dem,
+            ibl,
+        )
+
+        renderer = f3d.TerrainRenderer(f3d.Session(window=False))
+        visibility = _render_rgba(
+            renderer,
+            _make_params(
+                camera_mode=camera_mode,
+                size_px=size,
+                theta_deg=10.0,
+                cam_radius=50_000.0,
+                culling="none",
+                shading="visibility",
+            ),
+            dem,
+            ibl,
+        )
+        stats = visibility_stats()
+
+    np.testing.assert_array_equal(visibility, forward)
+    assert stats["material_invocations"] == stats["visible_pixels"]
+    identities = renderer.pick_visibility_pixels(
+        [(x, y) for y in range(size[1]) for x in range(size[0])]
+    )
+    visible = [identity for identity in identities if identity is not None]
+    assert visible
+    assert max(primitive for _, primitive in visible) > 0xFFFF, max(visible)
 
 
 @pytest.mark.gpu_lane

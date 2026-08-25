@@ -138,9 +138,9 @@ impl TerrainScene {
     }
 
     /// TESSELLA pass 2 module: terrain + visibility resolve helpers. The
-    /// runtime entry point replays clipmap geometry at equal depth; keeping a
-    /// distinct source from pass 1 gives the certificate two hashes instead of
-    /// aliasing one module.
+    /// runtime entry point replays clipmap geometry and accepts only the
+    /// primitive named by pass 1; keeping a distinct source from pass 1 gives
+    /// the certificate two hashes instead of aliasing one module.
     fn preprocess_visibility_resolve_shader(device: &wgpu::Device) -> String {
         crate::shader_sources::terrain_visbuffer_resolve(Self::terrain_atlas_is_bindless(device))
     }
@@ -333,7 +333,7 @@ impl TerrainScene {
                             module: &shader,
                             entry_point: "fs_visibility",
                             targets: &[Some(wgpu::ColorTargetState {
-                                format: wgpu::TextureFormat::R32Uint,
+                                format: wgpu::TextureFormat::Rg32Uint,
                                 blend: None,
                                 write_mask: wgpu::ColorWrites::ALL,
                             })],
@@ -414,13 +414,7 @@ impl TerrainScene {
                             })],
                         }),
                         primitive: wgpu::PrimitiveState::default(),
-                        depth_stencil: Some(wgpu::DepthStencilState {
-                            format: TERRAIN_DEPTH_FORMAT,
-                            depth_write_enabled: false,
-                            depth_compare: wgpu::CompareFunction::Equal,
-                            stencil: wgpu::StencilState::default(),
-                            bias: wgpu::DepthBiasState::default(),
-                        }),
+                        depth_stencil: None,
                         multisample: wgpu::MultisampleState::default(),
                         multiview: None,
                     },

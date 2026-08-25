@@ -162,6 +162,7 @@ def test_incremental_elides_unchanged_ancestors_and_batches_lru_touches(
     )
 
 
+@pytest.mark.anamnesis_physical
 @pytest.mark.slow
 @pytest.mark.skipif(
     os.environ.get("FORGE3D_RUN_GPU_ANAMNESIS") != "1",

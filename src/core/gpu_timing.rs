@@ -489,7 +489,22 @@ impl GpuTimingManager {
     /// re-report scopes from a prior call.
     pub fn get_results_blocking(&mut self) -> RenderResult<Vec<TimingResult>> {
         let slot = self.frame_parity;
-        let results = pollster::block_on(self.read_results_from_slot(slot))?;
+        let results = if self.supports_timestamps {
+            pollster::block_on(self.read_results_from_slot(slot))?
+        } else {
+            self.scope_labels[slot]
+                .iter()
+                .enumerate()
+                .map(|(scope_index, name)| TimingResult {
+                    name: name.clone(),
+                    draw_calls: self.scope_draw_calls[slot]
+                        .get(scope_index)
+                        .copied()
+                        .unwrap_or(0),
+                    ..Default::default()
+                })
+                .collect()
+        };
         self.query_index[slot] = 0;
         self.scope_labels[slot].clear();
         self.scope_draw_calls[slot].clear();
@@ -921,6 +936,47 @@ mod tests {
             .certificate_gpu_ms(),
             3.25
         );
+    }
+
+    #[test]
+    fn disabled_timestamps_preserve_scope_labels_and_draw_counts() {
+        let Some((device, queue)) = crate::core::gpu::create_device_and_queue_for_test() else {
+            eprintln!("[gpu_timing test] no GPU adapter available; skipping");
+            return;
+        };
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+        let mut manager = GpuTimingManager::new(
+            device.clone(),
+            queue.clone(),
+            GpuTimingConfig {
+                enable_timestamps: false,
+                enable_pipeline_stats: false,
+                enable_debug_markers: false,
+                label_prefix: "forge3d".to_string(),
+                max_queries_per_frame: 32,
+            },
+        )
+        .expect("create inert timing manager");
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("gpu_timing_disabled"),
+        });
+
+        let first = manager.begin_scope(&mut encoder, "terrain.main");
+        manager.end_scope_with_draws(&mut encoder, first, 3);
+        let second = manager.begin_scope(&mut encoder, "terrain.readback_copy");
+        manager.end_scope_with_draws(&mut encoder, second, 1);
+
+        let results = manager.get_results_blocking().expect("get untimed results");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name, "terrain.main");
+        assert_eq!(results[0].draw_calls, 3);
+        assert!(!results[0].timestamp_valid);
+        assert_eq!(results[0].certificate_gpu_ms(), 0.0);
+        assert_eq!(results[1].name, "terrain.readback_copy");
+        assert_eq!(results[1].draw_calls, 1);
+        assert!(!results[1].timestamp_valid);
+        assert_eq!(results[1].certificate_gpu_ms(), 0.0);
     }
 
     #[test]

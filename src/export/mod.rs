@@ -9,7 +9,7 @@
 //! - SVG generation with polygon and polyline elements
 //! - Label text rendering with halo support
 
-mod projection;
+pub(crate) mod projection;
 mod svg;
 mod svg_labels;
 

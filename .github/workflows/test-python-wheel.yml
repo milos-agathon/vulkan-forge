@@ -83,7 +83,7 @@ jobs:
         if: inputs.test_mode == 'full'
         run: |
           python scripts/install_compatible_wheel.py dist
-          python -m pip install pytest pyyaml numpy pillow mypy pyproj rasterio
+          python -m pip install -r tests/requirements.txt
 
       - name: Install system fonts
         if: inputs.test_mode == 'full' && runner.os == 'Linux'
@@ -105,5 +105,17 @@ jobs:
         env:
           FORGE3D_NO_BOOTSTRAP: '1'
         run: |
-          python -m pytest tests/test_install_smoke.py tests/test_license.py -v --tb=short
-          python scripts/ci_pytest_lane.py --profile full -v --tb=short
+          python -c "from pathlib import Path; Path('test-results').mkdir(exist_ok=True)"
+          python scripts/ci_pytest_lane.py --profile full -v --tb=short --junitxml=test-results/python-full.xml
+
+      - name: Verify full Python lane has zero skips
+        if: always() && inputs.test_mode == 'full'
+        run: python scripts/assert_junit_zero_skips.py test-results/python-full.xml
+
+      - name: Upload full Python lane JUnit
+        if: always() && inputs.test_mode == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-full-junit-${{ runner.os }}-${{ matrix.python-version }}
+          path: test-results/python-full.xml
+          if-no-files-found: error

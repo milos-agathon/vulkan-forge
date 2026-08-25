@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 import importlib.util
-import sys
 import types
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
-
 import forge3d as f3d
 
 
 def _load_module_by_path(path: Path) -> types.ModuleType:
-    spec = importlib.util.spec_from_file_location("terrain_tv6_heterogeneous_volumetrics_demo", str(path))
+    spec = importlib.util.spec_from_file_location(
+        "terrain_tv6_heterogeneous_volumetrics_demo", str(path)
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)  # type: ignore[attr-defined]
@@ -29,28 +28,22 @@ def _rasterio_available() -> bool:
         return False
 
 
-@pytest.mark.skipif(
-    not _rasterio_available(),
-    reason="TV6 real-DEM example requires rasterio for the GeoTIFF fixture",
-)
+@pytest.mark.interactive_viewer
 def test_tv6_example_renders_real_dem_and_reports_budget(tmp_path: Path) -> None:
+    assert _rasterio_available(), "TV6 dedicated viewer lane requires rasterio"
     repo = Path(__file__).resolve().parents[1]
     example_path = repo / "examples" / "terrain_tv6_heterogeneous_volumetrics_demo.py"
-    if not example_path.exists():
-        pytest.skip("TV6 example script is not present in this checkout")
+    assert example_path.exists(), "TV6 example script is required"
     mod = _load_module_by_path(example_path)
 
-    try:
-        result = mod.render_demo(
-            dem_path=mod.DEFAULT_DEM,
-            output_dir=tmp_path / "tv6-demo",
-            width=960,
-            height=600,
-            max_dem_size=768,
-            timeout=90.0,
-        )
-    except FileNotFoundError:
-        pytest.skip("interactive_viewer binary not found")
+    result = mod.render_demo(
+        dem_path=mod.DEFAULT_DEM,
+        output_dir=tmp_path / "tv6-demo",
+        width=960,
+        height=600,
+        max_dem_size=768,
+        timeout=90.0,
+    )
 
     baseline_path = Path(result["baseline_path"])
     contact_sheet_path = Path(result["contact_sheet_path"])

@@ -12,10 +12,10 @@ import numpy as np
 import pytest
 
 import forge3d as f3d
+from forge3d._native import get_native_module
 
 from _terrain_runtime import terrain_rendering_available
 from tests._golden_variants import (
-    assert_nvidia_vulkan_golden_adapter,
     nvidia_vulkan_golden_selected,
     selected_golden_variant,
 )
@@ -52,6 +52,8 @@ ARTIFACT_DIR = (
 )
 SSIM_MIN = 0.995
 MEAN_ABS_MAX = 2.0
+_DEPTH_CONVENTION = "normalized_device_depth"
+_DEPTH_DOMAIN = [0.0, 1.0]
 
 
 def _recipe_golden_variant() -> str | None:
@@ -59,6 +61,48 @@ def _recipe_golden_variant() -> str | None:
     return selected_golden_variant(
         "FORGE3D_RECIPE_GOLDEN_VARIANT", implicit_metal=False
     )
+
+
+def _assert_active_recipe_golden_adapter(
+    adapter: dict[str, object],
+) -> dict[str, object]:
+    """Bind the selected recipe baseline to the adapter that rendered it."""
+    variant = _recipe_golden_variant()
+    assert variant is not None, (
+        "Recipe golden rendering requires an explicit "
+        "FORGE3D_RECIPE_GOLDEN_VARIANT; refusing to compare an unattributed "
+        "hardware render with the canonical fixture"
+    )
+    expected_backend = "vulkan" if variant == "nvidia-vulkan" else "metal"
+    assert str(adapter.get("backend", "")).lower() == expected_backend
+    device_type = str(adapter.get("device_type", "")).lower()
+    assert device_type in {
+        "integratedgpu",
+        "discretegpu",
+    }
+    assert adapter.get("software_fallback") is False
+    adapter_name = str(adapter.get("adapter_name", "")).strip()
+    device_name = str(adapter.get("device_name", "")).strip()
+    assert adapter_name and device_name and adapter_name == device_name
+    identity = adapter_name.lower()
+    assert not any(
+        token in identity for token in ("cpu", "software", "virtual", "llvmpipe")
+    )
+    if variant == "nvidia-vulkan":
+        assert device_type == "discretegpu"
+        assert "nvidia" in identity and "apple" not in identity
+    else:
+        assert "apple" in identity and "nvidia" not in identity
+    return adapter
+
+
+def _active_render_adapter() -> dict[str, object]:
+    """Return the exact initialized-context record after a completed render."""
+    native = get_native_module()
+    assert native is not None and hasattr(native, "engine_info"), (
+        "Recipe golden render did not expose active adapter identity"
+    )
+    return dict(native.engine_info())
 
 
 @dataclass(frozen=True)
@@ -310,6 +354,9 @@ def _label_halo_depth(tmp_path: Path) -> f3d.MapScene:
                         "id": "front",
                         "text": "Front",
                         "geometry": {"type": "Point", "coordinates": (28.0, 26.0, 0.25)},
+                        "projected_anchor": [28.0, 26.0, 0.25],
+                        "projected_depth_convention": _DEPTH_CONVENTION,
+                        "projected_depth_domain": _DEPTH_DOMAIN,
                         "typography": {
                             "color": [1.0, 1.0, 1.0, 1.0],
                             "halo_color": [0.02, 0.02, 0.02, 0.92],
@@ -320,6 +367,9 @@ def _label_halo_depth(tmp_path: Path) -> f3d.MapScene:
                         "id": "summit",
                         "text": "Summit",
                         "geometry": {"type": "Point", "coordinates": (72.0, 50.0, 0.20)},
+                        "projected_anchor": [72.0, 50.0, 0.20],
+                        "projected_depth_convention": _DEPTH_CONVENTION,
+                        "projected_depth_domain": _DEPTH_DOMAIN,
                         "typography": {
                             "color": [0.12, 0.16, 0.18, 1.0],
                             "halo_color": [1.0, 1.0, 1.0, 0.88],
@@ -330,6 +380,9 @@ def _label_halo_depth(tmp_path: Path) -> f3d.MapScene:
                         "id": "behind",
                         "text": "Behind",
                         "geometry": {"type": "Point", "coordinates": (28.0, 26.0, 0.85)},
+                        "projected_anchor": [28.0, 26.0, 0.85],
+                        "projected_depth_convention": _DEPTH_CONVENTION,
+                        "projected_depth_domain": _DEPTH_DOMAIN,
                     },
                 ],
                 glyph_atlas={"glyphs": sorted(set("FrontSummitBehind"))},
@@ -339,6 +392,8 @@ def _label_halo_depth(tmp_path: Path) -> f3d.MapScene:
                         "image": np.full((8, 8), 0.5, dtype=np.float32).tolist(),
                         "source": "recipe_depth_aov",
                         "bias": 0.0,
+                        "depth_convention": _DEPTH_CONVENTION,
+                        "depth_domain": _DEPTH_DOMAIN,
                     }
                 },
             )
@@ -410,6 +465,9 @@ def _label_occlusion_ridge(tmp_path: Path) -> f3d.MapScene:
                         "id": "front",
                         "text": "Front",
                         "geometry": {"type": "Point", "coordinates": (34.0, 26.0, 0.0)},
+                        "projected_anchor": [34.0, 26.0, 0.0],
+                        "projected_depth_convention": _DEPTH_CONVENTION,
+                        "projected_depth_domain": _DEPTH_DOMAIN,
                         "typography": {
                             "color": [1.0, 1.0, 1.0, 1.0],
                             "halo_color": [0.02, 0.02, 0.02, 0.92],
@@ -420,6 +478,9 @@ def _label_occlusion_ridge(tmp_path: Path) -> f3d.MapScene:
                         "id": "behind-ridge",
                         "text": "Hidden",
                         "geometry": {"type": "Point", "coordinates": (34.0, 26.0, 0.95)},
+                        "projected_anchor": [34.0, 26.0, 0.95],
+                        "projected_depth_convention": _DEPTH_CONVENTION,
+                        "projected_depth_domain": _DEPTH_DOMAIN,
                     },
                 ],
                 glyph_atlas={"glyphs": sorted(set("FrontHidden"))},
@@ -433,6 +494,8 @@ def _label_occlusion_ridge(tmp_path: Path) -> f3d.MapScene:
                         "image": np.full((16, 16), 0.5, dtype=np.float32).tolist(),
                         "source": "serialized_depth_proxy",
                         "bias": 0.0,
+                        "depth_convention": _DEPTH_CONVENTION,
+                        "depth_domain": _DEPTH_DOMAIN,
                     }
                 },
             )
@@ -957,13 +1020,16 @@ def _assert_matches_golden(spec: RecipeGolden, actual_path: Path) -> None:
     assert mean_abs <= spec.mean_abs_max, f"{spec.scene_id} mean absolute difference too high: {mean_abs:.4f}"
 
 
-def _certificate_refresh_without_backend_baseline(spec: RecipeGolden) -> bool:
-    """Whether a certificate-only rotation lacks this backend's pixel fixture.
-
-    The protected pixel gate runs before this path.  Certificate rotation still
-    renders every catalog scene, but cannot compare an invented backend PNG.
-    """
-    return _update_certificates_enabled() and not spec.golden_path.exists()
+def _require_recipe_golden_fixture(spec: RecipeGolden) -> None:
+    """Refuse rendering without the selected variant fixture outside update mode."""
+    assert _recipe_golden_variant() is not None, (
+        "Recipe golden rendering requires an explicit backend variant"
+    )
+    if not _update_goldens_enabled():
+        assert spec.golden_path.is_file(), (
+            f"Missing authorized recipe golden {spec.golden_path}; generate it only "
+            "from a reviewed immutable candidate on the matching physical adapter"
+        )
 
 
 def _committed_cert_path(spec: RecipeGolden) -> Path:
@@ -1129,17 +1195,19 @@ def test_certificate_update_mode_never_enables_pixel_updates(
     assert _update_goldens_enabled() is False
 
 
-def test_certificate_refresh_requires_a_real_render_but_not_an_absent_backend_png(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("variant", "backend"),
+    (("metal", "metal"), ("nvidia-vulkan", "vulkan")),
+)
+def test_selected_recipe_requires_its_backend_fixture(
+    monkeypatch: pytest.MonkeyPatch, variant: str, backend: str
 ) -> None:
-    """An optional Metal diagnostic must never fabricate or write baselines."""
-    monkeypatch.setenv("FORGE3D_UPDATE_RECIPE_CERTIFICATES", "1")
-    monkeypatch.setenv("WGPU_BACKEND", "metal")
-    monkeypatch.setenv("FORGE3D_RECIPE_GOLDEN_VARIANT", "metal")
-    assert _certificate_refresh_without_backend_baseline(RECIPE_GOLDENS[0]) is False
-    assert _certificate_refresh_without_backend_baseline(RECIPE_GOLDENS[1]) is True
-    monkeypatch.delenv("FORGE3D_UPDATE_RECIPE_CERTIFICATES")
-    assert _certificate_refresh_without_backend_baseline(RECIPE_GOLDENS[1]) is False
+    monkeypatch.setenv("WGPU_BACKEND", backend)
+    monkeypatch.setenv("FORGE3D_RECIPE_GOLDEN_VARIANT", variant)
+    spec = RECIPE_GOLDENS[1]
+    assert not spec.golden_path.exists()
+    with pytest.raises(AssertionError, match="Missing authorized recipe golden"):
+        _require_recipe_golden_fixture(spec)
 
 
 def test_certificate_refresh_rejects_capability_degradation() -> None:
@@ -1161,6 +1229,100 @@ def test_recipe_golden_variant_uses_an_explicit_backend_baseline(
     monkeypatch.setenv("WGPU_BACKEND", "vulkan")
     monkeypatch.setenv("FORGE3D_RECIPE_GOLDEN_VARIANT", "nvidia-vulkan")
     assert spec.golden_path == GOLDEN_DIR / "mapscene_terrain_raster.nvidia-vulkan.png"
+
+
+def test_recipe_golden_render_requires_an_explicit_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("FORGE3D_RECIPE_GOLDEN_VARIANT", raising=False)
+    monkeypatch.setenv("WGPU_BACKEND", "metal")
+    with pytest.raises(AssertionError, match="requires an explicit"):
+        _assert_active_recipe_golden_adapter(_active_adapter_record())
+
+
+def test_recipe_golden_variant_must_match_the_actual_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WGPU_BACKEND", "metal")
+    monkeypatch.setenv("FORGE3D_RECIPE_GOLDEN_VARIANT", "metal")
+    with pytest.raises(AssertionError):
+        _assert_active_recipe_golden_adapter(
+            _active_adapter_record(
+                backend="vulkan",
+                adapter_name="NVIDIA RTX",
+                device_name="NVIDIA RTX",
+                device_type="discretegpu",
+            )
+        )
+
+
+def _active_adapter_record(**overrides: object) -> dict[str, object]:
+    record: dict[str, object] = {
+        "backend": "metal",
+        "adapter_name": "Apple M4",
+        "device_name": "Apple M4",
+        "device_type": "integratedgpu",
+        "software_fallback": False,
+    }
+    record.update(overrides)
+    return record
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {},
+        _active_adapter_record(adapter_name="Apple NVIDIA bridge"),
+        _active_adapter_record(device_type="cpu"),
+        _active_adapter_record(software_fallback=True),
+        _active_adapter_record(device_type="virtualgpu"),
+    ],
+    ids=("unavailable", "ambiguous", "cpu", "software", "virtual"),
+)
+def test_recipe_golden_rejects_untrusted_active_adapter(
+    monkeypatch: pytest.MonkeyPatch, record: dict[str, object]
+) -> None:
+    monkeypatch.setenv("WGPU_BACKEND", "metal")
+    monkeypatch.setenv("FORGE3D_RECIPE_GOLDEN_VARIANT", "metal")
+    with pytest.raises(AssertionError):
+        _assert_active_recipe_golden_adapter(record)
+
+
+def test_recipe_golden_rejects_unknown_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WGPU_BACKEND", "metal")
+    monkeypatch.setenv("FORGE3D_RECIPE_GOLDEN_VARIANT", "unknown")
+    with pytest.raises(ValueError, match="Unknown golden variant"):
+        _assert_active_recipe_golden_adapter(_active_adapter_record())
+
+
+@pytest.mark.parametrize(
+    ("variant", "backend", "record"),
+    [
+        ("metal", "metal", _active_adapter_record()),
+        (
+            "nvidia-vulkan",
+            "vulkan",
+            _active_adapter_record(
+                backend="vulkan",
+                adapter_name="NVIDIA GeForce RTX 3070",
+                device_name="NVIDIA GeForce RTX 3070",
+                device_type="discretegpu",
+            ),
+        ),
+    ],
+    ids=("apple-metal", "nvidia-vulkan"),
+)
+def test_recipe_golden_accepts_matching_active_physical_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+    variant: str,
+    backend: str,
+    record: dict[str, object],
+) -> None:
+    monkeypatch.setenv("WGPU_BACKEND", backend)
+    monkeypatch.setenv("FORGE3D_RECIPE_GOLDEN_VARIANT", variant)
+    assert _assert_active_recipe_golden_adapter(record) == record
 
 
 def test_recipe_golden_gate_rejects_pixel_regression(
@@ -1195,11 +1357,10 @@ def test_recipe_golden_gate_rejects_pixel_regression(
 
 
 def _render_recipe_golden_pixels(tmp_path: Path, spec: RecipeGolden) -> None:
-    if not terrain_rendering_available():
-        import pytest
-
-        pytest.skip("Recipe goldens require a terrain-capable hardware-backed forge3d runtime")
-
+    assert terrain_rendering_available(), (
+        "Recipe goldens require a terrain-capable hardware-backed forge3d runtime"
+    )
+    _require_recipe_golden_fixture(spec)
     scene = spec.build(tmp_path)
     manifest = f3d.recipe_manifest(
         scene,
@@ -1219,17 +1380,14 @@ def _render_recipe_golden_pixels(tmp_path: Path, spec: RecipeGolden) -> None:
 
     _clear_degradation_sinks()
     report = scene.render()
-    if nvidia_vulkan_golden_selected("FORGE3D_RECIPE_GOLDEN_VARIANT"):
-        adapter_probe = f3d.device_probe("vulkan")
-        assert_nvidia_vulkan_golden_adapter(
-            "FORGE3D_RECIPE_GOLDEN_VARIANT", adapter_probe
+    active_adapter = _active_render_adapter()
+    if ARTIFACT_DIR is not None:
+        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        (ARTIFACT_DIR / "recipe-render-adapter.json").write_text(
+            json.dumps(active_adapter, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
-        if ARTIFACT_DIR is not None:
-            ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-            (ARTIFACT_DIR / "recipe-render-adapter.json").write_text(
-                json.dumps(adapter_probe, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
+    _assert_active_recipe_golden_adapter(active_adapter)
     assert scene.last_render_backend == "gpu_terrain"
     for feature in spec.expected_features:
         assert report.supported_features[feature] == "supported"
@@ -1242,15 +1400,10 @@ def _render_recipe_golden_pixels(tmp_path: Path, spec: RecipeGolden) -> None:
     if spec.scene_id == "mapscene_label_arabic_joining":
         rendered = f3d.png_to_numpy(output_path)
         assert np.count_nonzero(np.max(rendered[..., :3], axis=-1) > 245) > 20
-    if _certificate_refresh_without_backend_baseline(spec):
-        assert spec.canonical_golden_path.exists(), (
-            f"Certificate refresh requires the canonical baseline for {spec.scene_id}; "
-            "it must never create a backend-specific pixel golden."
-        )
-    else:
-        _assert_matches_golden(spec, output_path)
+    _assert_matches_golden(spec, output_path)
 
 
+@pytest.mark.recipe_golden
 @pytest.mark.parametrize("spec", RECIPE_GOLDENS, ids=lambda item: item.scene_id)
 def test_recipe_goldens_render_and_match(tmp_path, spec: RecipeGolden) -> None:
     """Render pixels and enforce the protected signed-certificate contract."""
@@ -1258,16 +1411,19 @@ def test_recipe_goldens_render_and_match(tmp_path, spec: RecipeGolden) -> None:
     _emit_or_verify_certificate(spec)
 
 
-def test_nvidia_vulkan_recipe_pixel_golden_render_and_match(tmp_path: Path) -> None:
+@pytest.mark.recipe_golden
+@pytest.mark.nvidia_vulkan
+@pytest.mark.parametrize("spec", RECIPE_GOLDENS, ids=lambda item: item.scene_id)
+def test_nvidia_vulkan_recipe_pixel_golden_render_and_match(
+    tmp_path: Path, spec: RecipeGolden
+) -> None:
     """Verify the required NVIDIA pixel baseline without rotating certificates.
 
     Production certificate refresh is deliberately main-only. A candidate PR
     can prove its backend-specific pixels on physical hardware, but it must not
     bypass or rewrite the separately protected signed-certificate contract.
     """
-    if not nvidia_vulkan_golden_selected("FORGE3D_RECIPE_GOLDEN_VARIANT"):
-        pytest.skip("NVIDIA/Vulkan recipe pixel proof was not selected")
-    spec = next(
-        item for item in RECIPE_GOLDENS if item.scene_id == "mapscene_terrain_raster"
+    assert nvidia_vulkan_golden_selected("FORGE3D_RECIPE_GOLDEN_VARIANT"), (
+        "NVIDIA/Vulkan recipe pixel proof requires its explicit physical lane"
     )
     _render_recipe_golden_pixels(tmp_path, spec)

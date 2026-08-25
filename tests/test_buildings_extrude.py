@@ -206,7 +206,6 @@ def test_add_buildings_multipolygon():
         geojson_path.unlink()
 
 
-@pytest.mark.skipif(True, reason="Native module required for vertex count test")
 def test_extrusion_vertex_count():
     """Test that extruded building has expected vertex count."""
     from forge3d.buildings import add_buildings
