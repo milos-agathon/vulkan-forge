@@ -2178,6 +2178,7 @@ jobs:
       FORGE3D_NO_BOOTSTRAP: '1'
       FORGE3D_TEST_INSTALLED_WHEEL: '1'
       FORGE3D_TESSELLA_REQUIRED_GPU: '1'
+      FORGE3D_TESSELLA_TIMING_REQUIRED: '1'
 
     steps:
       - uses: actions/checkout@v4

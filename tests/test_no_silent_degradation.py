@@ -823,6 +823,7 @@ def test_e_full_acceptance_requires_authoritative_apple_metal_lane():
     assert env["WGPU_BACKENDS"] == "metal"
     assert env["FORGE3D_RECIPE_GOLDEN_VARIANT"] == "metal"
     assert env["FORGE3D_TESSELLA_REQUIRED_GPU"] == "1"
+    assert "FORGE3D_TESSELLA_TIMING_REQUIRED" not in env
     assert env["FORGE3D_RUN_LIVE_TEXT_GPU"] == "1"
 
     steps = {step["name"]: step for step in job["steps"] if "name" in step}

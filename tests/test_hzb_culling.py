@@ -60,6 +60,10 @@ def _terrain_main_gpu_ms() -> float:
     )
 
 
+def _tessella_timing_required() -> bool:
+    return os.environ.get("FORGE3D_TESSELLA_TIMING_REQUIRED") == "1"
+
+
 def test_culling_parameter_contract():
     required = {
         "size_px": (64, 64),
@@ -76,6 +80,15 @@ def test_culling_parameter_contract():
     assert params.culling == "hzb_two_phase"
     with pytest.raises(ValueError, match="culling must be one of"):
         make_terrain_params_config(**required, culling="not-a-culling-mode")
+
+
+def test_tessella_hardware_requirement_does_not_select_timing_gate(monkeypatch):
+    monkeypatch.delenv("FORGE3D_TESSELLA_TIMING_REQUIRED", raising=False)
+    monkeypatch.setenv("FORGE3D_TESSELLA_REQUIRED_GPU", "1")
+    assert not _tessella_timing_required()
+
+    monkeypatch.setenv("FORGE3D_TESSELLA_TIMING_REQUIRED", "1")
+    assert _tessella_timing_required()
 
 
 def test_hzb_reuses_prometheus_terrain_minmax_pyramid():
@@ -113,7 +126,7 @@ def test_two_phase_conservativeness_is_backed_by_the_real_shader():
 
 @requires_terrain
 def test_two_phase_hzb_is_bitwise_identical_to_unculled_render():
-    require_performance = os.environ.get("FORGE3D_TESSELLA_REQUIRED_GPU") == "1"
+    require_performance = _tessella_timing_required()
 
     with tempfile.TemporaryDirectory() as td:
         hdr_path = Path(td) / "probe.hdr"

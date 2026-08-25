@@ -553,6 +553,7 @@ def test_tessella_acceptance_is_absent_or_exactly_scoped() -> None:
     assert lane["env"]["FORGE3D_NO_BOOTSTRAP"] == "1"
     assert lane["env"]["FORGE3D_TEST_INSTALLED_WHEEL"] == "1"
     assert lane["env"]["FORGE3D_TESSELLA_REQUIRED_GPU"] == "1"
+    assert lane["env"]["FORGE3D_TESSELLA_TIMING_REQUIRED"] == "1"
 
     lane_text = _job(workflow, "test-tessella-gpu")
     assert "ref: ${{ github.event.pull_request.head.sha || github.sha }}" in lane_text

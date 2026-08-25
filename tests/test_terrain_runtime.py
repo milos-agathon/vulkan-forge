@@ -13,6 +13,7 @@ from forge3d import map_scene
 
 def test_running_on_unsupported_hosted_macos_ci_detects_github_actions(monkeypatch) -> None:
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.delenv("FORGE3D_ALLOW_HOSTED_MACOS_TERRAIN", raising=False)
     monkeypatch.setattr(terrain_runtime.platform, "system", lambda: "Darwin")
 
     assert terrain_runtime._running_on_unsupported_hosted_macos_ci() is True
@@ -62,6 +63,8 @@ def test_mapscene_allows_the_explicit_hosted_windows_gpu_override(monkeypatch) -
 def test_terrain_rendering_available_short_circuits_on_hosted_macos_ci(monkeypatch) -> None:
     terrain_runtime._terrain_rendering_unavailable_reason.cache_clear()
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.delenv("FORGE3D_ALLOW_HOSTED_MACOS_TERRAIN", raising=False)
+    monkeypatch.delenv("FORGE3D_TESSELLA_REQUIRED_GPU", raising=False)
     monkeypatch.setattr(terrain_runtime.platform, "system", lambda: "Darwin")
 
     def fail_if_called():
@@ -77,6 +80,7 @@ def test_terrain_rendering_available_short_circuits_on_hosted_macos_ci(monkeypat
 
 def test_terrain_rendering_available_uses_child_probe(monkeypatch) -> None:
     terrain_runtime._terrain_rendering_unavailable_reason.cache_clear()
+    monkeypatch.delenv("FORGE3D_TESSELLA_REQUIRED_GPU", raising=False)
     # This unit test exercises the child-probe plumbing itself; the hosted-CI
     # blanket guards would short-circuit before subprocess.run on GitHub
     # runners, so disable them explicitly for the mock scenario.

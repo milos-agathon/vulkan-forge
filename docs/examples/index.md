@@ -80,6 +80,12 @@ When a script exposes command-line flags, start with
 These tracked files have no standalone Python entry point:
 
 - `examples/_import_shim.py`: repository-import helper used by scripts
+- `examples/_terrain_feature_demo.py`: shared file-backed rendering helpers for the TV terrain demos
+- `examples/terrain_tv4_material_variation_demo.py`: callable real-DEM procedural material-variation demo
+- `examples/terrain_tv6_heterogeneous_volumetrics_demo.py`: callable real-DEM heterogeneous-volume viewer demo
+- `examples/terrain_tv10_subsurface_demo.py`: callable real-mountain-DEM terrain subsurface-response demo
+- `examples/terrain_tv21_blending_demo.py`: callable real-DEM terrain mesh-blending demo
+- `examples/terrain_tv24_reflection_probe_demo.py`: callable real-DEM local-reflection-probe and water demo
 - `examples/sample_style.json`: sample style input
 - `examples/presets/baseline_no_vector_overlays.json`: baseline viewer preset
 - `examples/presets/rainier_showcase.json`: Rainier showcase preset
