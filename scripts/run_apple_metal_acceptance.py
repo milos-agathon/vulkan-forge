@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 CI compatibility
@@ -221,6 +223,7 @@ def _failure_junit(
     ET.ElementTree(suites).write(path, encoding="utf-8", xml_declaration=True)
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(items) -> None:
     """Reject active skip decorators and every xfail in the required matrix."""
     if os.environ.get("FORGE3D_APPLE_METAL_ACCEPTANCE") != "1":
@@ -235,8 +238,6 @@ def pytest_collection_modifyitems(items) -> None:
             if marker.args and bool(marker.args[0]):
                 forbidden.append(f"{item.nodeid}: active skipif")
     if forbidden:
-        import pytest
-
         raise pytest.UsageError(
             "Apple Metal acceptance forbids skip/xfail decorators:\n"
             + "\n".join(forbidden)
@@ -244,8 +245,6 @@ def pytest_collection_modifyitems(items) -> None:
 
 
 def _pytest_main(args: list[str]) -> int:
-    import pytest
-
     return int(pytest.main(args))
 
 

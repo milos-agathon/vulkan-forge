@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -965,6 +966,117 @@ def test_e_apple_metal_selection_is_one_checked_fail_closed_manifest():
         required_source = (TESTS / filename).read_text(encoding="utf-8")
         assert "FORGE3D_APPLE_METAL_ACCEPTANCE" in required_source
         assert "raise RuntimeError" in required_source
+
+
+def test_e_apple_metal_skip_audit_runs_after_marker_deselection():
+    from scripts import run_apple_metal_acceptance as metal
+
+    hook = metal.pytest_collection_modifyitems.pytest_impl
+    assert hook["trylast"] is True
+
+
+def test_e_apple_metal_skip_audit_rejects_selected_decorators(monkeypatch):
+    from scripts import run_apple_metal_acceptance as metal
+
+    class Item:
+        def __init__(self, nodeid, markers):
+            self.nodeid = nodeid
+            self._markers = markers
+
+        def iter_markers(self, name=None):
+            return (
+                marker
+                for marker in self._markers
+                if name is None or marker.name == name
+            )
+
+        def get_closest_marker(self, name):
+            return next(self.iter_markers(name), None)
+
+    items = [
+        Item("tests/test_selected.py::test_skip", (pytest.mark.skip.mark,)),
+        Item(
+            "tests/test_selected.py::test_skipif",
+            (pytest.mark.skipif(True, reason="selected").mark,),
+        ),
+        Item("tests/test_selected.py::test_xfail", (pytest.mark.xfail.mark,)),
+    ]
+    monkeypatch.setenv("FORGE3D_APPLE_METAL_ACCEPTANCE", "1")
+
+    with pytest.raises(pytest.UsageError) as error:
+        metal.pytest_collection_modifyitems(items)
+
+    message = str(error.value)
+    assert "test_skip: skip" in message
+    assert "test_skipif: active skipif" in message
+    assert "test_xfail: xfail" in message
+
+
+def test_e_apple_metal_collection_audits_only_selected_items(tmp_path):
+    selection = tmp_path / "test_selection.py"
+    selection.write_text(
+        """\
+import pytest
+
+@pytest.mark.apple_metal_physical
+def test_selected_clean():
+    pass
+
+@pytest.mark.nvidia_vulkan
+@pytest.mark.skipif(True, reason="off lane")
+def test_deselected_skipif():
+    pass
+
+@pytest.mark.apple_metal_contract
+@pytest.mark.skip
+def test_selected_skip():
+    pass
+
+@pytest.mark.apple_metal_contract
+@pytest.mark.skipif(True, reason="selected")
+def test_selected_skipif():
+    pass
+
+@pytest.mark.apple_metal_contract
+@pytest.mark.xfail
+def test_selected_xfail():
+    pass
+""",
+        encoding="utf-8",
+    )
+    child_env = {**os.environ, "FORGE3D_APPLE_METAL_ACCEPTANCE": "1"}
+
+    def collect(marker):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-p",
+                "scripts.run_apple_metal_acceptance",
+                str(selection),
+                "-m",
+                marker,
+                "--collect-only",
+                "-q",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            env=child_env,
+        )
+        return result, result.stdout + result.stderr
+
+    collected, output = collect("apple_metal_physical")
+    assert collected.returncode == 0, output
+    assert "test_selected_clean" in collected.stdout
+    assert "test_deselected_skipif" not in collected.stdout
+
+    rejected, output = collect("apple_metal_contract")
+    assert rejected.returncode == int(pytest.ExitCode.USAGE_ERROR), output
+    assert "test_selected_skip: skip" in output
+    assert "test_selected_skipif: active skipif" in output
+    assert "test_selected_xfail: xfail" in output
 
 
 def test_e_apple_metal_merged_junit_preserves_failures(tmp_path):
