@@ -149,6 +149,21 @@ fn record_runtime_contract(
             1.0,
         );
         check("terrain_height_tex.samples", &desc.heights, 0.0, 0.0);
+    }
+
+    // The static proof contract above describes one fixed GPU fixture. A
+    // general PROMETHEUS render outside that input domain is not an observation
+    // of the fixture; the dedicated proof lane still fails if no observation
+    // is recorded. Once the inputs match, keep dynamic GPU data fail-closed.
+    if observed.status != "passed" {
+        return Ok(());
+    }
+
+    {
+        let mut check = |name: &str, values: &[f32], lo: f32, hi: f32| {
+            let (actual_lo, actual_hi) = finite_min_max(values.iter().copied());
+            observed.check_range("uniform", name, None, actual_lo, actual_hi, lo, hi);
+        };
         check("accum_hdr.samples", accum, 0.0, 131_026.0);
         let welford_mean = welford.iter().step_by(2).copied().collect::<Vec<_>>();
         let welford_m2 = welford
