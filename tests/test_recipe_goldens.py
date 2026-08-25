@@ -20,6 +20,10 @@ from tests._golden_variants import (
     selected_golden_variant,
 )
 from tests._ssim import ssim
+from scripts.check_determinism_hashes import (
+    validate_golden_provenance,
+    write_golden_provenance,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -125,6 +129,10 @@ class RecipeGolden:
         if variant is None:
             return self.canonical_golden_path
         return GOLDEN_DIR / f"{self.scene_id}.{variant}.png"
+
+    @property
+    def provenance_path(self) -> Path:
+        return self.golden_path.with_suffix(".provenance.json")
 
     @property
     def command(self) -> str:
@@ -1204,7 +1212,12 @@ def test_selected_recipe_requires_its_backend_fixture(
 ) -> None:
     monkeypatch.setenv("WGPU_BACKEND", backend)
     monkeypatch.setenv("FORGE3D_RECIPE_GOLDEN_VARIANT", variant)
-    spec = RECIPE_GOLDENS[1]
+    spec = RecipeGolden(
+        "synthetic_missing_fixture",
+        "negative_control",
+        RECIPE_GOLDENS[0].build,
+        (),
+    )
     assert not spec.golden_path.exists()
     with pytest.raises(AssertionError, match="Missing authorized recipe golden"):
         _require_recipe_golden_fixture(spec)
@@ -1388,6 +1401,16 @@ def _render_recipe_golden_pixels(tmp_path: Path, spec: RecipeGolden) -> None:
             encoding="utf-8",
         )
     _assert_active_recipe_golden_adapter(active_adapter)
+    backend = "metal" if _recipe_golden_variant() == "metal" else "vulkan"
+    probe = dict(f3d.device_probe(backend))
+    assert str(probe.get("name", "")) == str(active_adapter.get("adapter_name", ""))
+    assert str(probe.get("backend", "")).lower() == str(
+        active_adapter.get("backend", "")
+    ).lower()
+    assert str(probe.get("device_type", "")).lower() == str(
+        active_adapter.get("device_type", "")
+    ).lower()
+    assert probe.get("software_fallback") is False
     assert scene.last_render_backend == "gpu_terrain"
     for feature in spec.expected_features:
         assert report.supported_features[feature] == "supported"
@@ -1401,6 +1424,42 @@ def _render_recipe_golden_pixels(tmp_path: Path, spec: RecipeGolden) -> None:
         rendered = f3d.png_to_numpy(output_path)
         assert np.count_nonzero(np.max(rendered[..., :3], axis=-1) > 245) > 20
     _assert_matches_golden(spec, output_path)
+    if _recipe_golden_variant() == "metal":
+        pixels = f3d.png_to_numpy(spec.golden_path)
+        height, width = pixels.shape[:2]
+        if _update_goldens_enabled():
+            candidate_sha = os.environ["FORGE3D_GOLDEN_CANDIDATE_SHA"]
+            wheel = Path(os.environ["FORGE3D_GOLDEN_WHEEL_PATH"])
+            generation_command = os.environ["FORGE3D_GOLDEN_GENERATION_COMMAND"]
+            native = get_native_module()
+            assert native is not None and native.__file__ is not None
+            allowed_outputs = [
+                path
+                for item in RECIPE_GOLDENS
+                for path in (item.golden_path, item.provenance_path)
+            ]
+            write_golden_provenance(
+                spec.provenance_path,
+                repository=ROOT,
+                candidate_sha=candidate_sha,
+                wheel=wheel,
+                native=Path(native.__file__),
+                adapter=probe,
+                width=width,
+                height=height,
+                generation_command=generation_command,
+                fixture=spec.golden_path,
+                allowed_outputs=allowed_outputs,
+            )
+        else:
+            validate_golden_provenance(
+                spec.provenance_path,
+                repository=ROOT,
+                fixture=spec.golden_path,
+                width=width,
+                height=height,
+                adapter=probe,
+            )
 
 
 @pytest.mark.recipe_golden
@@ -1409,6 +1468,18 @@ def test_recipe_goldens_render_and_match(tmp_path, spec: RecipeGolden) -> None:
     """Render pixels and enforce the protected signed-certificate contract."""
     _render_recipe_golden_pixels(tmp_path, spec)
     _emit_or_verify_certificate(spec)
+
+
+@pytest.mark.recipe_golden
+@pytest.mark.parametrize("spec", RECIPE_GOLDENS, ids=lambda item: item.scene_id)
+def test_metal_recipe_pixel_golden_render_and_match(
+    tmp_path: Path, spec: RecipeGolden
+) -> None:
+    """Generate or verify Metal pixels and provenance without certificate rotation."""
+    assert _recipe_golden_variant() == "metal", (
+        "Metal recipe pixel proof requires its explicit physical lane"
+    )
+    _render_recipe_golden_pixels(tmp_path, spec)
 
 
 @pytest.mark.recipe_golden

@@ -200,6 +200,63 @@ def test_golden_provenance_records_exact_candidate_and_artifact_hashes(tmp_path)
     assert json.loads(provenance.read_text(encoding="utf-8")) == record
 
 
+def test_golden_provenance_accepts_only_declared_batch_outputs(tmp_path):
+    from scripts.check_determinism_hashes import (
+        validate_golden_provenance,
+        write_golden_provenance,
+    )
+
+    repository, candidate_sha, _ = _temporary_git_candidate(tmp_path)
+    wheel = tmp_path / "forge3d.whl"
+    native = tmp_path / "_forge3d.so"
+    wheel.write_bytes(b"release-lto-wheel")
+    native.write_bytes(b"native-library")
+    fixtures = [repository / f"scene-{index}.metal.png" for index in range(2)]
+    provenance = [path.with_suffix(".provenance.json") for path in fixtures]
+    allowed_outputs = [*fixtures, *provenance]
+    adapter = _apple_metal_adapter()
+
+    for fixture, record_path in zip(fixtures, provenance):
+        fixture.write_bytes(fixture.name.encode("utf-8"))
+        write_golden_provenance(
+            record_path,
+            repository=repository,
+            candidate_sha=candidate_sha,
+            wheel=wheel,
+            native=native,
+            adapter=adapter,
+            width=32,
+            height=16,
+            generation_command="generate declared Metal recipe batch",
+            fixture=fixture,
+            allowed_outputs=allowed_outputs,
+        )
+        validate_golden_provenance(
+            record_path,
+            repository=repository,
+            fixture=fixture,
+            width=32,
+            height=16,
+            adapter=adapter,
+        )
+
+    (repository / "undeclared.py").write_text("undeclared = True\n")
+    with pytest.raises(ValueError, match="uncommitted source changes"):
+        write_golden_provenance(
+            provenance[0],
+            repository=repository,
+            candidate_sha=candidate_sha,
+            wheel=wheel,
+            native=native,
+            adapter=adapter,
+            width=32,
+            height=16,
+            generation_command="generate declared Metal recipe batch",
+            fixture=fixtures[0],
+            allowed_outputs=allowed_outputs,
+        )
+
+
 def test_golden_provenance_rejects_existing_non_head_candidate(tmp_path):
     from scripts.check_determinism_hashes import write_golden_provenance
 

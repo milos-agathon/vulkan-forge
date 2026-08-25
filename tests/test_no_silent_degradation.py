@@ -890,7 +890,7 @@ def test_e_apple_metal_selection_is_one_checked_fail_closed_manifest():
         "tests/test_determinism_hash.py::test_matches_committed_golden",
         "tests/test_visibility_buffer.py::test_visibility_resolve_pays_once_and_picking_is_stable_for_10000_pixels",
         "tests/test_flythrough_popping.py::test_visibility_shading_is_identical_and_hole_free_at_flythrough_settings",
-        "tests/test_recipe_goldens.py::test_recipe_goldens_render_and_match",
+        "tests/test_recipe_goldens.py::test_metal_recipe_pixel_golden_render_and_match",
     }
     assert set(matrix) == required
     ordered = (
@@ -1287,12 +1287,17 @@ def test_f_nvidia_visual_acceptance_is_physical_and_fail_closed():
     recipe_source = (ROOT / "tests/test_recipe_goldens.py").read_text(encoding="utf-8")
     certificate_test = recipe_source.split(
         "def test_recipe_goldens_render_and_match", 1
+    )[1].split("def test_metal_recipe_pixel_golden_render_and_match", 1)[0]
+    metal_pixel_test = recipe_source.split(
+        "def test_metal_recipe_pixel_golden_render_and_match", 1
     )[1].split("def test_nvidia_vulkan_recipe_pixel_golden_render_and_match", 1)[0]
     nvidia_pixel_test = recipe_source.split(
         "def test_nvidia_vulkan_recipe_pixel_golden_render_and_match", 1
     )[1]
     assert "_render_recipe_golden_pixels" in certificate_test
     assert "_emit_or_verify_certificate(spec)" in certificate_test
+    assert "_render_recipe_golden_pixels" in metal_pixel_test
+    assert "_emit_or_verify_certificate" not in metal_pixel_test
     assert "_render_recipe_golden_pixels" in nvidia_pixel_test
     assert "_emit_or_verify_certificate" not in nvidia_pixel_test
     assert "FORGE3D_CERT_SIGNING_KEY" not in golden_job

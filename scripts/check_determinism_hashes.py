@@ -8,11 +8,13 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 
 REQUIRED_NVIDIA_LEG = "nvidia"
 COMMIT_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
+SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 SOFTWARE_ADAPTER_TOKENS = (
     "basic render driver",
     "lavapipe",
@@ -127,6 +129,7 @@ def _validate_candidate_checkout(
     candidate_sha: str,
     fixture: Path,
     provenance_output: Path | None,
+    allowed_outputs: Iterable[Path] = (),
 ) -> None:
     if COMMIT_SHA_PATTERN.fullmatch(candidate_sha) is None:
         raise ValueError("candidate_sha must be a lowercase 40-hex commit SHA")
@@ -141,7 +144,7 @@ def _validate_candidate_checkout(
         )
 
     allowed = set()
-    for output in (fixture, provenance_output):
+    for output in (fixture, provenance_output, *allowed_outputs):
         if output is None:
             continue
         try:
@@ -177,9 +180,16 @@ def golden_provenance_record(
     generation_command: str,
     fixture: Path,
     provenance_output: Path | None = None,
+    allowed_outputs: Iterable[Path] = (),
 ) -> dict:
     """Build the complete provenance record required for a new golden."""
-    _validate_candidate_checkout(repository, candidate_sha, fixture, provenance_output)
+    _validate_candidate_checkout(
+        repository,
+        candidate_sha,
+        fixture,
+        provenance_output,
+        allowed_outputs,
+    )
     if width <= 0 or height <= 0:
         raise ValueError("golden dimensions must be positive")
     if not generation_command.strip():
@@ -207,6 +217,68 @@ def write_golden_provenance(path: Path, **fields) -> dict:
     path.write_text(
         json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    return record
+
+
+def validate_golden_provenance(
+    path: Path,
+    *,
+    repository: Path,
+    fixture: Path,
+    width: int,
+    height: int,
+    adapter: object,
+) -> dict:
+    """Fail closed unless a golden's recorded source and artifact identity hold."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid golden provenance {path}: {exc}") from exc
+    if not isinstance(record, dict):
+        raise ValueError("golden provenance is not an object")
+    required = {
+        "schema",
+        "candidate_sha",
+        "wheel_sha256",
+        "native_sha256",
+        "backend",
+        "golden_identity",
+        "adapter",
+        "software_fallback",
+        "dimensions",
+        "generation_command",
+        "fixture_sha256",
+    }
+    missing = sorted(required - record.keys())
+    if missing:
+        raise ValueError(f"golden provenance is missing fields: {', '.join(missing)}")
+    if record["schema"] != "forge3d.determinism-golden.v1":
+        raise ValueError("unsupported golden provenance schema")
+    candidate_sha = str(record["candidate_sha"])
+    if COMMIT_SHA_PATTERN.fullmatch(candidate_sha) is None:
+        raise ValueError("golden provenance candidate_sha is invalid")
+    _git(Path(repository).resolve(), "cat-file", "-e", f"{candidate_sha}^{{commit}}")
+    for field in ("wheel_sha256", "native_sha256", "fixture_sha256"):
+        if SHA256_PATTERN.fullmatch(str(record[field])) is None:
+            raise ValueError(f"golden provenance {field} is invalid")
+    if str(record["fixture_sha256"]) != _sha256(fixture):
+        raise ValueError("golden provenance fixture hash does not match")
+    if record["dimensions"] != {"width": width, "height": height}:
+        raise ValueError("golden provenance dimensions do not match")
+    if not str(record["generation_command"]).strip():
+        raise ValueError("golden provenance generation command is empty")
+    recorded_identity = backend_golden_identity(record["adapter"])
+    active_identity = backend_golden_identity(adapter)
+    if recorded_identity != active_identity:
+        raise ValueError(
+            "golden provenance backend identity does not match active adapter"
+        )
+    if record["golden_identity"] != recorded_identity:
+        raise ValueError("golden provenance identity is internally inconsistent")
+    if str(record["backend"]).lower() != str(record["adapter"]["backend"]).lower():
+        raise ValueError("golden provenance backend is internally inconsistent")
+    if record["software_fallback"] is not False:
+        raise ValueError("golden provenance does not reject software fallback")
     return record
 
 

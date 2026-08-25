@@ -32,5 +32,5 @@ nodes = [
   "tests/test_determinism_hash.py::test_matches_committed_golden",
   "tests/test_visibility_buffer.py::test_visibility_resolve_pays_once_and_picking_is_stable_for_10000_pixels",
   "tests/test_flythrough_popping.py::test_visibility_shading_is_identical_and_hole_free_at_flythrough_settings",
-  "tests/test_recipe_goldens.py::test_recipe_goldens_render_and_match",
+  "tests/test_recipe_goldens.py::test_metal_recipe_pixel_golden_render_and_match",
 ]
