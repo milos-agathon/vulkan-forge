@@ -51,14 +51,23 @@ pub(super) fn build_observation(
         -1.0,
         65_536.0,
     );
-    check_slice(
-        &mut observation,
-        "u_terrain.spacing_h_exag",
-        0,
-        &terrain[36..40],
-        0.0,
-        65_536.0,
-    );
+    // BOP-P2-02's declared large-region floor is a 100 km square.
+    for (name, value, allowed_min, allowed_max) in [
+        ("u_terrain.spacing_h_exag.x", terrain[36], 1e-6, 100_000.0),
+        ("u_terrain.spacing_h_exag.y", terrain[37], 1e-6, 100_000.0),
+        ("u_terrain.spacing_h_exag.z", terrain[38], 1e-6, 65_536.0),
+        ("u_terrain.spacing_h_exag.w", terrain[39], 0.0, 65_536.0),
+    ] {
+        observation.check_range(
+            "uniform",
+            name,
+            Some(0),
+            value,
+            value,
+            allowed_min,
+            allowed_max,
+        );
+    }
     check_slice(
         &mut observation,
         "u_terrain.camera_mode_params",
@@ -195,7 +204,7 @@ mod tests {
     fn terrain_runtime_observation_checks_uploaded_uniforms_and_height_texture() {
         let mut terrain = vec![0.0; 44];
         terrain[32..36].copy_from_slice(&[0.0, 1.0, 0.0, 1.0]);
-        terrain[36..40].copy_from_slice(&[1.0, 1.0, 1.0, 1.0]);
+        terrain[36..40].copy_from_slice(&[100_000.0, 100_000.0, 1.0, 1.0]);
         terrain[40..44].copy_from_slice(&[0.0, 64.0, 0.1, 1_000.0]);
         let mut shading = vec![0.0; 44];
         shading[0..4].copy_from_slice(&[1.0, 4.0, 1.0, 0.0]);
@@ -231,6 +240,7 @@ mod tests {
             .map(|binding| binding.name.as_str())
             .collect::<std::collections::BTreeSet<_>>();
         assert!(names.contains("u_terrain.view"));
+        assert!(names.contains("u_terrain.spacing_h_exag.x"));
         assert!(names.contains("u_shading.clamp0.height_range"));
         assert!(names.contains("height_tex.samples"));
         assert_eq!(observation.status, "passed");

@@ -1,0 +1,26 @@
+{
+  "adapter": {
+    "backend": "Metal",
+    "device": 0,
+    "device_type": "IntegratedGpu",
+    "driver": "",
+    "driver_info": "",
+    "name": "Apple M4",
+    "software_fallback": false,
+    "status": "ok",
+    "vendor": 0
+  },
+  "backend": "metal",
+  "candidate_sha": "4aeb9178093d3c1aa044f6d847983ac4277e6f71",
+  "dimensions": {
+    "height": 80,
+    "width": 128
+  },
+  "fixture_sha256": "c78f187c529e980a5b6dae99d291aa068ed86a88fe436412507412244f004e10",
+  "generation_command": "PYTHONNOUSERSITE=1 FORGE3D_NO_BOOTSTRAP=1 FORGE3D_TEST_INSTALLED_WHEEL=1 FORGE3D_APPLE_METAL_ACCEPTANCE=1 WGPU_BACKEND=metal WGPU_BACKENDS=metal FORGE3D_RECIPE_GOLDEN_VARIANT=metal FORGE3D_UPDATE_RECIPE_GOLDENS=1 FORGE3D_GOLDEN_CANDIDATE_SHA=4aeb9178093d3c1aa044f6d847983ac4277e6f71 FORGE3D_GOLDEN_WHEEL_PATH=/private/tmp/forge3d-pr170-metal-fixtures.Be5UgW/wheel-4aeb9178/forge3d-1.35.0-cp310-abi3-macosx_11_0_arm64.whl /private/tmp/forge3d-pr170-metal-fixtures.Be5UgW/venv-4aeb9178/bin/python -m pytest tests/test_recipe_goldens.py::test_metal_recipe_pixel_golden_render_and_match -vv --tb=short",
+  "golden_identity": "metal",
+  "native_sha256": "2f4baa8cde44d8d0dfc41a34edf58df7978665d8c64effd27d6b83f6771faaa9",
+  "schema": "forge3d.determinism-golden.v1",
+  "software_fallback": false,
+  "wheel_sha256": "06c5dfaeba6d6f78b10520877cc51bca767132606983db1a4977f7b5b20e29df"
+}

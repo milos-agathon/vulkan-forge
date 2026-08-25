@@ -1,0 +1,23 @@
+{
+  "adapter": {
+    "backend": "Metal",
+    "device": 0,
+    "device_type": "IntegratedGpu",
+    "name": "Apple M4",
+    "software_fallback": false,
+    "vendor": 0
+  },
+  "backend": "metal",
+  "candidate_sha": "4aeb9178093d3c1aa044f6d847983ac4277e6f71",
+  "dimensions": {
+    "height": 512,
+    "width": 512
+  },
+  "fixture_sha256": "9f56d32e010c337c5760ab1b4d773bdc0dbe8dba587973f024dec49ae215b013",
+  "generation_command": "PYTHONNOUSERSITE=1 FORGE3D_NO_BOOTSTRAP=1 FORGE3D_TEST_INSTALLED_WHEEL=1 FORGE3D_DETERMINISTIC=1 WGPU_BACKENDS=metal /private/tmp/forge3d-pr170-metal-fixtures.Be5UgW/venv-4aeb9178/bin/python -m forge3d.determinism --scene terra_determinata_v1 --width 512 --height 512 --out-png /private/tmp/forge3d-pr170-metal-fixtures.Be5UgW/terra_determinata_v1.4aeb9178.metal.png",
+  "golden_identity": "metal",
+  "native_sha256": "2f4baa8cde44d8d0dfc41a34edf58df7978665d8c64effd27d6b83f6771faaa9",
+  "schema": "forge3d.determinism-golden.v1",
+  "software_fallback": false,
+  "wheel_sha256": "06c5dfaeba6d6f78b10520877cc51bca767132606983db1a4977f7b5b20e29df"
+}
