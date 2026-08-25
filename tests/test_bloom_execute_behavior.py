@@ -147,6 +147,7 @@ def _try_create_scene():
 _SCENE_AVAILABLE = _HAS_GPU and _try_create_scene() is not None
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not _SCENE_AVAILABLE, reason="Scene requires GPU + valid shaders")
 class TestBloomSceneRoundTrip:
     """Prove bloom enable/disable and set/get round-trip on a live Scene."""

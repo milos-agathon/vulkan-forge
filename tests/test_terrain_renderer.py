@@ -25,10 +25,7 @@ from forge3d.terrain_params import (
 )
 
 
-if not terrain_rendering_available():
-    pytest.skip("Terrain renderer scaffolding requires a terrain-capable hardware-backed forge3d runtime", allow_module_level=True)
-
-
+pytestmark = pytest.mark.apple_metal_physical
 def _create_test_hdr(path: str, width: int = 8, height: int = 4) -> None:
     with open(path, "wb") as f:
         f.write(b"#?RADIANCE\n")

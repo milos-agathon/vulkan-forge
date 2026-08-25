@@ -172,6 +172,7 @@ def tv4_render_env():
         Path(tmp.name).unlink(missing_ok=True)
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not GPU_AVAILABLE, reason="TV4 rendering tests require GPU-backed forge3d module")
 class TestTerrainMaterialVariationRendering:
     def test_zero_amplitude_preserves_baseline(self, tv4_render_env) -> None:

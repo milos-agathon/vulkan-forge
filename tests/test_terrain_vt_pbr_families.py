@@ -705,6 +705,7 @@ class TestTerrainVTPbrFamilies:
         yield
         renderer.clear_material_vt_sources()
 
+    @pytest.mark.nvidia_vulkan
     def test_normal_family_changes_lighting_ssim(self, vt_render_env) -> None:
         """Gated measurable win: the normal family must change grazing-light
         beauty output by SSIM difference > 0.05."""
@@ -809,6 +810,7 @@ class TestTerrainVTPbrFamilies:
             },
         )
 
+    @pytest.mark.nvidia_vulkan
     def test_all_families_page_within_budget(self, vt_render_env) -> None:
         renderer = vt_render_env[0]
         renderer.clear_material_vt_sources()
@@ -993,6 +995,7 @@ class TestTerrainVTPbrFamilies:
             },
         )
 
+    @pytest.mark.nvidia_vulkan
     def test_missing_family_is_fatal(self, vt_render_env) -> None:
         renderer = vt_render_env[0]
         renderer.clear_material_vt_sources()
@@ -1028,6 +1031,7 @@ class TestTerrainVTPbrFamilies:
             {"status": "PASS", "message": str(raised.value)},
         )
 
+    @pytest.mark.nvidia_vulkan
     def test_missing_family_offline_preflight_leaves_no_active_session(
         self, vt_render_env
     ) -> None:
@@ -1084,6 +1088,7 @@ class TestTerrainVTPbrFamilies:
         finally:
             renderer.end_offline_accumulation()
 
+    @pytest.mark.nvidia_vulkan
     def test_partial_normal_residency_degrades_gracefully(self, vt_render_env) -> None:
         renderer = vt_render_env[0]
         renderer.clear_material_vt_sources()
@@ -1173,6 +1178,7 @@ class TestTerrainVTPbrFamilies:
             },
         )
 
+    @pytest.mark.nvidia_vulkan
     def test_unusable_family_source_is_fatal(self, vt_render_env) -> None:
         renderer = vt_render_env[0]
         renderer.clear_material_vt_sources()
@@ -1207,6 +1213,7 @@ class TestTerrainVTPbrFamilies:
                 _build_render_params(vt_settings=settings),
             )
 
+    @pytest.mark.nvidia_vulkan
     def test_partial_mask_residency_uses_neutral_fallback(self, vt_render_env) -> None:
         renderer = vt_render_env[0]
         renderer.clear_material_vt_sources()
@@ -1299,6 +1306,7 @@ class TestTerrainVTPbrFamilies:
         )
 
     @pytest.mark.parametrize("shading", ["forward", "visibility"])
+    @pytest.mark.nvidia_vulkan
     def test_gpu_shader_feedback_preserves_family_coordinates(
         self,
         vt_render_env,

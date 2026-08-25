@@ -806,6 +806,7 @@ def test_committed_camera_path_is_a_real_non_vacuous_flythrough():
     assert math.dist(targets[0], targets[-1]) > 100.0
 
 
+@pytest.mark.gpu_lane
 def test_committed_camera_frames_multiple_clipmap_regions():
     radii = _region_outer_radii()
     assert radii[:3] == pytest.approx([6250.0, 18750.0, 43750.0])

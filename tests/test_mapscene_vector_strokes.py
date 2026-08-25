@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 import forge3d as f3d
 import forge3d.map_scene as map_scene
@@ -226,6 +227,7 @@ def _center_pixel(image: np.ndarray) -> list[int]:
     return np.asarray(image)[image.shape[0] // 2, image.shape[1] // 2].tolist()
 
 
+@pytest.mark.apple_metal_physical
 def test_native_vector_oit_line_and_point_preserve_exact_rgba() -> None:
     if not hasattr(f3d, "vector_render_oit_py") or not f3d.has_gpu():
         return
@@ -261,6 +263,7 @@ def test_native_vector_oit_line_and_point_preserve_exact_rgba() -> None:
     assert np.count_nonzero(point_image[..., 3]) > 0
 
 
+@pytest.mark.apple_metal_physical
 def test_native_vector_oit_overlap_is_order_independent_with_exact_alpha() -> None:
     if not hasattr(f3d, "vector_render_oit_py") or not f3d.has_gpu():
         return
@@ -284,6 +287,7 @@ def test_native_vector_oit_overlap_is_order_independent_with_exact_alpha() -> No
     np.testing.assert_allclose(_center_pixel(red_then_blue), [128, 0, 128, 191], atol=1)
 
 
+@pytest.mark.apple_metal_physical
 def test_native_vector_oit_zero_alpha_writes_no_pixels() -> None:
     if not hasattr(f3d, "vector_render_oit_py") or not f3d.has_gpu():
         return
@@ -299,6 +303,7 @@ def test_native_vector_oit_zero_alpha_writes_no_pixels() -> None:
     assert np.count_nonzero(image) == 0
 
 
+@pytest.mark.apple_metal_physical
 def test_native_vector_oit_repeated_frames_are_bitexact() -> None:
     if not hasattr(f3d, "vector_render_oit_py") or not f3d.has_gpu():
         return
@@ -321,6 +326,7 @@ def test_native_vector_oit_repeated_frames_are_bitexact() -> None:
     assert frames[0][0, 0].tolist() == [0, 0, 0, 0]
 
 
+@pytest.mark.apple_metal_physical
 def test_native_vector_oit_edl_output_has_visible_alpha() -> None:
     if not hasattr(f3d, "vector_render_oit_edl_py") or not f3d.has_gpu():
         return

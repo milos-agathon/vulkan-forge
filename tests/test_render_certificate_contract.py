@@ -4,6 +4,7 @@ import inspect
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 import forge3d as f3d
 from forge3d import determinism, geometry, path_tracing, terrain_demo
@@ -153,6 +154,7 @@ def test_cache_exclusions_are_still_certificate_bearing() -> None:
         assert "certificate" in inspect.signature(entrypoint).parameters, name
 
 
+@pytest.mark.apple_metal_physical
 def test_brdf_tile_emits_a_live_certified_pass() -> None:
     import pytest
 
@@ -179,8 +181,15 @@ def test_brdf_tile_emits_a_live_certified_pass() -> None:
     assert set(certificate["engine"]["wgsl_module_hashes"]) == {"brdf_tile.shader"}
 
 
-def test_adjudication_certificate_keeps_untimed_pt_before_raster() -> None:
+@pytest.mark.apple_metal_physical
+def test_adjudication_certificate_reports_capability_conditional_live_timing() -> None:
     import pytest
+
+    driver = (
+        Path(__file__).parents[1] / "src/py_functions/adjudication.rs"
+    ).read_text(encoding="utf-8")
+    pt_call = driver.split("let pt_hdr =", 1)[1].split(")?;", 1)[0]
+    assert "Some(&mut timing)" in pt_call
 
     if not f3d.has_gpu():
         pytest.skip("Adjudication render requires a GPU adapter")
@@ -188,14 +197,26 @@ def test_adjudication_certificate_keeps_untimed_pt_before_raster() -> None:
     from forge3d.diagnostics import render_certificate
 
     f3d.render_adjudication_pair(32, 32, 2, certificate=True)
-    passes = render_certificate(sign=False)["passes"]
+    certificate = render_certificate(sign=False)
+    passes = certificate["passes"]
 
     assert [entry["label"] for entry in passes] == [
         "adjudication.path_trace",
         "adjudication.raster",
     ]
-    assert passes[0]["gpu_ms"] == 0.0
-    assert passes[0]["draw_calls"] == 2
+    assert [entry["draw_calls"] for entry in passes] == [2, 5]
+    if "timestamp_query" not in certificate["capabilities"]["granted"]:
+        assert [entry["gpu_ms"] for entry in passes] == [0.0, 0.0]
+    else:
+        for entry in passes:
+            if entry["gpu_ms"] == 0.0:
+                assert any(
+                    degradation["kind"] == "timing_unavailable"
+                    and degradation["name"] == entry["label"]
+                    for degradation in certificate["degradations"]
+                )
+            else:
+                assert entry["gpu_ms"] > 0.0
 
 
 def test_render_surface_sweep_has_no_uncertified_entrypoints() -> None:
@@ -312,6 +333,7 @@ def test_documented_exclusions_explain_their_certificate_scope() -> None:
     assert "Outside CENSOR's render-certificate scope" in native_diagnostics
 
 
+@pytest.mark.apple_metal_physical
 def test_vector_render_certificate_is_fresh_and_exact():
     if not f3d.has_gpu() or not f3d.is_weighted_oit_available():
         import pytest
@@ -336,6 +358,7 @@ def test_vector_render_certificate_is_fresh_and_exact():
     }
 
 
+@pytest.mark.apple_metal_physical
 def test_cloud_render_keeps_following_vector_allocation_usable():
     if not f3d.has_gpu() or not f3d.is_weighted_oit_available():
         import pytest
@@ -383,6 +406,7 @@ def test_native_sdf_render_uses_the_supplied_scene_and_emits_certificate(monkeyp
     assert cert["degradations"] == []
 
 
+@pytest.mark.apple_metal_physical
 def test_polygon_fill_certificate_names_only_the_polygon_shader():
     if not f3d.has_gpu():
         import pytest
@@ -443,6 +467,7 @@ def test_fallback_renderer_discloses_cpu_degradation():
     }
 
 
+@pytest.mark.apple_metal_physical
 def test_instanced_mesh_certificate_names_only_the_instancing_shader():
     if not f3d.has_gpu() or not geometry.gpu_instancing_available():
         import pytest

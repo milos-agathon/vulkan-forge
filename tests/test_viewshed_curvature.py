@@ -18,7 +18,9 @@ import forge3d as f3d
 from forge3d.terrain import viewshed
 
 
-gpu_required = pytest.mark.skipif(not f3d.has_gpu(), reason="viewshed requires a GPU")
+def gpu_required(test):
+    test = pytest.mark.skipif(not f3d.has_gpu(), reason="viewshed requires a GPU")(test)
+    return pytest.mark.helios_physical(test)
 
 SWISS_BOUNDS = (7.0, 46.4, 8.0, 47.2)
 SWISS_SHAPE = (64, 64)

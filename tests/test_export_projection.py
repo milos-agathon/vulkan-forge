@@ -187,7 +187,6 @@ class TestProjectionIntegration:
         assert len(svg_high) > len(svg_low)
 
 
-@pytest.mark.skipif(not HAS_RUST_EXPORT, reason="Rust export module not available")
 class TestRustProjection:
     """Test Rust-side projection (when available)."""
 

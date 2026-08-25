@@ -109,6 +109,7 @@ def test_native_render_params_decode_material_map_paths(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.apple_metal_physical
 @_requires_gpu
 def test_mapscene_terrain_metadata_wires_material_maps_to_native_params(tmp_path: Path) -> None:
     normal_path = tmp_path / "normal.png"
@@ -152,6 +153,7 @@ def test_mapscene_terrain_metadata_wires_material_maps_to_native_params(tmp_path
     }
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not GPU_AVAILABLE, reason="terrain material map render test requires GPU-backed forge3d module")
 def test_material_normal_map_changes_native_normal_aov(tmp_path: Path) -> None:
     normal_path = tmp_path / "tilted-normal.png"

@@ -15,8 +15,7 @@ import forge3d as f3d
 from _terrain_runtime import terrain_rendering_available
 
 
-if not terrain_rendering_available():
-    pytest.skip("TV4 example test requires a terrain-capable hardware-backed forge3d runtime", allow_module_level=True)
+pytestmark = pytest.mark.apple_metal_physical
 
 
 def _load_module_by_path(path: Path) -> types.ModuleType:
@@ -30,8 +29,7 @@ def _load_module_by_path(path: Path) -> types.ModuleType:
 def test_tv4_example_renders_real_dem(tmp_path: Path) -> None:
     repo = Path(__file__).resolve().parents[1]
     example_path = repo / "examples" / "terrain_tv4_material_variation_demo.py"
-    if not example_path.exists():
-        pytest.skip("TV4 example script is not present in this checkout")
+    assert example_path.exists(), "tracked TV4 example script is missing"
     mod = _load_module_by_path(example_path)
 
     result = mod.render_demo(

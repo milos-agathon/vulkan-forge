@@ -451,6 +451,7 @@ def _save_geotiff(dem: np.ndarray, path: Path) -> None:
 
 
 @pytest.mark.skipif(not _rasterio_available(), reason="rasterio not installed")
+@pytest.mark.apple_metal_physical
 @pytest.mark.offscreen
 class TestShadowTechniqueDifferentiation:
     """Test that different shadow techniques produce different outputs.
@@ -866,6 +867,7 @@ def _native_pyramid_heightmap(size: int = 128) -> np.ndarray:
     return np.clip(1.0 - radius / (size * 0.12), 0.0, 1.0).astype(np.float32)
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(
     not _native_terrain_gpu_available(),
     reason="no terrain-capable hardware-backed forge3d runtime",

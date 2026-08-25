@@ -2,7 +2,12 @@ version = 1
 # Owner contract: 22 recipe specs; 2 fresh TV20 normal processes plus
 # 13 other exact nodes and those 22 parameterized recipe cases = 37 tests.
 recipe_cases = 22
-expected_tests = 37
+expected_tests = 265
+
+[[phases]]
+name = "physical-family"
+marker = "apple_metal_physical and not apple_metal_contract and not apple_metal_proxy and not recipe_golden and not sidera_vulkan and not cross_backend and not nvidia_vulkan and not gpu_lane and not f3dz_physical and not limes_physical and not helios_physical"
+nodes = ["tests"]
 
 [[phases]]
 name = "tv20-normal-fresh-1"

@@ -251,6 +251,7 @@ class TestHLODPolicy:
             )
 
 
+@pytest.mark.apple_metal_physical
 class TestHLODRendering:
     """TV13.3 — HLOD rendering integration tests (require GPU)."""
 
@@ -383,6 +384,7 @@ class TestHLODRendering:
         assert report["total_buffer_bytes"] >= report["hlod_buffer_bytes"]
 
 
+@pytest.mark.apple_metal_physical
 class TestEndToEndImageOutput:
     """TV13 end-to-end: auto-LOD scatter renders to PNG with real content."""
 

@@ -162,6 +162,7 @@ def test_device_probe_no_adapter_for_webgpu_backend():
 
 
 @pytest.mark.skipif(not NATIVE_AVAILABLE, reason="native extension not available")
+@pytest.mark.apple_metal_physical
 def test_device_probe_ok_carries_adapter_fields():
     probe = f3d.device_probe()
     if probe.get("status") != "ok":
@@ -228,6 +229,7 @@ def test_deterministic_without_backend_pin_raises_runtime_error():
 
 
 @pytest.mark.skipif(not NATIVE_AVAILABLE, reason="native extension not available")
+@pytest.mark.apple_metal_physical
 def test_engine_info_reports_fallback_honesty():
     """On hosts with any adapter (hardware or WARP/lavapipe), engine_info must
     succeed and disclose whether a software fallback adapter is in use."""

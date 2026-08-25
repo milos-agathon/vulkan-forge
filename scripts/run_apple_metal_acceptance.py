@@ -40,6 +40,7 @@ SOFTWARE_TOKENS = (
 class Phase:
     name: str
     nodes: tuple[str, ...]
+    marker: str | None = None
 
 
 def _read_manifest() -> dict:
@@ -54,13 +55,18 @@ def load_manifest() -> tuple[Phase, ...]:
     if data.get("version") != 1:
         raise ValueError("unsupported Apple Metal acceptance manifest version")
     phases = tuple(
-        Phase(str(item["name"]), tuple(str(node) for node in item["nodes"]))
+        Phase(
+            str(item["name"]),
+            tuple(str(node) for node in item["nodes"]),
+            str(item["marker"]) if item.get("marker") else None,
+        )
         for item in data.get("phases", ())
     )
     if not phases or len({phase.name for phase in phases}) != len(phases):
         raise ValueError("Apple Metal acceptance phases must be present and unique")
     if any(
-        not phase.nodes or any("::" not in node for node in phase.nodes)
+        not phase.nodes
+        or (phase.marker is None and any("::" not in node for node in phase.nodes))
         for phase in phases
     ):
         raise ValueError("every Apple Metal phase must contain explicit pytest nodes")
@@ -244,11 +250,13 @@ def _pytest_main(args: list[str]) -> int:
 
 
 def _run_phase_in_process(phase: Phase, junit: Path, adapter: Path) -> int:
+    marker_args = ["-m", phase.marker] if phase.marker else []
     code = _pytest_main(
         [
             "-p",
             "scripts.run_apple_metal_acceptance",
             *phase.nodes,
+            *marker_args,
             "-v",
             "--tb=short",
             f"--junitxml={junit}",
@@ -311,6 +319,8 @@ def _run_phase(
             "scripts.run_apple_metal_acceptance",
             *phase.nodes,
         ]
+        if phase.marker:
+            command.extend(("-m", phase.marker))
         command.extend(("--collect-only", "-q"))
     else:
         command = [

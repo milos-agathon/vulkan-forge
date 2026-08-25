@@ -57,6 +57,7 @@ def test_mapscene_quickstart_points_to_canonical_examples():
     assert "raw IPC" not in text
 
 
+@pytest.mark.apple_metal_physical
 @_requires_gpu
 def test_quickstart_vector_labels_scenario_is_executable(tmp_path):
     module = _load_example(VECTOR_EXAMPLE)
@@ -72,6 +73,7 @@ def test_quickstart_vector_labels_scenario_is_executable(tmp_path):
     assert Path(first["png_path"]).exists()
 
 
+@pytest.mark.apple_metal_physical
 def test_start_quickstart_mapscene_snippet_executes(tmp_path, monkeypatch):
     if not terrain_rendering_available():
         pytest.skip("docs/start MapScene snippet requires a terrain-capable GPU runtime")
@@ -207,6 +209,7 @@ def test_quickstart_models_accept_path_objects_in_serialized_recipes(tmp_path):
     json.dumps(payload)
 
 
+@pytest.mark.apple_metal_physical
 @_requires_gpu
 def test_quickstart_building_scenario_renders_native_gpu_buildings(tmp_path):
     module = _load_example(BUILDING_EXAMPLE)

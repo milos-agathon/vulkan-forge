@@ -122,6 +122,7 @@ def _try_create_scene():
 _SCENE_AVAILABLE = _HAS_GPU and _try_create_scene() is not None
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not _SCENE_AVAILABLE, reason="Scene requires GPU + valid shaders")
 class TestSsgiSceneRoundTrip:
     """Prove set_ssgi_settings → get_ssgi_settings round-trip on a live Scene."""
@@ -176,6 +177,7 @@ class TestSsgiSceneRoundTrip:
         assert diff > 0.05, f"Expected SSGI output change, got mean diff={diff}"
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not _SCENE_AVAILABLE, reason="Scene requires GPU + valid shaders")
 class TestSsrSceneRoundTrip:
     """Prove set_ssr_settings → get_ssr_settings round-trip on a live Scene."""

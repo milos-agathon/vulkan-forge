@@ -124,6 +124,7 @@ def test_two_phase_conservativeness_is_backed_by_the_real_shader():
     assert source.count("create_cull_pipeline(device, &layout)") >= 2
 
 
+@pytest.mark.gpu_lane
 @requires_terrain
 def test_two_phase_hzb_is_bitwise_identical_to_unculled_render():
     require_performance = _tessella_timing_required()
@@ -192,6 +193,7 @@ def test_two_phase_hzb_is_bitwise_identical_to_unculled_render():
     )
 
 
+@pytest.mark.gpu_lane
 @requires_terrain
 def test_fresh_hzb_recovers_tiles_rejected_by_camera_history():
     with tempfile.TemporaryDirectory() as td:

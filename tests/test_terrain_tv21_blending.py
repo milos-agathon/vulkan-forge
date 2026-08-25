@@ -269,6 +269,7 @@ def _require_tv21_runtime() -> None:
         pytest.skip("TV21 renderer regression requires GPU-backed terrain runtime")
 
 
+@pytest.mark.apple_metal_physical
 def test_tv21_disabled_settings_preserve_baseline() -> None:
     _require_tv21_runtime()
     case = _build_case("road_edge")
@@ -299,6 +300,7 @@ def test_tv21_disabled_settings_preserve_baseline() -> None:
     assert np.array_equal(baseline, disabled)
 
 @pytest.mark.parametrize("case_name", ["rock_cluster", "road_edge", "building_foundation"])
+@pytest.mark.apple_metal_physical
 def test_tv21_enabled_settings_change_image(case_name: str) -> None:
     _require_tv21_runtime()
     case = _build_case(case_name)

@@ -397,6 +397,7 @@ def test_native_ingest_materializes_reference_compatible_records(case):
     assert np.all((reference >= 0.0) & (reference <= 1.0))
 
 
+@pytest.mark.limes_physical
 @pytest.mark.skipif(
     not _hardware_adapter_available(),
     reason="LIMES numerical gate requires a hardware GPU adapter",
@@ -435,6 +436,7 @@ def test_analytic_coverage_meets_committed_reference_gate(case):
     assert stats["max_abs_error"] < _MAX_ERROR_GATE
 
 
+@pytest.mark.limes_physical
 @pytest.mark.skipif(
     not _hardware_adapter_available(),
     reason="LIMES ablation requires a hardware GPU adapter",
@@ -480,6 +482,7 @@ def test_current_and_real_msaa4_both_fail_the_analytic_gate(case_name):
     )
 
 
+@pytest.mark.limes_physical
 @pytest.mark.skipif(
     not _hardware_adapter_available(),
     reason="LIMES mosaic gate requires a hardware GPU adapter",
@@ -501,6 +504,7 @@ def test_shared_edge_mosaic_has_no_interior_seam():
     assert max_deviation <= 1.0 / 255.0
 
 
+@pytest.mark.limes_physical
 @pytest.mark.skipif(
     not _hardware_adapter_available(),
     reason="LIMES determinism gate requires a hardware GPU adapter",

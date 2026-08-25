@@ -204,10 +204,7 @@ def test_terrain_demo_build_renderer_config_minimal() -> None:
 # GPU-dependent tests below (will be skipped in CPU-only CI)
 # ============================================================================
 
-if not terrain_rendering_available():
-    pytest.skip("Terrain demo requires a terrain-capable hardware-backed forge3d runtime", allow_module_level=True)
-
-
+@pytest.mark.apple_metal_physical
 def test_terrain_demo_synthetic_render(tmp_path: Path) -> None:
     session = f3d.Session(window=False)
     renderer = f3d.TerrainRenderer(session)

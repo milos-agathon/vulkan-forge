@@ -439,9 +439,20 @@ PHYSICAL_FAMILY_NODES = {
         "tests/test_determinism_hash.py::test_device_probe_reports_initialized_render_adapter",
         "tests/test_shadow_tip.py::test_shadow_mask_is_identical_on_dx12_and_vulkan",
     },
+    "f3dz_physical": {
+        "tests/test_f3dz_codec.py::test_gpu_matches_cpu_for_every_corpus_page",
+    },
     "nvidia_vulkan": {
         "tests/test_recipe_goldens.py::test_nvidia_vulkan_recipe_pixel_golden_render_and_match",
         "tests/test_terrain_runtime.py::test_nvidia_vulkan_terrain_constructor_child_smoke",
+        "tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_normal_family_changes_lighting_ssim",
+        "tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_all_families_page_within_budget",
+        "tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_missing_family_is_fatal",
+        "tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_missing_family_offline_preflight_leaves_no_active_session",
+        "tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_partial_normal_residency_degrades_gracefully",
+        "tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_unusable_family_source_is_fatal",
+        "tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_partial_mask_residency_uses_neutral_fallback",
+        "tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_gpu_shader_feedback_preserves_family_coordinates",
     },
     "limes_physical": {
         "tests/test_vector_coverage.py::test_torture_plus_100k_road_segments_frame_time_within_budget",
@@ -459,7 +470,8 @@ PHYSICAL_FAMILY_MODULES = {
 
 
 def _function_markers(nodeid: str) -> set[str]:
-    path_text, function_name = nodeid.split("::", 1)
+    path_text, *qualname = nodeid.split("::")
+    function_name = qualname[-1]
     tree = ast.parse((ROOT / path_text).read_text(encoding="utf-8"))
     functions = [
         node
@@ -648,7 +660,14 @@ def test_e_helios_pixel_golden_is_owned_by_the_existing_dedicated_lane():
     nvidia_decorators = recipe_source.split(
         "def test_nvidia_vulkan_recipe_pixel_golden_render_and_match", 1
     )[0].rsplit("\n\n", 1)[-1]
-    assert '@pytest.mark.parametrize("spec", RECIPE_GOLDENS' in nvidia_decorators
+    assert (
+        '@pytest.mark.parametrize("spec", NVIDIA_VULKAN_RECIPE_GOLDENS'
+        in nvidia_decorators
+    )
+    metal_decorators = recipe_source.split(
+        "def test_metal_recipe_pixel_golden_render_and_match", 1
+    )[0].rsplit("\n\n", 1)[-1]
+    assert '@pytest.mark.parametrize("spec", RECIPE_GOLDENS' in metal_decorators
 
 
 def test_e_tv6_example_is_owned_by_the_existing_m06_viewer_lane():
@@ -767,7 +786,9 @@ def test_e_full_python_profiles_install_one_manifest_and_reject_skips():
         assert junit is not None
         junit_path = junit.group(1)
         assert verifier["run"].split()[-1] == junit_path
-        assert upload["with"]["path"] == junit_path
+        artifact_prefix = junit_path.removesuffix(".xml")
+        assert upload["with"]["path"] == artifact_prefix + "*"
+        assert f"--selection-ledger={artifact_prefix}-selection.json" in lane["run"]
         artifact_names.append(upload["with"]["name"])
 
     assert len(artifact_names) == len(set(artifact_names))
@@ -865,6 +886,7 @@ def test_e_apple_metal_selection_is_one_checked_fail_closed_manifest():
 
     phases = metal.load_manifest()
     assert [phase.name for phase in phases] == [
+        "physical-family",
         "tv20-normal-fresh-1",
         "tv20-normal-fresh-2",
         "contract-matrix",
@@ -873,10 +895,15 @@ def test_e_apple_metal_selection_is_one_checked_fail_closed_manifest():
         "tests/test_tv20_virtual_texturing.py::TestTerrainMaterialVirtualTexturing::"
         "test_vt_normal_family_changes_normal_aov_and_reports_dual_residency"
     )
-    assert phases[0].nodes == (normal_node,)
+    physical = phases[0]
+    assert physical.nodes == ("tests",)
+    assert physical.marker is not None
+    assert "apple_metal_physical" in physical.marker
+    assert "not apple_metal_contract" in physical.marker
     assert phases[1].nodes == (normal_node,)
+    assert phases[2].nodes == (normal_node,)
 
-    matrix = phases[2].nodes
+    matrix = phases[3].nodes
     required = {
         "tests/test_tv20_virtual_texturing.py::TestTerrainMaterialVirtualTexturing::test_vt_enabled_changes_albedo_and_reports_residency",
         "tests/test_aov.py::TestAovRendering::test_aov_numpy_outputs_are_real_and_normalized",
@@ -924,7 +951,7 @@ def test_e_apple_metal_selection_is_one_checked_fail_closed_manifest():
 
     manifest = metal._read_manifest()
     assert manifest["recipe_cases"] == 22
-    assert manifest["expected_tests"] == 37
+    assert manifest["expected_tests"] == 265
     runner_source = (ROOT / "scripts" / "run_apple_metal_acceptance.py").read_text(
         encoding="utf-8"
     )
@@ -1475,6 +1502,53 @@ def test_generic_profiles_semantically_deselect_physical_families():
             assert f"not {marker}" in expression
 
 
+def test_generic_full_selection_ledger_records_both_sides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class Item:
+        def __init__(self, nodeid: str, markers: tuple[str, ...]):
+            self.nodeid = nodeid
+            self._markers = tuple(pytest.mark.__getattr__(name).mark for name in markers)
+
+        def iter_markers(self, name=None):
+            return (
+                marker
+                for marker in self._markers
+                if name is None or marker.name == name
+            )
+
+        def get_closest_marker(self, name):
+            return next(self.iter_markers(name), None)
+
+    ledger = tmp_path / "selection.json"
+    monkeypatch.setenv(ci_pytest_lane.ZERO_SKIP_ENV, "1")
+    monkeypatch.setenv(ci_pytest_lane.LEDGER_ENV, str(ledger))
+    ci_pytest_lane._DESELECTED.clear()
+    try:
+        ci_pytest_lane.pytest_deselected(
+            [Item("tests/test_physical.py::test_gpu", ("gpu_lane",))]
+        )
+        ci_pytest_lane.pytest_collection_modifyitems(
+            [Item("tests/test_portable.py::test_cpu", ())]
+        )
+        payload = json.loads(ledger.read_text(encoding="utf-8"))
+    finally:
+        ci_pytest_lane._DESELECTED.clear()
+
+    assert payload == {
+        "schema": "forge3d.pytest-selection.v1",
+        "selected": [
+            {"nodeid": "tests/test_portable.py::test_cpu", "markers": []}
+        ],
+        "deselected": [
+            {
+                "nodeid": "tests/test_physical.py::test_gpu",
+                "markers": ["gpu_lane"],
+            }
+        ],
+    }
+
+
 def test_nvidia_visual_and_sidera_families_have_complete_zero_skip_evidence():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     runner = (ROOT / "scripts/run_nvidia_visual_acceptance.py").read_text(
@@ -1503,6 +1577,21 @@ def test_nvidia_visual_and_sidera_families_have_complete_zero_skip_evidence():
     )
     assert "if: always()" in job and "uses: actions/upload-artifact@v4" in job
     assert "test-golden-images-nvidia" in summary
+
+
+def test_f3dz_physical_family_has_one_complete_zero_skip_junit():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    job = _workflow_job(workflow, "test-f3dz-gpu")
+    summary = _workflow_job(workflow, "full-acceptance-summary")
+    step = _workflow_step(job, "Run all F3DZ corpus and CPU-GPU identity gates")
+
+    assert job.count("python -m pytest tests/test_f3dz_codec.py") == 1
+    _assert_pwsh_pytest_and_verifier_are_both_authoritative(
+        step,
+        'python -m pytest tests/test_f3dz_codec.py -v --tb=short --junitxml="$env:FORGE3D_F3DZ_ARTIFACT_DIR/junit.xml" *>&1 | Tee-Object "$env:FORGE3D_F3DZ_ARTIFACT_DIR/pytest.log"',
+    )
+    assert "if: always()" in job and "uses: actions/upload-artifact@v4" in job
+    assert "test-f3dz-gpu" in summary
 
 
 def test_anamnesis_family_has_one_complete_zero_skip_junit():
@@ -1572,3 +1661,64 @@ def test_limes_and_approved_tv6_share_required_m06_evidence_once():
     assert job.count("assert_junit_zero_skips.py") == 1
     assert "if: always()" in job and "uses: actions/upload-artifact@v4" in job
     assert "test-m06-full-geospatial-viewer" in summary
+
+
+def test_all_interactive_viewer_records_are_owned_once_by_required_m06(
+    tmp_path: Path,
+):
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    job = _workflow_job(workflow, "test-m06-full-geospatial-viewer")
+    step = _workflow_step(job, "Run M-06 source and live acceptance")
+    summary = _workflow_job(workflow, "full-acceptance-summary")
+    informational = _workflow_job(workflow, "test-interactive-viewer-macos")
+
+    tests_block = step.split("$tests = @(", 1)[1].split("\n          )", 1)[0]
+    m06_nodes = re.findall(r"'([^']+)'", tests_block)
+    assert len(m06_nodes) == len(set(m06_nodes))
+
+    ledger = tmp_path / "generic-full-selection.json"
+    collected = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "ci_pytest_lane.py"),
+            "--profile",
+            "full",
+            f"--selection-ledger={ledger}",
+            "--collect-only",
+            "-qq",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert collected.returncode == 0, collected.stdout + collected.stderr
+    payload = json.loads(ledger.read_text(encoding="utf-8"))
+    interactive = [
+        record["nodeid"]
+        for record in payload["deselected"]
+        if "interactive_viewer" in record["markers"]
+    ]
+    assert len(interactive) == 48
+    assert len(interactive) == len(set(interactive))
+
+    def ownership_count(nodeid: str) -> int:
+        return sum(
+            nodeid == target
+            or nodeid.startswith(target + "[")
+            or ("::" not in target and nodeid.startswith(target + "::"))
+            for target in m06_nodes
+        )
+
+    assert {nodeid: ownership_count(nodeid) for nodeid in interactive} == {
+        nodeid: 1 for nodeid in interactive
+    }
+    assert "runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]" in job
+    assert "WGPU_BACKEND: vulkan" in job
+    assert job.count("--junitxml=") == 1
+    assert job.count("assert_junit_zero_skips.py") == 1
+    assert "if: always()" in job and "uses: actions/upload-artifact@v4" in job
+    assert "test-m06-full-geospatial-viewer" in summary
+    assert "continue-on-error: true" in informational
+    assert "test-interactive-viewer-macos" not in summary

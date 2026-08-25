@@ -154,6 +154,7 @@ def tv10_render_env():
         Path(tmp.name).unlink(missing_ok=True)
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not GPU_AVAILABLE, reason="TV10 rendering tests require GPU-backed forge3d module")
 class TestTerrainSubsurfaceMaterials:
     def test_zero_strength_preserves_baseline(self, tv10_render_env) -> None:

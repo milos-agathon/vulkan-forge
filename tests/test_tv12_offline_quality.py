@@ -16,14 +16,7 @@ try:
 except ImportError:
     HAS_NATIVE = False
 
-if not HAS_NATIVE:
-    pytest.skip("TV12 tests require the native forge3d module", allow_module_level=True)
-
-if not terrain_rendering_available():
-    pytest.skip(
-        "TV12 tests require a terrain-capable hardware-backed forge3d runtime",
-        allow_module_level=True,
-    )
+pytestmark = pytest.mark.apple_metal_physical
 
 
 def _write_test_hdr(path: Path, width: int = 8, height: int = 4) -> None:

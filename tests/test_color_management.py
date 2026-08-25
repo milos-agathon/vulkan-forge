@@ -153,6 +153,7 @@ def test_linear_half_gray_is_encoded_once_not_twice() -> None:
     assert _quantize_unorm8(encoded_twice) == 223
 
 
+@pytest.mark.apple_metal_physical
 def test_offline_and_postfx_color_contract_match_within_one_lsb() -> None:
     if not terrain_rendering_available():
         pytest.skip("native offline tonemap comparison requires a terrain-capable GPU runtime")

@@ -366,6 +366,7 @@ def tv20_render_env():
             pass
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not GPU_AVAILABLE, reason="TV20 runtime tests require GPU-backed forge3d module")
 class TestTerrainMaterialVirtualTexturing:
     def test_runtime_api_surface_exists(self, tv20_render_env) -> None:
@@ -402,6 +403,7 @@ class TestTerrainMaterialVirtualTexturing:
         assert stats["resident_pages"] == pytest.approx(0.0)
         assert stats["total_pages"] == pytest.approx(0.0)
 
+    @pytest.mark.apple_metal_contract
     def test_vt_enabled_changes_albedo_and_reports_residency(self, tv20_render_env) -> None:
         renderer, material_set, ibl, heightmap = tv20_render_env
         renderer.clear_material_vt_sources()
@@ -441,6 +443,7 @@ class TestTerrainMaterialVirtualTexturing:
         assert stats["avg_upload_ms"] > 0.0
         assert stats["source_count"] == pytest.approx(float(VT_MATERIAL_COUNT))
 
+    @pytest.mark.apple_metal_contract
     def test_vt_normal_family_changes_normal_aov_and_reports_dual_residency(self, tv20_render_env) -> None:
         renderer, material_set, ibl, heightmap = tv20_render_env
         renderer.clear_material_vt_sources()

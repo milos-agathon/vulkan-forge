@@ -1497,6 +1497,7 @@ class TestTerrainAnalysisApi:
 
     # ---- slope_aspect_compute ----
 
+    @pytest.mark.apple_metal_physical
     def test_slope_flat_surface(self):
         """Flat surface produces zero slope everywhere."""
         import numpy as np
@@ -1506,6 +1507,7 @@ class TestTerrainAnalysisApi:
         assert slopes.shape == (64 * 64,)
         assert slopes.max() == pytest.approx(0.0, abs=1e-5)
 
+    @pytest.mark.apple_metal_physical
     def test_slope_east_ramp(self):
         """East-facing ramp at 45 degrees produces slope ~45."""
         import numpy as np
@@ -1517,6 +1519,7 @@ class TestTerrainAnalysisApi:
         slopes, _ = ts.slope_aspect_compute(heights, 64, 64)
         assert slopes.min() == pytest.approx(45.0, abs=0.1)
 
+    @pytest.mark.apple_metal_physical
     def test_slope_rejects_wrong_size(self):
         """slope_aspect_compute rejects array with wrong element count."""
         import numpy as np
@@ -1525,6 +1528,7 @@ class TestTerrainAnalysisApi:
         with pytest.raises(Exception):
             ts.slope_aspect_compute(heights, 64, 64)
 
+    @pytest.mark.apple_metal_physical
     def test_slope_rejects_small_grid(self):
         """slope_aspect_compute rejects grids smaller than 3x3."""
         import numpy as np
@@ -1535,6 +1539,7 @@ class TestTerrainAnalysisApi:
 
     # ---- contour_extract ----
 
+    @pytest.mark.apple_metal_physical
     def test_contour_gaussian(self):
         """Gaussian hill produces contours at requested levels."""
         import numpy as np
@@ -1552,6 +1557,7 @@ class TestTerrainAnalysisApi:
         assert result["total_points"] > 0
         assert len(result["polylines"]) == result["polyline_count"]
 
+    @pytest.mark.apple_metal_physical
     def test_contour_rejects_empty_levels(self):
         """contour_extract rejects empty levels list."""
         import numpy as np
@@ -1560,6 +1566,7 @@ class TestTerrainAnalysisApi:
         with pytest.raises(Exception):
             ts.contour_extract(heights, 64, 64, levels=[])
 
+    @pytest.mark.apple_metal_physical
     def test_contour_no_crossing(self):
         """Flat surface at 0 with level=50 produces no contours."""
         import numpy as np

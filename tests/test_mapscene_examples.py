@@ -62,6 +62,7 @@ def test_canonical_mapscene_examples_exist_and_do_not_use_raw_ipc():
         assert "send_ipc" not in text
 
 
+@pytest.mark.apple_metal_physical
 @_requires_gpu
 def test_terrain_raster_example_validates_renders_and_bundles(tmp_path, monkeypatch):
     module = _load_example(EXAMPLES["terrain_raster"])
@@ -86,6 +87,7 @@ def test_terrain_raster_example_validates_renders_and_bundles(tmp_path, monkeypa
     assert blocked_scene.last_render_path is None
 
 
+@pytest.mark.apple_metal_physical
 @_requires_gpu
 def test_vector_labels_example_compiles_label_plan_and_bundles(tmp_path):
     module = _load_example(EXAMPLES["vector_labels"])
@@ -102,6 +104,7 @@ def test_vector_labels_example_compiles_label_plan_and_bundles(tmp_path):
     assert Path(payload["bundle_path"]).exists()
 
 
+@pytest.mark.apple_metal_physical
 @_requires_gpu
 def test_fuji_labels_demo_uses_public_mapscene_gpu_label_path(tmp_path):
     module = _load_example(EXAMPLES["fuji_labels"])
@@ -115,6 +118,7 @@ def test_fuji_labels_demo_uses_public_mapscene_gpu_label_path(tmp_path):
     assert Path(payload["png_path"]).exists()
 
 
+@pytest.mark.apple_metal_physical
 @_requires_gpu
 def test_offline_quality_example_uses_native_accumulation_and_aovs(tmp_path):
     module = _load_example(EXAMPLES["offline_quality"])
@@ -136,6 +140,7 @@ def test_offline_quality_example_uses_native_accumulation_and_aovs(tmp_path):
     assert Path(payload["bundle_path"]).exists()
 
 
+@pytest.mark.apple_metal_physical
 @_requires_gpu
 def test_buildings_labels_example_renders_native_gpu_buildings(tmp_path):
     module = _load_example(EXAMPLES["buildings_labels"])
@@ -161,6 +166,7 @@ def test_buildings_labels_example_renders_native_gpu_buildings(tmp_path):
     assert Path(payload["bundle_path"]).exists()
 
 
+@pytest.mark.apple_metal_physical
 @_requires_gpu
 def test_bundled_datasets_showcase_covers_specs_001_to_004(tmp_path):
     module = _load_example(EXAMPLES["bundled_datasets_showcase"])
@@ -184,6 +190,7 @@ def test_bundled_datasets_showcase_covers_specs_001_to_004(tmp_path):
     assert Path(payload["bundle_path"]).exists()
 
 
+@pytest.mark.apple_metal_physical
 @_requires_gpu
 def test_p1_assets_bundle_showcase_covers_spec_005(tmp_path):
     module = _load_example(EXAMPLES["p1_assets_bundle_showcase"])

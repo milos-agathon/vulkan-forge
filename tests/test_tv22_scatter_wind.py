@@ -164,6 +164,7 @@ def _make_gpu_fixtures():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not _CAN_RUN, reason=_SKIP_REASON)
 class TestWindNoOp:
     """Wind disabled or zero-amplitude must produce identical output to static baseline."""
@@ -235,6 +236,7 @@ class TestWindNoOp:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not _CAN_RUN, reason=_SKIP_REASON)
 class TestWindAnimation:
     """Wind enabled must produce visible, deterministic animation."""
@@ -348,6 +350,7 @@ class TestWindAnimation:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not _CAN_RUN, reason=_SKIP_REASON)
 class TestWindFade:
     """Distance fade must suppress wind at range."""

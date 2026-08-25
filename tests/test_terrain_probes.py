@@ -259,6 +259,7 @@ def probe_render_env():
     return renderer, material_set, ibl, heightmap, overlay, water_mask
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not GPU_AVAILABLE, reason="Probe lighting tests require GPU-backed forge3d module")
 class TestTerrainProbeLighting:
     def test_probe_fallback_pixel_identical(self, probe_render_env) -> None:

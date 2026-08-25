@@ -72,6 +72,7 @@ def test_runtime_contract_assert_mode_fails_closed_without_observations():
     assert runtime_assert["checked_scenes"] == 0
     assert runtime_assert["observed_inputs"] is False
 
+@pytest.mark.apple_metal_physical
 def test_runtime_contract_asserts_observed_gpu_inputs():
     if not f3d.has_gpu():
         pytest.skip("runtime shader-contract assertions require a GPU render")

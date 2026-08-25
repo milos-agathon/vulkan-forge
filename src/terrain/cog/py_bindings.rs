@@ -34,6 +34,7 @@ impl PyCogDataset {
     #[new]
     #[pyo3(signature = (url, cache_size_mb=256, cache_dir=None, cache_budget_mb=None))]
     pub fn new(
+        py: Python<'_>,
         url: &str,
         cache_size_mb: u32,
         cache_dir: Option<String>,
@@ -47,16 +48,18 @@ impl PyCogDataset {
             })?;
 
         let handle = runtime.handle().clone();
-        let reader = runtime
-            .block_on(async {
-                CogHeightReader::new_with_runtime_and_cache_options(
-                    url,
-                    cache_size_mb,
-                    handle,
-                    cache_dir.map(PathBuf::from),
-                    cache_budget_mb.unwrap_or(cache_size_mb),
-                )
-                .await
+        let reader = py
+            .allow_threads(|| {
+                runtime.block_on(async {
+                    CogHeightReader::new_with_runtime_and_cache_options(
+                        url,
+                        cache_size_mb,
+                        handle,
+                        cache_dir.map(PathBuf::from),
+                        cache_budget_mb.unwrap_or(cache_size_mb),
+                    )
+                    .await
+                })
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to open COG: {:?}", e)))?;
 
@@ -102,9 +105,11 @@ impl PyCogDataset {
         y: u32,
         lod: u32,
     ) -> PyResult<pyo3::Bound<'py, numpy::PyArray2<f32>>> {
-        let heights = self
-            ._runtime
-            .block_on(self.reader.read_tile_async(x, y, lod))
+        let heights = py
+            .allow_threads(|| {
+                self._runtime
+                    .block_on(self.reader.read_tile_async(x, y, lod))
+            })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to read tile: {:?}", e)))?;
 
         let header = self.reader.header();

@@ -5,13 +5,9 @@ import numpy as np
 import pytest
 from _terrain_runtime import terrain_rendering_available
 
-forge3d = pytest.importorskip("forge3d")
+import forge3d
 
-if not terrain_rendering_available():
-    pytest.skip(
-        "Terrain color-space tests require a terrain-capable hardware-backed forge3d runtime",
-        allow_module_level=True,
-    )
+pytestmark = pytest.mark.apple_metal_physical
 
 
 def _test_ibl(tmp_path):

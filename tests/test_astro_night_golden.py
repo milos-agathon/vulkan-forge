@@ -25,15 +25,6 @@ from forge3d.diagnostics import render_certificate
 
 APPLE_METAL_ACCEPTANCE = os.environ.get("FORGE3D_APPLE_METAL_ACCEPTANCE") == "1"
 
-if not f3d.has_gpu() and APPLE_METAL_ACCEPTANCE:
-    raise RuntimeError("required Apple Metal SIDERA runtime has no GPU adapter")
-if not f3d.has_gpu():
-    pytest.skip(
-        "the SIDERA night golden is a GPU render; no adapter present",
-        allow_module_level=True,
-    )
-
-
 def _adapter_is_hardware(probe: object) -> bool:
     """True only for a non-software adapter.
 
@@ -226,6 +217,7 @@ def _largest_component_bounds(mask: np.ndarray) -> tuple[int, int]:
     return max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
 
 
+@pytest.mark.apple_metal_physical
 def test_night_sky_render_is_repeatable_and_certified(tmp_path):
     """Two in-process renders, zero byte tolerance, plus the certificate shape.
 
@@ -294,6 +286,7 @@ def test_night_sky_render_is_repeatable_and_certified(tmp_path):
             }, degradation
 
 
+@pytest.mark.apple_metal_physical
 def test_night_frame_custom_aspects_preserve_the_moon_disc():
     """The dimension-specific projection does not stretch celestial discs."""
     for width, height in ((512, 256), (256, 512)):
@@ -308,6 +301,8 @@ def test_night_frame_custom_aspects_preserve_the_moon_disc():
 
 
 @requires_hardware
+@pytest.mark.apple_metal_contract
+@pytest.mark.apple_metal_physical
 def test_night_golden_is_cross_process_repeatable_on_pinned_backend(tmp_path):
     """DoD 6: two processes on the selected backend produce identical bytes."""
     first = _render_in_subprocess(tmp_path / "process_a.png")
@@ -318,6 +313,7 @@ def test_night_golden_is_cross_process_repeatable_on_pinned_backend(tmp_path):
     )
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.sidera_vulkan
 @requires_reference_hardware
 def test_night_golden_matches_committed_vulkan_bytes(tmp_path):
@@ -352,6 +348,7 @@ def test_night_golden_matches_committed_vulkan_bytes(tmp_path):
     assert np.array_equal(f3d.png_to_numpy(first_png), f3d.png_to_numpy(GOLDEN))
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.sidera_vulkan
 @requires_reference_hardware
 def test_golden_refresh_does_not_rewrite_the_committed_file_when_disabled(

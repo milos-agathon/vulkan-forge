@@ -26,10 +26,6 @@ from forge3d.terrain_params import (
 )
 
 
-if not terrain_rendering_available():
-    pytest.skip("cam_phi wiring test requires a terrain-capable hardware-backed forge3d runtime", allow_module_level=True)
-
-
 def _create_test_hdr(path: str, width: int = 8, height: int = 4) -> None:
     """Create a minimal valid HDR file for testing."""
     with open(path, "wb") as f:
@@ -91,6 +87,8 @@ def _render_and_hash(renderer, material_set, ibl, params, heightmap) -> str:
     return hashlib.md5(arr.tobytes()).hexdigest()
 
 
+@pytest.mark.apple_metal_contract
+@pytest.mark.apple_metal_physical
 def test_cam_phi_changes_output():
     """Test that cam_phi parameter actually changes the rendered output.
     
@@ -145,6 +143,8 @@ def test_cam_phi_changes_output():
     )
 
 
+@pytest.mark.apple_metal_contract
+@pytest.mark.apple_metal_physical
 def test_cam_phi_four_quadrants():
     """Test that cam_phi works for all four quadrants (0, 90, 180, 270).
     

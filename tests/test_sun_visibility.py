@@ -24,10 +24,6 @@ from forge3d.terrain_params import (
     TriplanarSettings,
 )
 
-if not terrain_rendering_available():
-    pytest.skip("Sun visibility tests require a terrain-capable hardware-backed forge3d runtime", allow_module_level=True)
-
-
 def _create_test_hdr(path: str, width: int = 8, height: int = 4) -> None:
     """Create a minimal HDR file for IBL testing."""
     with open(path, "wb") as f:
@@ -145,6 +141,7 @@ def _compute_ssim_approx(img1: np.ndarray, img2: np.ndarray) -> float:
     return float(numerator / denominator)
 
 
+@pytest.mark.apple_metal_physical
 class TestSunVisibility:
     """Test suite for heightfield ray-traced sun visibility."""
 

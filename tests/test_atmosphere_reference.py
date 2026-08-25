@@ -348,6 +348,7 @@ def _render_prometheus_reference_samples(
     return samples, evidence
 
 
+@pytest.mark.apple_metal_physical
 def test_sky_delta_e2000_under_two_for_full_sun_elevation_sweep() -> None:
     _require_physical_metal()
     scores: dict[str, float] = {}
@@ -699,6 +700,7 @@ def _measure_high_exposure_sky_hdr(
     }
 
 
+@pytest.mark.apple_metal_physical
 def test_high_exposure_sun_aligned_sky_hdr_stays_finite() -> None:
     _require_physical_metal()
     physical = _run_aether_physical_process("high-exposure")
@@ -714,6 +716,7 @@ def test_high_exposure_sun_aligned_sky_hdr_stays_finite() -> None:
     print("AETHER_HIGH_EXPOSURE_HDR=" + json.dumps(measurement, sort_keys=True))
 
 
+@pytest.mark.apple_metal_physical
 def test_terrain_aether_inscatter_scales_with_sky_exposure() -> None:
     _require_physical_metal()
     physical = _run_aether_physical_process("exposure")
@@ -731,6 +734,7 @@ def test_terrain_aether_inscatter_scales_with_sky_exposure() -> None:
     print("AETHER_EXPOSURE_SCALING=" + json.dumps(measurement, sort_keys=True))
 
 
+@pytest.mark.apple_metal_physical
 def test_terrain_saturation_falloff_matches_scattering_law_within_ten_percent() -> None:
     _require_physical_metal()
     physical = _run_aether_physical_process("saturation")
@@ -866,6 +870,7 @@ np.savez(
         return {name: payload[name].copy() for name in payload.files}
 
 
+@pytest.mark.apple_metal_physical
 def test_prometheus_aerial_post_preserves_aovs_and_transports_hits_and_misses(
     tmp_path: Path,
 ) -> None:
@@ -924,6 +929,7 @@ def test_prometheus_aerial_post_preserves_aovs_and_transports_hits_and_misses(
     )
 
 
+@pytest.mark.apple_metal_physical
 def test_prometheus_aerial_extreme_radiometric_inputs_do_not_blacken_hits_or_misses(
     tmp_path: Path,
 ) -> None:

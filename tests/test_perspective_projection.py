@@ -64,6 +64,7 @@ def _render_with_probe(
     return hashlib.md5(output_path.read_bytes()).hexdigest()
 
 
+@pytest.mark.apple_metal_physical
 class TestPerspectiveProjectionCli:
     """Ensure CLI plumbing preserves perspective controls."""
 

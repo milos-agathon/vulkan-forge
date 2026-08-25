@@ -141,6 +141,7 @@ class TestRainierShowcasePreset:
             assert cfg["shadows"]["cascades"] == 4
 
 
+@pytest.mark.apple_metal_physical
 class TestCLIIntegration:
     """Test CLI integration (requires subprocess)."""
 

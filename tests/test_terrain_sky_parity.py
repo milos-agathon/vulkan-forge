@@ -12,10 +12,7 @@ from _terrain_runtime import terrain_rendering_available
 from forge3d.terrain_params import PomSettings, SkySettings, make_terrain_params_config
 
 
-if not terrain_rendering_available():
-    pytest.skip("Terrain sky parity tests require a terrain-capable hardware-backed forge3d runtime", allow_module_level=True)
-
-
+pytestmark = pytest.mark.apple_metal_physical
 def _create_test_hdr(path: str, width: int = 8, height: int = 4) -> None:
     with open(path, "wb") as f:
         f.write(b"#?RADIANCE\n")

@@ -153,6 +153,7 @@ def _assert_matches_golden(name: str, actual: np.ndarray) -> None:
     assert mean_abs <= DRIFT_MEAN_ABS_MAX, f"{name} drift: mean abs diff too high: {mean_abs:.4f}"
 
 
+@pytest.mark.apple_metal_physical
 def test_adjudication_gate():
     if not terrain_rendering_available():
         pytest.skip(

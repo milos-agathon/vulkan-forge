@@ -8,16 +8,22 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from collections import deque
 from os import environ
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests"
 UNRUN_TOML = TESTS / "UNRUN.toml"
 SLOW_LANE_SELECTOR = "--slow-lane"
+SELECTION_LEDGER_OPTION = "--selection-ledger"
+ZERO_SKIP_ENV = "FORGE3D_GENERIC_FULL_ZERO_SKIP"
+LEDGER_ENV = "FORGE3D_PYTEST_SELECTION_LEDGER"
 DEDICATED_LANE_MARKERS = (
     "recipe_golden",
     "anamnesis_physical",
@@ -26,6 +32,9 @@ DEDICATED_LANE_MARKERS = (
     "nvidia_vulkan",
     "limes_physical",
     "helios_physical",
+    "gpu_lane",
+    "f3dz_physical",
+    "apple_metal_physical",
 )
 
 # tests/_toml_compat.py is the shared loader (stdlib tomllib on >=3.11, tiny
@@ -145,22 +154,103 @@ def _github_escape(message: str) -> str:
     return message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
-def _parse_args(argv: list[str]) -> tuple[str, bool, list[str]]:
+def _parse_args(argv: list[str]) -> tuple[str, bool, Path | None, list[str]]:
     parser = argparse.ArgumentParser(
         description="Run an explicit CENSOR validation profile before pytest options."
     )
     parser.add_argument("--profile", choices=("fast", "full"), required=True)
     parser.add_argument(SLOW_LANE_SELECTOR, action="store_true")
+    parser.add_argument(SELECTION_LEDGER_OPTION, type=Path)
     known, passthrough = parser.parse_known_args(argv)
-    return known.profile, known.slow_lane, passthrough
+    return known.profile, known.slow_lane, known.selection_ledger, passthrough
+
+
+_COLLECTION_SKIPS: list[str] = []
+_DESELECTED: list[dict[str, object]] = []
+
+
+def _zero_skip_enabled() -> bool:
+    return environ.get(ZERO_SKIP_ENV) == "1"
+
+
+def pytest_collectreport(report) -> None:
+    if _zero_skip_enabled() and report.skipped:
+        _COLLECTION_SKIPS.append(f"{report.nodeid}: {report.longrepr}")
+
+
+def _ledger_record(item) -> dict[str, object]:
+    return {
+        "nodeid": item.nodeid,
+        "markers": sorted({marker.name for marker in item.iter_markers()}),
+    }
+
+
+def pytest_deselected(items) -> None:
+    if _zero_skip_enabled():
+        _DESELECTED.extend(_ledger_record(item) for item in items)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items) -> None:
+    if not _zero_skip_enabled():
+        return
+    forbidden = []
+    ledger = []
+    for item in items:
+        ledger.append(_ledger_record(item))
+        if item.get_closest_marker("skip") is not None:
+            forbidden.append(f"{item.nodeid}: skip")
+        if item.get_closest_marker("xfail") is not None:
+            forbidden.append(f"{item.nodeid}: xfail")
+        for marker in item.iter_markers("skipif"):
+            if marker.args and bool(marker.args[0]):
+                forbidden.append(f"{item.nodeid}: active skipif")
+    ledger_path = environ.get(LEDGER_ENV)
+    if ledger_path:
+        output = Path(ledger_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(
+                {
+                    "schema": "forge3d.pytest-selection.v1",
+                    "selected": ledger,
+                    "deselected": _DESELECTED,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    if forbidden:
+        raise pytest.UsageError(
+            "generic full Python lane selected skip/xfail tests:\n"
+            + "\n".join(forbidden)
+        )
+
+
+def pytest_collection_finish(session) -> None:
+    del session
+    if _zero_skip_enabled() and _COLLECTION_SKIPS:
+        raise pytest.UsageError(
+            "generic full Python lane skipped test modules during collection:\n"
+            + "\n".join(_COLLECTION_SKIPS)
+        )
 
 
 def main(argv: list[str]) -> int:
-    profile, slow, passthrough = _parse_args(argv)
+    profile, slow, selection_ledger, passthrough = _parse_args(argv)
+    child_env = environ.copy()
+    if profile == "full":
+        child_env[ZERO_SKIP_ENV] = "1"
+        if selection_ledger is not None:
+            child_env[LEDGER_ENV] = str(selection_ledger)
     cmd = [
         sys.executable,
         "-m",
         "pytest",
+        "-p",
+        "scripts.ci_pytest_lane",
         *build_pytest_args(profile, passthrough, slow=slow),
     ]
     tail: deque[str] = deque(maxlen=180)
@@ -170,6 +260,7 @@ def main(argv: list[str]) -> int:
         stderr=subprocess.STDOUT,
         stdout=subprocess.PIPE,
         text=True,
+        env=child_env,
     )
     assert proc.stdout is not None
     for line in proc.stdout:

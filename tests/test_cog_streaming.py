@@ -9,11 +9,10 @@ Tests for Cloud Optimized GeoTIFF streaming functionality including:
 
 from __future__ import annotations
 
-import os
-import socket
 import pytest
 import numpy as np
 from pathlib import Path
+from _cog_http_fixtures import _serve_range
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
@@ -21,35 +20,14 @@ AVAILABLE_DEMS = {
     "fuji": PROJECT_ROOT / "assets/tif/Mount_Fuji_30m.tif",
     "rainier": PROJECT_ROOT / "assets/tif/dem_rainier.tif",
 }
-
-PUBLIC_COG_URLS = [
-    "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/1/C/CV/2023/1/S2B_1CCV_20230101_0_L2A/B04.tif",
-]
-
-
-def has_network_access(timeout: float = 2.0) -> bool:
-    """Check if we have network access to run remote tests."""
-    try:
-        socket.create_connection(("sentinel-cogs.s3.us-west-2.amazonaws.com", 443), timeout=timeout)
-        return True
-    except (socket.timeout, socket.error, OSError):
-        return False
-
-
-def skip_if_no_network():
-    """Pytest skip decorator for network-dependent tests."""
-    return pytest.mark.skipif(
-        not has_network_access() or os.environ.get("FORGE3D_SKIP_NETWORK_TESTS", "0") == "1",
-        reason="Network access unavailable or FORGE3D_SKIP_NETWORK_TESTS=1"
-    )
-
+REMOTE_COG_ASSET = PROJECT_ROOT / "assets/tif/moon_south_pole_lola.tif"
 
 def get_test_dem() -> Path:
     """Get a local DEM for testing."""
     for _name, path in AVAILABLE_DEMS.items():
         if path.exists():
             return path
-    pytest.skip("No test DEM available in assets/tif/")
+    raise AssertionError("required full-profile DEM asset is missing from assets/tif/")
 
 
 @pytest.fixture
@@ -57,6 +35,19 @@ def local_dem_url():
     """Fixture providing a file:// URL to a local DEM."""
     dem_path = get_test_dem()
     return f"file://{dem_path.absolute()}"
+
+
+@pytest.fixture
+def remote_dem_url(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    if not REMOTE_COG_ASSET.is_file():
+        raise AssertionError(f"required full-profile COG asset is missing: {REMOTE_COG_ASSET}")
+    server, url, _served = _serve_range(REMOTE_COG_ASSET.read_bytes())
+    try:
+        yield url
+    finally:
+        server.shutdown()
 
 
 def cog_available():
@@ -445,54 +436,44 @@ class TestCogAvailability:
 
 
 class TestRemoteCog:
-    """Remote COG integration tests (network-dependent).
+    """Remote COG integration tests against a deterministic loopback server."""
     
-    These tests require network access and will be skipped in CI
-    unless FORGE3D_SKIP_NETWORK_TESTS=0 is set.
-    """
-    
-    @skip_if_no_network()
     @pytest.mark.skipif(
         not cog_available() and not rasterio_available(),
         reason="Neither native COG nor rasterio available"
     )
-    def test_remote_cog_open(self):
+    def test_remote_cog_open(self, remote_dem_url):
         """Test opening a remote COG via HTTP."""
         from forge3d.cog import open_cog
         
-        url = PUBLIC_COG_URLS[0]
-        ds = open_cog(url, cache_size_mb=32)
+        ds = open_cog(remote_dem_url, cache_size_mb=32)
         
         assert ds is not None
         assert ds.overview_count >= 1
     
-    @skip_if_no_network()
     @pytest.mark.skipif(
         not cog_available() and not rasterio_available(),
         reason="Neither native COG nor rasterio available"
     )
-    def test_remote_cog_bounds(self):
+    def test_remote_cog_bounds(self, remote_dem_url):
         """Test bounds from remote COG."""
         from forge3d.cog import open_cog
         
-        url = PUBLIC_COG_URLS[0]
-        ds = open_cog(url, cache_size_mb=32)
+        ds = open_cog(remote_dem_url, cache_size_mb=32)
         bounds = ds.bounds
         
         assert isinstance(bounds, tuple)
         assert len(bounds) == 4
     
-    @skip_if_no_network()
     @pytest.mark.skipif(
         not cog_available() and not rasterio_available(),
         reason="Neither native COG nor rasterio available"
     )
-    def test_remote_cog_tile_read(self):
+    def test_remote_cog_tile_read(self, remote_dem_url):
         """Test reading a tile from remote COG."""
         from forge3d.cog import open_cog
         
-        url = PUBLIC_COG_URLS[0]
-        ds = open_cog(url, cache_size_mb=32)
+        ds = open_cog(remote_dem_url, cache_size_mb=32)
         
         tile = ds.read_tile(0, 0, lod=0)
         
@@ -501,34 +482,30 @@ class TestRemoteCog:
         assert tile.shape[0] > 0
         assert tile.shape[1] > 0
     
-    @skip_if_no_network()
     @pytest.mark.skipif(
         not cog_available() and not rasterio_available(),
         reason="Neither native COG nor rasterio available"
     )
-    def test_remote_cog_deterministic(self):
+    def test_remote_cog_deterministic(self, remote_dem_url):
         """Test that remote tile reads are deterministic."""
         from forge3d.cog import open_cog
         
-        url = PUBLIC_COG_URLS[0]
-        ds = open_cog(url, cache_size_mb=32)
+        ds = open_cog(remote_dem_url, cache_size_mb=32)
         
         tile1 = ds.read_tile(0, 0, lod=0)
         tile2 = ds.read_tile(0, 0, lod=0)
         
         np.testing.assert_array_equal(tile1, tile2)
     
-    @skip_if_no_network()
     @pytest.mark.skipif(
         not cog_available() and not rasterio_available(),
         reason="Neither native COG nor rasterio available"
     )
-    def test_remote_cog_cache_stats(self):
+    def test_remote_cog_cache_stats(self, remote_dem_url):
         """Test cache stats with remote COG."""
         from forge3d.cog import open_cog
         
-        url = PUBLIC_COG_URLS[0]
-        ds = open_cog(url, cache_size_mb=32)
+        ds = open_cog(remote_dem_url, cache_size_mb=32)
         
         _ = ds.read_tile(0, 0, lod=0)
         stats1 = ds.stats()

@@ -376,6 +376,8 @@ def test_packaged_atlas_glyph_borders_are_saturated_background():
         assert int(border.max()) <= 16, identity
 
 
+@pytest.mark.apple_metal_contract
+@pytest.mark.apple_metal_physical
 def test_live_gpu_shader_readback_matches_independent_quad_oracle():
     if (
         os.environ.get("GITHUB_ACTIONS") == "true"
@@ -439,6 +441,8 @@ def test_live_gpu_shader_readback_matches_independent_quad_oracle():
     assert _hausdorff(gpu, expected) <= 0.5
 
 
+@pytest.mark.apple_metal_contract
+@pytest.mark.apple_metal_physical
 def test_live_gpu_native_text_is_exact_across_two_scenes():
     if (
         os.environ.get("GITHUB_ACTIONS") == "true"

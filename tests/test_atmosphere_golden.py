@@ -66,6 +66,7 @@ def test_aether_sunset_sweep_matches_committed_golden() -> None:
     _assert_or_update_golden(sunset_strip())
 
 
+@pytest.mark.apple_metal_physical
 def test_active_gpu_sky_matches_committed_sunset_golden(tmp_path: Path) -> None:
     _require_physical_metal()
     hdr_path = tmp_path / "black.hdr"

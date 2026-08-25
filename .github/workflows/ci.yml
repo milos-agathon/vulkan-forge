@@ -950,7 +950,7 @@ jobs:
           FORGE3D_NO_BOOTSTRAP: '1'
         run: |
           mkdir -p test-results
-          python scripts/ci_pytest_lane.py --profile full --slow-lane -v --tb=short --junitxml=test-results/python-slow.xml
+          python scripts/ci_pytest_lane.py --profile full --slow-lane --selection-ledger=test-results/python-slow-selection.json -v --tb=short --junitxml=test-results/python-slow.xml
 
       - name: Verify slow Python lane has zero skips
         if: always()
@@ -961,7 +961,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-slow-junit
-          path: test-results/python-slow.xml
+          path: test-results/python-slow*
           if-no-files-found: error
 
   # ============================================================================
@@ -1684,6 +1684,8 @@ jobs:
             'tests/test_terrain_viewer_pbr.py',
             'tests/test_vector_overlay_rendering.py',
             'tests/test_vector_coverage.py',
+            'tests/test_terrain_scatter.py::test_viewer_snapshot_scatter_changes_pixels',
+            'tests/test_tv22_scatter_wind.py::test_viewer_wind_uses_viewer_time_and_camera_updates',
             'tests/test_terrain_tv6_heterogeneous_volumetrics.py::test_tv6_example_renders_real_dem_and_reports_budget'
           )
           $tests -join "`n" | Set-Content "$env:FORGE3D_M06_ARTIFACT_DIR/pytest-files.txt"

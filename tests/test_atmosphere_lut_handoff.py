@@ -312,6 +312,7 @@ def test_prometheus_rejects_unknown_mapping_keys_before_gpu(native, unknown) -> 
         )
 
 
+@pytest.mark.apple_metal_physical
 def test_handle_reaches_live_terrain_renderer(custom_handle, tmp_path) -> None:
     from _terrain_runtime import _write_test_hdr, terrain_rendering_available
 

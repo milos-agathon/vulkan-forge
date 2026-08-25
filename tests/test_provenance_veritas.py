@@ -366,6 +366,7 @@ def provenance_render_env():
             pass
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(not GPU_AVAILABLE, reason="VERITAS DoD test requires GPU-backed forge3d")
 class TestVeritasProvenanceDoD:
     def _render_triple(self, env):

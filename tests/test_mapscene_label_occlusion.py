@@ -400,6 +400,7 @@ def _real_depth_occlusion_scene(path: Path, *, extra_labels: int = 0) -> f3d.Map
     )
 
 
+@pytest.mark.apple_metal_physical
 def test_real_render_compile_phase_depth_occludes_and_releases_declutter_slot(tmp_path) -> None:
     if not terrain_rendering_available():
         pytest.skip("real compile-phase label occlusion requires a terrain-capable GPU runtime")
@@ -425,6 +426,7 @@ def test_real_render_compile_phase_depth_occludes_and_releases_declutter_slot(tm
     assert compiled.label_plans["labels"].to_dict() == frozen_payload
 
 
+@pytest.mark.apple_metal_physical
 def test_real_render_depth_occlusion_is_deterministic_for_dense_points(tmp_path) -> None:
     if not terrain_rendering_available():
         pytest.skip("real depth-AOV label occlusion requires a terrain-capable GPU runtime")

@@ -551,6 +551,7 @@ def test_validation_environment_is_linear_hdr_and_certificate_excluded_honestly(
     )
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(
     not NATIVE_AVAILABLE or not f3d.has_gpu(),
     reason="live Scene AETHER semantics require the native GPU extension",
@@ -570,6 +571,7 @@ def test_scene_aether_state_is_configured_not_active_and_render_fails_closed() -
     assert scene.get_atmosphere_settings()["configured"] is False
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(
     not NATIVE_AVAILABLE or not f3d.has_gpu(),
     reason="live Scene AETHER semantics require the native GPU extension",

@@ -29,10 +29,12 @@ TIME = SolarTime(
     temperature_c=11.0,
 )
 
-gpu_required = pytest.mark.skipif(
-    not forge3d.has_gpu(),
-    reason="HELIOS shadow traversal requires a GPU adapter",
-)
+def gpu_required(test):
+    test = pytest.mark.skipif(
+        not forge3d.has_gpu(),
+        reason="HELIOS shadow traversal requires a GPU adapter",
+    )(test)
+    return pytest.mark.helios_physical(test)
 
 
 def _peak_dem() -> np.ndarray:
@@ -249,6 +251,7 @@ print(json.dumps({"sha256": hashlib.sha256(mask.tobytes()).hexdigest(),
     assert results["dx12"]["sha256"] == results["vulkan"]["sha256"]
 
 
+@pytest.mark.helios_physical
 def test_curved_shadow_memory_matches_flat_baseline() -> None:
     if not forge3d.has_gpu():
         pytest.skip("terrain path-tracer memory gate requires a GPU")

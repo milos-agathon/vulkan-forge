@@ -270,6 +270,7 @@ def reference():
     return dem, out
 
 
+@pytest.mark.apple_metal_physical
 def test_converged_variance_under_threshold(reference):
     _, out = reference
     print(
@@ -287,6 +288,7 @@ def test_converged_variance_under_threshold(reference):
     assert magenta.mean() < 0.01, "magenta miss-marker leaked into terrain mode"
 
 
+@pytest.mark.apple_metal_physical
 def test_terrain_hits_and_aov_consistency(reference):
     """PT AOVs are internally consistent: unit normals, world-unit depth,
     uniform albedo on hits, NaN depth on sky misses."""
@@ -310,6 +312,7 @@ def test_terrain_hits_and_aov_consistency(reference):
     assert np.allclose(albedo[~hits], 0.0, atol=1e-6)
 
 
+@pytest.mark.apple_metal_physical
 def test_aov_parity_with_rasterizer(reference):
     """Albedo/normal/depth AOV parity: PT vs the rasterizer AOV path.
 
@@ -384,6 +387,7 @@ def test_aov_parity_with_rasterizer(reference):
 
 
 
+@pytest.mark.apple_metal_physical
 def test_memory_within_budget(reference):
     _, out = reference
     from forge3d import _forge3d as _native
@@ -408,6 +412,7 @@ def test_memory_within_budget(reference):
     assert gpu_bytes < limit, f"tracked GPU working set {gpu_bytes} exceeds budget {limit}"
 
 
+@pytest.mark.apple_metal_physical
 def test_no_silent_fallback():
     _require_gpu()
     # NaN DEM must raise a diagnostic, not render a fake image.
@@ -427,6 +432,7 @@ def test_no_silent_fallback():
         )
 
 
+@pytest.mark.apple_metal_physical
 def test_trust_boundary_validation():
     """Degenerate public inputs surface diagnostics before any GPU work."""
     _require_gpu()
@@ -632,6 +638,7 @@ def test_sun_color_native_boundary_rejects_malformed():
             _native.hybrid_render_terrain_reference(dem, 8, 8, CAM, sun_color=bad, **fast)
 
 
+@pytest.mark.apple_metal_physical
 def test_sun_color_valid_sequences_and_zero_are_accepted():
     _require_gpu()
     dem = np.zeros((4, 4), dtype=np.float32)
@@ -693,6 +700,7 @@ def test_sun_color_valid_input_does_not_suppress_unrelated_failures(monkeypatch)
         )
 
 
+@pytest.mark.apple_metal_physical
 def test_sun_color_live_control_changes_output(reference):
     dem, out_default = reference
     out_blue = hybrid_render_terrain_reference(
@@ -708,6 +716,7 @@ def test_sun_color_live_control_changes_output(reference):
     assert diff > 1.0
 
 
+@pytest.mark.apple_metal_physical
 def test_zero_sun_color_render_succeeds_and_removes_direct_sun():
     _require_gpu()
     dem = _dem()
@@ -731,6 +740,7 @@ def test_zero_sun_color_render_succeeds_and_removes_direct_sun():
     assert float(zero_rgb.mean()) < float(default_rgb.mean())
 
 
+@pytest.mark.apple_metal_physical
 def test_mixed_scene_mesh_and_terrain():
     """Terrain is a first-class primitive of the shared hybrid traversal:
     a triangle mesh mixed into the scene occludes the heightfield, shows the
@@ -768,6 +778,7 @@ def test_mixed_scene_mesh_and_terrain():
     assert np.allclose(mixed["albedo"][terr], np.array(ALBEDO), atol=2e-2)
 
 
+@pytest.mark.apple_metal_physical
 def test_scaling_no_per_spp_blowup():
     """O(log mips) traversal gate from the Prometheus DoD: per-frame cost
     scales ~linearly (never superlinearly) from 1 to 8 spp — a linear
@@ -818,6 +829,7 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden" / "hybrid_terrain"
 UPDATE_GOLDENS = os.environ.get("FORGE3D_UPDATE_HYBRID_TERRAIN_GOLDENS") == "1"
 
 
+@pytest.mark.apple_metal_physical
 def test_terrain_reference_golden(reference):
     import json
 

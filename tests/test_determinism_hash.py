@@ -22,12 +22,6 @@ from forge3d import determinism
 from forge3d.determinism import CANONICAL_SCENE, render_reference
 from scripts.check_determinism_hashes import backend_golden_path
 
-if not terrain_rendering_available():
-    pytest.skip(
-        "determinism hash tests require a terrain-capable hardware-backed forge3d runtime",
-        allow_module_level=True,
-    )
-
 GOLDEN_DIR = Path(__file__).parent / "goldens" / "determinism"
 DEFAULT_GOLDEN_PATH = GOLDEN_DIR / f"{CANONICAL_SCENE}.sha256"
 
@@ -55,6 +49,8 @@ def _local_backend() -> str:
     return "vulkan"
 
 
+@pytest.mark.apple_metal_contract
+@pytest.mark.apple_metal_physical
 def test_intra_backend_bit_identity(tmp_path):
     """Two renders of the canonical scene on the same backend must be byte-identical.
 
@@ -119,6 +115,8 @@ def test_dupla_dd_demo_is_backend_pinned_and_byte_identical():
     assert report["raw"] >= 100
 
 
+@pytest.mark.apple_metal_contract
+@pytest.mark.apple_metal_physical
 def test_matches_committed_golden(tmp_path):
     """The canonical render must equal the committed golden hash, byte-exact."""
     record = determinism._render_reference_record(
@@ -161,6 +159,7 @@ def test_sidera_night_golden_is_in_the_determinism_inventory():
     assert hashlib.sha256(png.read_bytes()).hexdigest() == committed
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.sidera_vulkan
 @pytest.mark.skipif(
     _local_backend().strip().lower() != "vulkan",
@@ -249,6 +248,7 @@ def test_cli_attributes_hash_to_requested_backend(monkeypatch, tmp_path, capsys)
     assert '"device": 9348' in output
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.cross_backend
 @pytest.mark.skipif(sys.platform != "win32", reason="requires local DX12 and Vulkan")
 def test_device_probe_reports_initialized_render_adapter(monkeypatch, tmp_path):

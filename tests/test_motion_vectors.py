@@ -11,7 +11,6 @@ and temporal stability. Verifies that:
 import pytest
 from pathlib import Path
 import tempfile
-import os
 
 # Skip if forge3d not built
 pytest.importorskip("forge3d")
@@ -136,18 +135,22 @@ class TestMotionVectorsComputation:
 class TestMotionVectorsIntegration:
     """Integration tests for motion vectors with rendering pipeline."""
 
-    @pytest.mark.skipif(
-        os.environ.get("CI") == "true",
-        reason="Requires GPU and display for full integration test"
-    )
     def test_motion_vectors_with_camera_animation(self):
-        """Test that motion vectors are generated during camera animation.
-        
-        This test requires GPU access and is skipped in CI.
-        Run locally with: pytest tests/test_motion_vectors.py -k integration -v
-        """
-        # This would use the camera_animation_demo.py infrastructure
-        # to verify velocity buffer output during animation
+        """Camera animation supplies distinct current/previous view states."""
+        from forge3d.animation import CameraAnimation
+
+        animation = CameraAnimation()
+        animation.add_keyframe(time=0.0, phi=0.0, theta=45.0, radius=10.0, fov=50.0)
+        animation.add_keyframe(time=1.0, phi=90.0, theta=30.0, radius=8.0, fov=55.0)
+
+        previous = animation.evaluate(0.0)
+        current = animation.evaluate(1.0)
+        assert previous is not None and current is not None
+        assert (current.phi_deg, current.theta_deg, current.radius) != (
+            previous.phi_deg,
+            previous.theta_deg,
+            previous.radius,
+        )
 
 
 if __name__ == "__main__":

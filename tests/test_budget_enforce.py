@@ -10,6 +10,7 @@ import pytest
 import forge3d as f3d
 
 
+@pytest.mark.apple_metal_physical
 def test_600mib_host_visible_raises_named_budget_error():
     if not f3d.has_gpu():
         pytest.skip("no GPU adapter")

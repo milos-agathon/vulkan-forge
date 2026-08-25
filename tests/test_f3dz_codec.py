@@ -183,6 +183,7 @@ def test_base_quality_render_capture_declares_degradation_and_refined_does_not()
     )
 
 
+@pytest.mark.f3dz_physical
 def test_gpu_matches_cpu_for_every_corpus_page() -> None:
     if os.getenv("FORGE3D_REQUIRE_F3DZ_GPU") == "1":
         _require_f3dz_nvidia_vulkan()

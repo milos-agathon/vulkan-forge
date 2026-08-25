@@ -994,6 +994,9 @@ RECIPE_GOLDENS = (
     ),
     RecipeGolden("mapscene_png16_color", "output_color", _png16_color, ("mapscene.render_png_16bit",), bit_depth=16),
 )
+NVIDIA_VULKAN_RECIPE_GOLDENS = tuple(
+    spec for spec in RECIPE_GOLDENS if spec.scene_id == "mapscene_terrain_raster"
+)
 
 
 def _write_failure_artifacts(spec: RecipeGolden, actual: np.ndarray, expected: np.ndarray) -> None:
@@ -1161,6 +1164,24 @@ def test_recipe_golden_manifest_catalog_has_required_coverage() -> None:
     assert len(RECIPE_GOLDENS) >= 8
     assert len(families) >= 5
     assert {"terrain_raster", "labels_vectors", "offline_accumulation", "buildings", "map_furniture"} <= families
+
+
+def test_recipe_backend_pixel_scopes_match_preserved_fixtures() -> None:
+    recipe_ids = {spec.scene_id for spec in RECIPE_GOLDENS}
+    metal_fixture_ids = {
+        path.name.removesuffix(".metal.png")
+        for path in GOLDEN_DIR.glob("*.metal.png")
+    }
+    nvidia_fixture_ids = {
+        path.name.removesuffix(".nvidia-vulkan.png")
+        for path in GOLDEN_DIR.glob("*.nvidia-vulkan.png")
+    }
+    assert len(RECIPE_GOLDENS) == 22
+    assert metal_fixture_ids == recipe_ids
+    assert tuple(spec.scene_id for spec in NVIDIA_VULKAN_RECIPE_GOLDENS) == (
+        "mapscene_terrain_raster",
+    )
+    assert nvidia_fixture_ids == {"mapscene_terrain_raster"}
 
 
 def test_recipe_golden_catalog_links_docs_gallery() -> None:
@@ -1484,7 +1505,7 @@ def test_metal_recipe_pixel_golden_render_and_match(
 
 @pytest.mark.recipe_golden
 @pytest.mark.nvidia_vulkan
-@pytest.mark.parametrize("spec", RECIPE_GOLDENS, ids=lambda item: item.scene_id)
+@pytest.mark.parametrize("spec", NVIDIA_VULKAN_RECIPE_GOLDENS, ids=lambda item: item.scene_id)
 def test_nvidia_vulkan_recipe_pixel_golden_render_and_match(
     tmp_path: Path, spec: RecipeGolden
 ) -> None:

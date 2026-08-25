@@ -106,7 +106,7 @@ jobs:
           FORGE3D_NO_BOOTSTRAP: '1'
         run: |
           python -c "from pathlib import Path; Path('test-results').mkdir(exist_ok=True)"
-          python scripts/ci_pytest_lane.py --profile full -v --tb=short --junitxml=test-results/python-full.xml
+          python scripts/ci_pytest_lane.py --profile full --selection-ledger=test-results/python-full-selection.json -v --tb=short --junitxml=test-results/python-full.xml
 
       - name: Verify full Python lane has zero skips
         if: always() && inputs.test_mode == 'full'
@@ -117,5 +117,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-full-junit-${{ runner.os }}-${{ matrix.python-version }}
-          path: test-results/python-full.xml
+          path: test-results/python-full*
           if-no-files-found: error

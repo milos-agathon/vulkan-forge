@@ -27,11 +27,11 @@ def _load_example_module():
 
 
 @pytest.mark.slow
+@pytest.mark.apple_metal_physical
 def test_tv21_demo_renders_real_dem_outputs() -> None:
     if not terrain_rendering_available():
         pytest.skip("TV21 example requires GPU-backed terrain runtime")
-    if not EXAMPLE_PATH.exists():
-        pytest.skip("TV21 example script is not present in this checkout")
+    assert EXAMPLE_PATH.exists(), "tracked TV21 example script is missing"
 
     module = _load_example_module()
     with tempfile.TemporaryDirectory() as tmpdir:

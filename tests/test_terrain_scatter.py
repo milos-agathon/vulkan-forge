@@ -433,6 +433,7 @@ class TestBatchSerialization:
 _TERRAIN_RUNTIME_AVAILABLE = terrain_rendering_available()
 
 
+@pytest.mark.apple_metal_physical
 @pytest.mark.skipif(
     not (
         _TERRAIN_RUNTIME_AVAILABLE

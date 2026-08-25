@@ -139,6 +139,7 @@ def test_terrain_renderer_exposes_height_streaming_api():
         assert hasattr(f3d.TerrainRenderer, name), f"TerrainRenderer.{name} missing"
 
 
+@pytest.mark.apple_metal_physical
 @requires_terrain
 class TestClipmapGeometryProvider:
     def test_clipmap_render_uses_gpu_lod_indirect_draws(self, terrain_ibl):
@@ -187,6 +188,7 @@ class TestClipmapGeometryProvider:
             renderer.height_streaming_stats()
 
 
+@pytest.mark.apple_metal_physical
 @requires_terrain
 class TestHeightStreamingFlyThrough:
     LOD = 2

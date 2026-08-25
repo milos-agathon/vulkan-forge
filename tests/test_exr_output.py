@@ -185,6 +185,7 @@ def test_save_aovs_exr_channels(tmp_path: Path) -> None:
     assert set(channels) == {"depth.Z"}
 
 
+@pytest.mark.apple_metal_physical
 def test_terrain_aov_save_exr_channels(tmp_path: Path) -> None:
     _require_native_exr(tmp_path)
 

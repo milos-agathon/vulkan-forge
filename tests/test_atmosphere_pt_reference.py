@@ -111,6 +111,7 @@ def _render(native, *, spp: int, seed: int, enabled: bool = True) -> dict:
     )
 
 
+@pytest.mark.apple_metal_physical
 def test_disabled_reference_is_explicit_black(native) -> None:
     output = _render(native, spp=2, seed=11, enabled=False)
     np.testing.assert_array_equal(output["mean_xyz"], np.zeros((1, 1, 3), np.float32))
@@ -120,6 +121,7 @@ def test_disabled_reference_is_explicit_black(native) -> None:
     assert output["converged"] is True
 
 
+@pytest.mark.apple_metal_physical
 def test_non_emitted_capture_marks_disabled_timing_as_a_degradation(native) -> None:
     from forge3d.diagnostics import render_certificate
 
@@ -139,6 +141,7 @@ def test_non_emitted_capture_marks_disabled_timing_as_a_degradation(native) -> N
     )
 
 
+@pytest.mark.apple_metal_physical
 def test_low_spp_changes_with_seed(native) -> None:
     first = _render(native, spp=2, seed=11)
     repeated = _render(native, spp=2, seed=11)
@@ -154,6 +157,7 @@ def test_low_spp_changes_with_seed(native) -> None:
     assert not np.array_equal(first["linear_rgb"], second["linear_rgb"])
 
 
+@pytest.mark.apple_metal_physical
 def test_public_rgb_is_finalized_once_from_unclipped_mean_xyz(native) -> None:
     output = _render(native, spp=16, seed=23)
     matrix = np.asarray(
@@ -170,6 +174,7 @@ def test_public_rgb_is_finalized_once_from_unclipped_mean_xyz(native) -> None:
     np.testing.assert_allclose(output["linear_rgb"], expected, rtol=2e-6, atol=1e-8)
 
 
+@pytest.mark.apple_metal_physical
 def test_more_samples_improve_reported_mean_variance(native) -> None:
     # The high-SPP estimator extends the exact same deterministic path stream.
     # Seed 7 is locked because its four-sample prefix is intentionally noisy,
@@ -184,6 +189,7 @@ def test_more_samples_improve_reported_mean_variance(native) -> None:
     assert high["gpu_resource_bytes"] > 0
 
 
+@pytest.mark.apple_metal_physical
 def test_primary_rays_report_real_terrain_classification(native) -> None:
     heightmap = np.zeros((8, 8), dtype=np.float32)
     camera = {
@@ -204,6 +210,7 @@ def test_primary_rays_report_real_terrain_classification(native) -> None:
     assert output["terrain_primary_hits"] == 4
 
 
+@pytest.mark.apple_metal_physical
 def test_reference_emits_live_pass_and_exact_shader_provenance(native) -> None:
     from forge3d.diagnostics import render_certificate
 

@@ -21,13 +21,6 @@ try:
 except ImportError:
     HAS_NATIVE = False
 
-if not HAS_NATIVE:
-    pytest.skip("AOV tests require GPU-backed native module", allow_module_level=True)
-
-if not terrain_rendering_available():
-    pytest.skip("AOV tests require a terrain-capable hardware-backed forge3d runtime", allow_module_level=True)
-
-
 def _create_test_hdr(path: str, width: int = 8, height: int = 4) -> None:
     """Create a minimal HDR file for IBL testing."""
     with open(path, "wb") as f:
@@ -129,6 +122,7 @@ class TestTerrainRenderParamsWithAov:
         assert params.aov.depth is True
 
 
+@pytest.mark.apple_metal_physical
 class TestAovRendering:
     """Tests for AOV rendering functionality."""
 
@@ -319,6 +313,7 @@ class TestAovRendering:
         # Check dimensions match the requested size
         assert aov_frame.size == (128, 64)
 
+    @pytest.mark.apple_metal_contract
     def test_aov_numpy_outputs_are_real_and_normalized(
         self, renderer_setup, simple_heightmap
     ):
@@ -366,6 +361,7 @@ class TestAovRendering:
         assert np.percentile(normal_lengths, 5) > 0.9
         assert np.percentile(normal_lengths, 95) < 1.1
 
+    @pytest.mark.apple_metal_contract
     def test_aov_outputs_match_beauty_size_after_scaling_and_msaa(
         self, renderer_setup, simple_heightmap
     ):

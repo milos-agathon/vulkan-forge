@@ -38,6 +38,7 @@ def _build_and_render(tmp_path):
     return scene
 
 
+@pytest.mark.apple_metal_physical
 def test_certificate_has_live_passes_and_empty_degradations(tmp_path):
     _skip_without_terrain()
     _clear_sinks()
@@ -66,6 +67,7 @@ def test_certificate_has_live_passes_and_empty_degradations(tmp_path):
     assert cert["signature"]["alg"] == "ed25519"
 
 
+@pytest.mark.apple_metal_physical
 def test_pre_render_python_degradation_does_not_leak(tmp_path):
     _skip_without_terrain()
     _clear_sinks()
@@ -81,6 +83,7 @@ def test_pre_render_python_degradation_does_not_leak(tmp_path):
     )
 
 
+@pytest.mark.apple_metal_physical
 def test_signed_payload_deterministic_across_two_renders(tmp_path):
     _skip_without_terrain()
     _clear_sinks()
@@ -101,6 +104,7 @@ def test_signed_payload_deterministic_across_two_renders(tmp_path):
     )
 
 
+@pytest.mark.apple_metal_physical
 def test_certificate_excludes_shaders_owned_by_another_renderer(tmp_path):
     _skip_without_terrain()
     _clear_sinks()
@@ -121,6 +125,7 @@ def test_certificate_excludes_shaders_owned_by_another_renderer(tmp_path):
     assert unrelated.isdisjoint(hashes), hashes
 
 
+@pytest.mark.apple_metal_physical
 def test_scene_certificate_reports_only_scene_owned_shaders(tmp_path):
     _skip_without_terrain()
     _clear_sinks()
@@ -134,6 +139,7 @@ def test_scene_certificate_reports_only_scene_owned_shaders(tmp_path):
     assert "terrain_pbr_pom.shader" not in hashes, hashes
 
 
+@pytest.mark.apple_metal_physical
 def test_scene_allocations_ignore_unrelated_live_scene():
     _skip_without_terrain()
     _clear_sinks()
@@ -150,6 +156,7 @@ def test_scene_allocations_ignore_unrelated_live_scene():
     assert unrelated is not None
 
 
+@pytest.mark.apple_metal_physical
 def test_scene_allocations_include_lazily_enabled_feature():
     _skip_without_terrain()
     _clear_sinks()
@@ -162,6 +169,7 @@ def test_scene_allocations_include_lazily_enabled_feature():
     assert labels.get("cloud_uniform_buffer", 0) > 0, labels
 
 
+@pytest.mark.apple_metal_physical
 def test_scene_shader_hashes_follow_lazy_feature_use():
     _skip_without_terrain()
     _clear_sinks()
@@ -178,6 +186,7 @@ def test_scene_shader_hashes_follow_lazy_feature_use():
     assert "cloud_shader" not in disabled, disabled
 
 
+@pytest.mark.apple_metal_physical
 def test_python_synthetic_render_replaces_stale_gpu_certificate():
     _skip_without_terrain()
     _clear_sinks()
@@ -221,6 +230,7 @@ def test_progressive_python_render_accepts_certificate_contract():
     assert cert["passes"][0]["label"] == "python.path_tracing.render_progressive"
 
 
+@pytest.mark.apple_metal_physical
 def test_certificate_kwarg_writes_signed_file(tmp_path):
     _skip_without_terrain()
     _clear_sinks()
@@ -248,6 +258,7 @@ def test_certificate_kwarg_writes_signed_file(tmp_path):
     assert _certificate.verify(cert_path, pubkey) is True
 
 
+@pytest.mark.apple_metal_physical
 def test_certificate_kwarg_false_leaves_metadata_clean(tmp_path):
     _skip_without_terrain()
     _clear_sinks()

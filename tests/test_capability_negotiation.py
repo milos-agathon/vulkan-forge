@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.apple_metal_physical
 def test_capabilities_reports_requested_and_granted():
     if not f3d.has_gpu():
         pytest.skip("no GPU adapter")
@@ -16,6 +17,7 @@ def test_capabilities_reports_requested_and_granted():
     assert set(caps["granted"]) <= set(caps["requested"])
 
 
+@pytest.mark.apple_metal_physical
 def test_absent_capability_is_recorded_not_fatal():
     if not f3d.has_gpu():
         pytest.skip("no GPU adapter")
@@ -113,6 +115,7 @@ def test_terrain_indirect_fallback_is_recorded_at_the_taken_branch():
     assert "draw_mode.record_fallbacks(granted)" in execute
 
 
+@pytest.mark.apple_metal_physical
 def test_indirect_draw_fallback_matches_granted_capabilities():
     """Biconditional, so it is non-tautological on any adapter: a fully capable
     device fails if the record fires spuriously, and a device missing any of the
