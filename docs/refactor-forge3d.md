@@ -4,6 +4,13 @@ This file is the durable execution ledger for the refactor begun on 2026-08-12.
 It is evidence, not a declaration that a change is safe. Update it at every
 reviewed checkpoint; do not rewrite prior checkpoint-log rows.
 
+> **Current-state boundary (2026-08-26):** The original refactor narrative and
+> checkpoint rows below are retained as historical evidence at their recorded
+> identities. Statements in those sections such as "current candidate," "no PR
+> yet," and unrun full/slow lanes describe those historical checkpoints, not the
+> PR #170 continuation. The authoritative current local state is the final
+> section, **PR #170 continuation evidence (2026-08-26)**.
+
 ## Mission
 
 Exhaustively inspect the tracked product-relevant forge3d surfaces and apply the
@@ -3204,7 +3211,7 @@ Do not edit or delete existing rows. Append corrections as later rows.
 | 2026-08-13T16:01:54+02:00 | Current-source final-gate reproof reconciliation | fresh release-LTO wheel and current source evidence; this row changes only `docs/refactor-forge3d.md` | immediately before this ledger edit the exact candidate was the base plus 51 staged paths, zero unstaged paths, and staged binary-diff SHA256 `9ae70342541a6257ea2523f69e501aae847938572bac613b92b585a7a0e8574a`; fresh release-LTO wheel SHA256 `b0b1ef2c...` and installed native SHA256 `2365c2ff...` predate only this ledger's documentation bytes; the primary-checkout snapshot remained unchanged | current `cargo forge3d-clippy` and `cargo forge3d-clippy-acceptance` passed; Fast passed 642 with 28 policy skips and 0 failures; the affected complete-file suite passed 29 with 19 policy GPU skips and 0 failures; exact physical Apple M4 Metal adjudication passed 1/1 with 0 skipped in 352.45 s and its JUnit zero-skip check passed | source/runtime evidence closes the prior current-candidate reproof gap; this reconciliation was explicitly routed `gpt-5.6-sol:medium` with `fork_turns=none` and no delegation, while runtime model identity is not exposed for independent confirmation | `NOT_PROVEN` | broad full Python remains red as previously recorded and slow acceptance remains `NOT_PROVEN`; commit, push, PR, hosted CI, mergeability, NVIDIA/Vulkan, signing and other remote/platform evidence remain `NOT_PROVEN` | review and stage this ledger-only reconciliation before any commit or publication |
 | 2026-08-14T22:16:23+02:00 | Exact-candidate publication handoff | `docs/refactor-forge3d.md` only; source/test payload unchanged | immediately before this ledger edit the 73-path index was staged tree object `00b574f9899875ed7e4b9b5b8b9313f89e10c1e7` (a tree object, not a commit SHA) on base `f5db54f95d202681f95dad649162d18efdae8987`; its locked release-LTO wheel SHA256 is `d4300727425ba645d2bc62a88582957a8de2acd2fa3c81457187c17d675c4022` and the isolated installed native SHA256 is `e6a77c5fc917951c95a49a48c4cb4ff63cc4087f99e99e5e273486bd469440a1` | green: `cargo fmt --check` (1.62 s), `cargo forge3d-clippy` (37.95 s), authoritative portable-feature `cargo check` (10.37 s), serial Rust workspace (151.91 s: main library 1,396 passed, 0 failed, three repository-authorized ignored and four explicitly CI-filtered; auxiliary binaries, benches and integration green), explicit doctests (12 passed, six repository-authorized ignored in 3.65 s), `cargo forge3d-clippy-acceptance` (19.22 s), locked release-LTO wheel build (206.58 s), and isolated installed-wheel smoke/license (29 passed in 1.35 s); from the repository root, exact `WGPU_BACKENDS=metal FORGE3D_NO_BOOTSTRAP=1 FORGE3D_TEST_INSTALLED_WHEEL=1 MPLCONFIGDIR=/private/tmp/forge3d-exact-candidate-r2.5Fumt8/mpl /usr/bin/time -p /private/tmp/forge3d-exact-candidate-r2.5Fumt8/venv/bin/python scripts/ci_pytest_lane.py --profile full -v --tb=short` failed `tests/test_cam_phi_wiring.py::test_cam_phi_changes_output` at 23% after about 818 s; the diagnostic variant ending `--profile full --maxfail=1 -q --tb=short` passed that node but failed `tests/test_determinism_hash.py::test_intra_backend_bit_identity` at 29% after 778.33 s, first `3e1cd11741884b7fcee36be0adac73da141e72ee385952a41d4fbd1edddbce5f`, second `58ddaf202100cdcaaede7d0477a71196f84457a1a109bcfc8b9cfdd92630a58a`; the prior fixed-wheel first-render/adjudication evidence remains recorded in the 2026-08-13T14:30:16 row and is not reclassified as current full-profile proof | user directed draft publication now so another Mac can continue; publication is a handoff with known red and unproven gates, not a PR-ready or merge-ready finding | `NOT_PROVEN` | full non-slow is red; the required slow profile and remaining dedicated physical/platform, NVIDIA/Vulkan, signing, hosted CI, PR-head and mergeability lanes remain `NOT_PROVEN` | publish only as the user-directed draft handoff; on the other Mac reproduce, minimize and clear both ordered Metal failures, then run the required slow and dedicated physical/platform lanes against the resulting exact PR head |
 
-## Final proof placeholder
+## Historical final-proof checkpoint (superseded 2026-08-25)
 
 | Proof item | Exact final evidence | Status |
 |---|---|---|
@@ -3216,7 +3223,7 @@ Do not edit or delete existing rows. Append corrections as later rows.
 | PR identity/head/checks/mergeability | no PR yet | `NOT_PROVEN` |
 | Primary checkout preservation | post-ledger porcelain output matches the recorded pre-work branch, head, tracked modifications, and untracked paths exactly | `VALIDATED` |
 
-## Residual-risk placeholder
+## Historical residual-risk checkpoint (superseded 2026-08-25)
 
 - Dynamic Python access and unknown downstream consumers cannot be inferred from
   a definition-only grep; C03 requires per-symbol evidence and preserves any
@@ -3238,3 +3245,470 @@ Do not edit or delete existing rows. Append corrections as later rows.
   seams. Preliminary claim families do not bound or freeze that coverage. A
   metric, file length, diagnostic count, or attractive cleanup is not an
   accepted claim by itself.
+
+## PR #170 continuation evidence (2026-08-26)
+
+This section supersedes every earlier provisional current-state summary. It does
+not rewrite historical checkpoints, but no earlier use of “current candidate”
+or “current evidence” remains authoritative for this continuation.
+
+### Current candidate and stable source identity
+
+| Fact | Exact continuation evidence | Status |
+|---|---|---|
+| Branch | `codex/refactor-forge3d-20260812` | `VALIDATED` |
+| Comparison base | `origin/main` = `92cf80d20d7d5c6e9a564b853e79d596f3f5088f` | `VALIDATED` |
+| Committed predecessor | HEAD `e342855a0b8f1f9707b76b4588f3ca8cdb54f07b`; tree `4658a6b832bbf0d34b2bc97f23d8d455c806ff3e` | `DIAGNOSTIC_PREDECESSOR` |
+| Live candidate | the committed predecessor plus 19 modified non-ledger paths and this modified ledger; all 20 are assigned in the mapping below | `VALIDATED` |
+| Precommit index/worktree state | immediately before this ledger update: 20 paths were staged, 19 were non-ledger, only the prior ledger self-description was unstaged, and `git write-tree` produced `b33be43ea726376884ee900e82c676faaa290bcb`; this self-describing update leaves that same staged tree and only the ledger unstaged, still 20 unique dirty paths because the ledger is both staged and unstaged | `VALIDATED` |
+| Final branch delta | 253 paths and 253 unique paths versus `origin/main`; only `A` and `M` statuses, with no deletion or rename | `VALIDATED` |
+| Canonical changed-path list | `git diff --name-only origin/main`, newline after every path including the last; SHA-256 `9690b7c7ab853cb926ea3deb8dd1aad103e518f7a914701019bac32184aae8eb` | `VALIDATED` |
+| Canonical non-ledger source manifest | 252 rows; SHA-256 `2117a991251dd001685f360426bdaec502cedb76a8ee9fbe175af5df6a224c6d` | `VALIDATED` |
+| Final committed HEAD and tree | not created by this ledger task | `PENDING / NOT_PROVEN` |
+
+The canonical non-ledger manifest makes the implementation/source identity
+stable when this tracked ledger changes. Its exact UTF-8 serialization is one
+line per path in Git diff order:
+
+`status<TAB>path<TAB>SHA256(current file bytes)<LF>`
+
+It excludes only `docs/refactor-forge3d.md` from the 253-path delta. The
+verified command is:
+
+```bash
+git diff --name-status origin/main -- . ':(exclude)docs/refactor-forge3d.md' |
+while IFS=$'\t' read -r diff_state file_path; do
+  digest="$(shasum -a 256 "$file_path" | cut -d ' ' -f 1)"
+  printf '%s\t%s\t%s\n' "$diff_state" "$file_path" "$digest"
+done
+```
+
+Hashing that stdout, including its final newline, produced the 252-row manifest
+SHA-256 above. A second enumeration proved 252 unique paths, no missing path,
+and no `D` or rename status. The 253-path mapping below independently binds
+every delta path to its claim, owner, and proof category.
+
+### Diagnostic predecessor evidence only
+
+The following values are preserved because they diagnose the last clean local
+candidate. They are not current-candidate, final-commit, or hosted acceptance
+evidence: 19 non-ledger files changed after they were produced.
+
+| Predecessor fact | Recorded value | Status |
+|---|---|---|
+| Commit and tree | `e342855a0b8f1f9707b76b4588f3ca8cdb54f07b`; `4658a6b832bbf0d34b2bc97f23d8d455c806ff3e` | `DIAGNOSTIC_PREDECESSOR` |
+| Evidence root and index | `target/pr170-cycle4-evidence/`; `MATRIX-RESULTS.md`; `SHA256SUMS` | `DIAGNOSTIC_PREDECESSOR` |
+| Evidence manifest | 78 artifacts; SHA-256 `50fe82224bb7ccf504035306a4caf5c4a74b35e1103962f79fdc7e318780a335` | `DIAGNOSTIC_PREDECESSOR` |
+| Wheel | `wheelhouse/forge3d-1.35.0-cp310-abi3-macosx_11_0_arm64.whl`; SHA-256 `12b8752fa7dffeeb93075159f7be42a5ded3773b844189fc914fd61890d5988d` | `DIAGNOSTIC_PREDECESSOR` |
+| Installed native library | SHA-256 `d55145f9c7cb68014de805f82340e9501b87cba3055deddd06650fe03dbb4f3c` | `DIAGNOSTIC_PREDECESSOR` |
+| Adapter and aggregate | Apple M4 / Metal / integrated / `software_fallback=false`; 4,800 required JUnit executions with zero failures, errors, or skips | `DIAGNOSTIC_PREDECESSOR` |
+
+No cycle-4 wheel, native library, manifest, JUnit, count, or physical result may
+be relabelled as proof for the live candidate or final committed head.
+
+### Predeclared exact-head evidence boundary
+
+`target/pr170-final-evidence/` is stale diagnostic evidence for candidate
+`8ee3d04aa69cc898a1eba9c60f5cf2d3855ce258`; its `MATRIX-RESULTS.md` is RED at
+the complete non-slow Python profile. That directory and every artifact, wheel,
+native library, manifest, checksum, count, and result beneath it are forbidden
+for final reuse or relabelling.
+
+The verified-nonexistent fresh external evidence root is fixed now as
+`target/pr170-exact-final-20260826-evidence/`. Its future authoritative index,
+acceptance manifest, and checksum file are respectively:
+
+- `target/pr170-exact-final-20260826-evidence/MATRIX-RESULTS.md`
+- `target/pr170-exact-final-20260826-evidence/ACCEPTANCE-MANIFEST.tsv`
+- `target/pr170-exact-final-20260826-evidence/SHA256SUMS`
+
+The root and all three files remain `PENDING / NOT_PROVEN` until they are
+created from the final committed head after the tracked-file freeze.
+
+| Final value | Authoritative destination | Current status |
+|---|---|---|
+| Final committed HEAD and tree | new-root `MATRIX-RESULTS.md`, `ACCEPTANCE-MANIFEST.tsv`, and PR #170 body | `PENDING / NOT_PROVEN` |
+| Fresh locked release-LTO wheel path and SHA-256 | new-root `ACCEPTANCE-MANIFEST.tsv` and `SHA256SUMS` | `PENDING / NOT_PROVEN` |
+| Fresh installed native-library path and SHA-256 | new-root `ACCEPTANCE-MANIFEST.tsv` and `SHA256SUMS` | `PENDING / NOT_PROVEN` |
+| Exact local matrix commands, artifact hashes, adapter/backend/fallback identity, and test accounting | `target/pr170-exact-final-20260826-evidence/` and PR #170 body | `PENDING / NOT_PROVEN` |
+| Exact hosted run IDs, head SHAs, artifact links, and selected-job accounting | PR #170 body and downloaded external evidence | `PENDING / NOT_PROVEN` |
+
+No future wheel, native, artifact hash, or test count is guessed here. Once the
+final documentation commit exists and the exact-head matrix begins, tracked
+files must not change. The final SHA, tree, wheel/native hashes, matrix counts,
+artifact inventory, and hosted evidence must therefore be recorded in the
+external manifest/checksum files and the PR body. Any later tracked edit creates
+a new head and requires a fresh final matrix.
+
+### Current reviews and remaining proof
+
+Direct user/owner authority approved a five-file ownership-boundary correction.
+It supersedes and rejects as PR scope the attempted fresh-render certificate
+binding, exact fresh/committed WGSL equality, fresh-clean and failure-guidance
+checks in ordinary/backend physical lanes, and Metal timestamp-policy closure.
+The candidate runtime WGSL hash
+prefix `7e1980...` differs from the protected signed-base hash
+`eb5127b8502f542a78926eeba26f9e0211c3ecad712a8abfa86bd57672b52b42`,
+so fresh equality was impossible without an owner-authorized certificate
+rotation. The PR's certificate JSON catalog and `signing.pub` remain
+byte-identical to `origin/main`; the protected-base public verifier is the
+pre-merge signing proof, while secret-backed refresh remains protected-main-only.
+
+The ordinary and backend-specific Metal/NVIDIA recipe tests are scoped only to
+physical pixel, adapter/backend, no-software-fallback, feature, and provenance
+evidence. Protected refresh remains separately gated by update mode, the
+production signing requirement and secret, a clean fresh certificate, pinned
+public-key equality, and cryptographic verification before write. Both
+the protected public-verification and refresh workflows remain unchanged by
+this correction. The required independent `gpt-5.6-sol:high` review returned
+`APPROVED` for the exact five-file correction after the user's direct approval.
+
+A subsequent review found that `tests/golden/certificates/README.md` still
+described the superseded fresh-render certificate boundary. The approved
+first correction separated certificate-independent physical pixel lanes from
+protected-base public verification and protected-main secret-backed refresh;
+13 focused controls passed. A later topology P1 correctly rejected its remaining
+implication that the dedicated base-owned verifier ran on ordinary pull-request
+or push events. The final correction now states that the verifier runs only on
+schedule and required manual `workflow_dispatch` with `scope=full`; ordinary PR
+and push events are excluded and use candidate-owned Fast/static contracts.
+Pre-merge acceptance therefore requires the separate full-scope dispatch. Four
+focused topology controls passed, and the required independent
+`gpt-5.6-sol:high` review returned `APPROVED` for the corrected final wording.
+
+A root diagnostic Cargo rerun stopped on `ENOSPC` during build, before any test
+executed. This is neither a test failure nor final evidence. Disk recovery
+removed only generated Cargo debug, release, release-LTO, and old cycle-4
+wheel-build caches, reclaiming 6.9 GiB; every evidence directory was preserved.
+Later work regenerated `target/debug`; a second precise development-cache
+cleanup removed only that regenerated cache and reclaimed another 1.6 GiB. All
+four named cache roots are currently absent, every prior evidence directory
+remains preserved, and the future fresh final build cannot reuse those caches.
+
+| Required proof | Exact evidence boundary | Status |
+|---|---|---|
+| Protected-public signing implementation review | certificate JSON and `signing.pub` remain byte-identical to the protected base; the base-owned public verifier remains the pre-merge signing proof and secret refresh remains protected-main-only | `APPROVED` |
+| Owner-boundary correction review | the user directly approved the exact five-file correction; ordinary/Metal/NVIDIA physical recipe proof is certificate-independent, protected refresh retains every signing guard, protected workflows are unchanged, and independent high review approved | `APPROVED` |
+| Initial certificate README boundary review | its physical-pixel/public-verifier/refresh separation passed 13 focused controls, but the later topology P1 found its ordinary-event implication inaccurate | `REJECTED / SUPERSEDED` |
+| Final certificate README topology review | dedicated base-owned verification is schedule/full-manual-only, ordinary PR/push is excluded and candidate-owned Fast/static remains local scope; pre-merge requires separate `scope=full`, 4 focused controls passed, and independent high review approved | `APPROVED` |
+| Fresh-render certificate binding and Metal timestamp-policy closure | superseded and rejected as PR scope under explicit owner authority; their prior focused results do not establish current-candidate or final acceptance | `REJECTED / SUPERSEDED` |
+| Protected policy review | all 10 protected-policy checks are approved, `10/10` | `APPROVED` |
+| Candidate-wide non-ledger review | the prior 16 modified non-ledger paths are independently approved as one candidate | `APPROVED` |
+| Standards remediation review | all three additional paths are independently approved; release-LTO extension build passed, Rust projection 7 passed, Python projection 15 passed, determinism/provenance 38 passed, Fast passed 740 with 28 policy skips, and formatting, Clippy, and diff checks are green | `APPROVED` |
+| Final post-ledger combined-diff audit | independent `gpt-5.6-sol:xhigh` review must be rerun against the exact candidate including the owner-boundary and final README-topology corrections plus this ledger | `PENDING / NOT_PROVEN` |
+| Final ponytail review | must run against the post-ledger candidate before push | `PENDING / NOT_PROVEN` |
+| Final two-axis code-review reruns | Standards and Spec review must rerun against the post-ledger candidate before push | `PENDING / NOT_PROVEN` |
+| Final documentation commit and push | this task performs neither | `PENDING / NOT_PROVEN` |
+| Fresh exact-final local matrix and physical full runs | must run after the final commit using a new locked release-LTO wheel, fresh isolated venv, exact committed head, complete required lanes, physical Metal and NVIDIA/Vulkan runs, and zero-skip accounting | `PENDING / NOT_PROVEN` |
+| Protected public certificate verification | required exact-head hosted proof in the full workflow using the protected-base verifier and key | `PENDING / NOT_PROVEN` |
+| Secret-backed certificate refresh | not required because this delta changes neither certificate JSON files nor `signing.pub`; required only if certificates genuinely rotate | `NOT_REQUIRED` |
+| Other selected hosted acceptance | full dispatch, exact-head artifact inspection, and every dependency of Full Acceptance Summary remain unrun for the final head | `PENDING / NOT_PROVEN` |
+| Live PR head, body, draft/readiness, and `MERGEABLE/CLEAN` | require post-push GitHub readback after all exact-head checks | `PENDING / NOT_PROVEN` |
+
+The `APPROVED` signing row is a review verdict, not a claim that the production
+secret-backed signer executed. Pre-merge acceptance requires protected public
+certificate verification at the exact hosted head. Secret-backed refresh stays
+protected-main-only and is `NOT_REQUIRED` unless certificates rotate.
+
+PR #170 therefore has an approved protected-public signing implementation and
+owner-boundary correction, but still awaits final combined and code-review
+reruns, the final commit, a fresh post-commit wheel/venv matrix, physical full
+runs, hosted CI, push, live-head identity, and mergeability/readiness readback.
+Every one of those gates remains `PENDING / NOT_PROVEN`; the PR is not final,
+merge-ready, or ready for review.
+
+### Lossless final changed-path mapping
+
+The canonical mapping is `path<TAB>claim<TAB>task owner<TAB>proof category`.
+It has exactly 253 rows and 253 unique paths. Its first column is byte-for-byte
+the same ordered path list as `git diff --name-only origin/main`, with no
+missing, extra, or duplicate path. Its exact TSV serialization, including the
+final newline, has SHA-256
+`0e29d06aca84c3a8c7f5cdac1ed2fa297e297dfd754086b01475d51ee10bf65c`. The canonical newline-delimited changed-path list has
+SHA-256 `9690b7c7ab853cb926ea3deb8dd1aad103e518f7a914701019bac32184aae8eb`.
+
+The deterministic ownership rule is: current paths retain their distinct
+signing-boundary, owner-boundary, Apple-preflight, Apple-manifest,
+example-typing, standards-remediation, or final-ledger claim. The shared
+`.github/workflows/ci.yml` row uses the signing-boundary claim as its latest
+owner and records Apple-preflight sharing in the owner and proof fields. Every
+other path retains the most recent historical contract-task owner that changed
+its final branch content. Shared historical touches remain in Git history.
+Proof categories name the local proof family; `HOSTED-PENDING` never upgrades
+source or policy review into hosted execution.
+
+| Claim | Paths | Task owner | Contract claim |
+|---|---:|---|---|
+| `PR170-INITIAL` | 48 | initial refactor and Metal-recovery tasks | original behavior-preserving refactor, first-render AOV, text/adjudication, and static-contract payload |
+| `PR170-MAIN-RECONCILIATION` | 7 | current-main reconciliation task | preserve final PR behavior while reconciling overlapping current-main content |
+| `PR170-METAL-AETHER-STATE` | 5 | Metal state and AETHER task | correct Metal capability state and AETHER binding |
+| `PR170-CONTRACT-CLOSURE` | 44 | local contract-closure task | close visibility, VT provenance, fail-closed CI, examples, API/export, and exact local acceptance gaps |
+| `PR170-METAL-PROVENANCE` | 1 | Metal provenance-routing task | generate and validate backend-bound Metal fixture provenance |
+| `PR170-METAL-FIXTURE-FREEZE` | 52 | Metal fixture-freeze task | freeze reviewed Metal fixtures, provenance, determinism hash, and terrain source contract |
+| `PR170-PROMETHEUS-SCOPE` | 1 | PROMETHEUS runtime-proof task | scope runtime proof checks to the authoritative renderer path |
+| `PR170-TESSELLA-TIMING` | 1 | TESSELLA timing-acceptance task | separate functional correctness from physical timing acceptance |
+| `PR170-ACCEPTANCE-OWNERSHIP` | 73 | acceptance lane-ownership task | make generic, physical, COG, timing, and hosted routes disjoint, complete, and auditable |
+| `PR170-APPLE-SELECTION-ORDER` | 1 | Apple Metal selection-audit task | audit skip and xfail decorators after marker deselection |
+| `PR170-SIGNING-BOUNDARY` | 5 | signing-boundary task; CI workflow shared with Apple-preflight | close protected trust-root, verifier isolation, catalog binding, protected signing intent, and certificate-boundary documentation |
+| `PR170-APPLE-PREFLIGHT` | 3 | Apple-preflight task | make Apple acceptance fail closed and preserve hosted fixture prerequisites |
+| `PR170-APPLE-MANIFEST` | 1 | Apple-manifest correction task | make the TOML ownership comment match the authoritative 265 executions |
+| `PR170-EXAMPLE-TYPING` | 6 | example-typing task | preserve the six independently approved example typing corrections |
+| `PR170-STANDARDS-REMEDIATION` | 3 | standards remediation task | make provenance signatures explicit, centralize projection errors, and lock the regression |
+| `PR170-OWNER-BOUNDARY` | 1 | owner-boundary/signing correction task | keep physical recipe proof certificate-independent while preserving protected public verification and secret-backed refresh ownership |
+| `PR170-FINAL-LEDGER` | 1 | final evidence-ledger task | bind the live candidate, pending exact-head proof, and lossless changed-path mapping |
+
+| Path | Claim | Task owner | Proof category |
+|---|---|---|---|
+| `.claude/rules/build-and-ci.md` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `WORKFLOW-CONTRACT; HOSTED-PENDING` |
+| `.github/workflows/certificate-refresh.yml` | `PR170-SIGNING-BOUNDARY` | signing-boundary task | `FOCUSED-CERTIFICATE-CONTRACT + PROTECTED-POLICY; HOSTED-PENDING` |
+| `.github/workflows/ci.yml` | `PR170-SIGNING-BOUNDARY` | signing-boundary task; shared with Apple-preflight task | `FOCUSED-CERTIFICATE-CONTRACT + FOCUSED-APPLE-CONTRACT + PROTECTED-POLICY; HOSTED-PENDING` |
+| `.github/workflows/determinism-matrix.yml` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `WORKFLOW-CONTRACT; HOSTED-PENDING` |
+| `.github/workflows/test-python-wheel.yml` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `WORKFLOW-CONTRACT; HOSTED-PENDING` |
+| `.gitignore` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `STATIC-CONTRACT + LOCAL-MATRIX` |
+| `CMakeLists.txt` | `PR170-MAIN-RECONCILIATION` | current-main reconciliation task | `STATIC-CONTRACT + LOCAL-MATRIX` |
+| `Cargo.toml` | `PR170-MAIN-RECONCILIATION` | current-main reconciliation task | `STATIC-CONTRACT + LOCAL-MATRIX` |
+| `MANIFEST.in` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `STATIC-CONTRACT + LOCAL-MATRIX` |
+| `build.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `STATIC-CONTRACT + LOCAL-MATRIX` |
+| `docs/examples/index.md` | `PR170-TESSELLA-TIMING` | TESSELLA timing-acceptance task | `DOC-REFERENCE + FULL-PROFILE` |
+| `docs/guides/data_and_scene_workflows.md` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `DOC-REFERENCE + FULL-PROFILE` |
+| `docs/guides/feature_map.md` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `DOC-REFERENCE + FULL-PROFILE` |
+| `docs/refactor-forge3d-w1-a.md` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `LEDGER-SOURCE-LOCK` |
+| `docs/refactor-forge3d-w1-b.md` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `LEDGER-SOURCE-LOCK` |
+| `docs/refactor-forge3d-w1-c.md` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `LEDGER-SOURCE-LOCK` |
+| `docs/refactor-forge3d-w1-v.md` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `LEDGER-SOURCE-LOCK` |
+| `docs/refactor-forge3d.md` | `PR170-FINAL-LEDGER` | final evidence-ledger task | `LEDGER-INVARIANT` |
+| `examples/_import_shim.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `DOC-REFERENCE + FULL-PROFILE` |
+| `examples/_terrain_feature_demo.py` | `PR170-EXAMPLE-TYPING` | example-typing task | `FOCUSED-TYPING-CONTRACT + CANDIDATE-AUDIT` |
+| `examples/fuji_labels_demo.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `DOC-REFERENCE + FULL-PROFILE` |
+| `examples/mapscene_p1_assets_bundle_showcase.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `DOC-REFERENCE + FULL-PROFILE` |
+| `examples/terrain_tv10_subsurface_demo.py` | `PR170-EXAMPLE-TYPING` | example-typing task | `FOCUSED-TYPING-CONTRACT + CANDIDATE-AUDIT` |
+| `examples/terrain_tv21_blending_demo.py` | `PR170-EXAMPLE-TYPING` | example-typing task | `FOCUSED-TYPING-CONTRACT + CANDIDATE-AUDIT` |
+| `examples/terrain_tv24_reflection_probe_demo.py` | `PR170-EXAMPLE-TYPING` | example-typing task | `FOCUSED-TYPING-CONTRACT + CANDIDATE-AUDIT` |
+| `examples/terrain_tv4_material_variation_demo.py` | `PR170-EXAMPLE-TYPING` | example-typing task | `FOCUSED-TYPING-CONTRACT + CANDIDATE-AUDIT` |
+| `examples/terrain_tv6_heterogeneous_volumetrics_demo.py` | `PR170-EXAMPLE-TYPING` | example-typing task | `FOCUSED-TYPING-CONTRACT + CANDIDATE-AUDIT` |
+| `pyproject.toml` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `STATIC-CONTRACT + LOCAL-MATRIX` |
+| `pytest.ini` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `STATIC-CONTRACT + LOCAL-MATRIX` |
+| `python/forge3d/__init__.pyi` | `PR170-MAIN-RECONCILIATION` | current-main reconciliation task | `WHEEL-API + FULL-PROFILE` |
+| `python/forge3d/determinism.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `WHEEL-API + FULL-PROFILE` |
+| `scripts/check_determinism_hashes.py` | `PR170-STANDARDS-REMEDIATION` | standards remediation task | `TYPED-SIGNATURE + DETERMINISM-PROVENANCE-38` |
+| `scripts/ci_pytest_lane.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `STATIC-CONTRACT + SELECTION-LEDGER` |
+| `scripts/run_apple_metal_acceptance.py` | `PR170-APPLE-SELECTION-ORDER` | Apple Metal selection-audit task | `STATIC-CONTRACT + PHYSICAL-METAL` |
+| `scripts/run_nvidia_visual_acceptance.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `STATIC-CONTRACT + LOCAL-MATRIX` |
+| `shaders/contracts/terrain_pbr_pom.toml` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/core/capabilities.rs` | `PR170-METAL-AETHER-STATE` | Metal state and AETHER task | `RUST-MATRIX + FULL-PROFILE` |
+| `src/core/dd/jitter.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/core/gpu.rs` | `PR170-METAL-AETHER-STATE` | Metal state and AETHER task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/core/gpu_timing.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/core/text_overlay.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/export/mod.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + FULL-PROFILE` |
+| `src/export/projection.rs` | `PR170-STANDARDS-REMEDIATION` | standards remediation task | `CENTRALIZED-RENDERERROR + RUST-PROJECTION-7` |
+| `src/geometry/displacement.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/geometry/mod.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/geometry/overlay/faces.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/geometry/overlay/mod.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/geometry/overlay/sweep.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/geometry/subdivision.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/gis/crs.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/gis/domain.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/gis/mod.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/gis/raster_tags.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/gis/raster_write.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/gis/rasterize.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/gis/thematic.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/labels/atlas.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/labels/mod.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/lib.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/path_tracing/adjudication.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/path_tracing/hybrid_compute/aether_reference.rs` | `PR170-METAL-AETHER-STATE` | Metal state and AETHER task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/path_tracing/hybrid_compute/render_terrain.rs` | `PR170-PROMETHEUS-SCOPE` | PROMETHEUS runtime-proof task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/path_tracing/reference_scene.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/picking/unified.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + FULL-PROFILE` |
+| `src/py_functions/adjudication.rs` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `RUST-MATRIX + ADJUDICATION-CERTIFICATE` |
+| `src/py_functions/path_tracing/terrain_reference.rs` | `PR170-MAIN-RECONCILIATION` | current-main reconciliation task | `RUST-MATRIX + FULL-PROFILE` |
+| `src/py_module/functions.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + FULL-PROFILE` |
+| `src/py_module/functions/export.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + FULL-PROFILE` |
+| `src/py_types/aov.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/scene/core/constructor.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/scene/mod.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/scene/py_api/native_text.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + FULL-PROFILE` |
+| `src/scene/render_paths/timing.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + FULL-PROFILE` |
+| `src/shader_sources.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + FULL-PROFILE` |
+| `src/shaders/offline_accumulate.wgsl` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/shaders/pt_intersect.wgsl` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/shaders/pt_raygen.wgsl` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/shaders/pt_shade.wgsl` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/shaders/pt_shadow.wgsl` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/shaders/terrain_pbr_pom.wgsl` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/shaders/terrain_visbuffer_write.wgsl` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/shaders/terrain_visibility_fullscreen.wgsl` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/shaders/text_overlay.wgsl` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/cog/py_bindings.rs` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `RUST-MATRIX + COG-LOOPBACK` |
+| `src/terrain/renderer/aov.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/renderer/atmosphere.rs` | `PR170-MAIN-RECONCILIATION` | current-main reconciliation task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/renderer/core.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/renderer/draw/execute.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/renderer/draw/mod.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/renderer/geometry.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/renderer/offline.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/renderer/pipeline_cache.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/renderer/py_api.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/renderer/runtime_contract.rs` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/renderer/virtual_texture.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/renderer/visibility_buffer.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/spike/constructor.rs` | `PR170-METAL-AETHER-STATE` | Metal state and AETHER task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/terrain/vt_family_residency.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `src/verify/ir/engine.rs` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `RUST-MATRIX + FULL-PROFILE` |
+| `src/viewer/init/device_init.rs` | `PR170-METAL-AETHER-STATE` | Metal state and AETHER task | `RUST-MATRIX + PHYSICAL-METAL` |
+| `tests/UNRUN.toml` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/_generated_assets.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/_terrain_runtime.py` | `PR170-APPLE-PREFLIGHT` | Apple-preflight task | `FOCUSED-APPLE-CONTRACT + POLICY-AUDIT; HOSTED-PENDING` |
+| `tests/apple_metal_acceptance.toml` | `PR170-APPLE-MANIFEST` | Apple-manifest correction task | `STATIC-CONTRACT + CANDIDATE-AUDIT` |
+| `tests/golden/certificates/README.md` | `PR170-SIGNING-BOUNDARY` | signing-boundary task | `FOCUSED-CERTIFICATE-CONTRACT + PROTECTED-POLICY; HOSTED-PENDING` |
+| `tests/golden/recipes/mapscene_alignment_utm.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_alignment_utm.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_auto_water.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_auto_water.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_buildings.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_buildings.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_clipmap_large_region.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_clipmap_large_region.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_cloud_shadows.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_cloud_shadows.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_copc_points.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_copc_points.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_furniture_graticule.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_furniture_graticule.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_label_arabic_joining.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_label_arabic_joining.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_label_halo_depth.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_label_halo_depth.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_label_occlusion_ridge.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_label_occlusion_ridge.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_material_maps.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_material_maps.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_offline_aovs.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_offline_aovs.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_png16_color.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_png16_color.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_screen_space_contact.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_screen_space_contact.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_screen_space_reflection.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_screen_space_reflection.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_terrain_raster.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_terrain_raster.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_textured_gltf_landmark.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_textured_gltf_landmark.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_thematic_choropleth.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_thematic_choropleth.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_tiles3d_points.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_tiles3d_points.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_vector_labels.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_vector_labels.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_vector_stroke_quality.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_vector_stroke_quality.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_vector_stroke_quality_4x.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/recipes/mapscene_vector_stroke_quality_4x.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/terrain/substratia_grazing_baseline.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/terrain/substratia_grazing_baseline.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/terrain/substratia_grazing_normal.metal.png` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/golden/terrain/substratia_grazing_normal.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/goldens/determinism/terra_determinata_v1.metal.provenance.json` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/goldens/determinism/terra_determinata_v1.metal.sha256` | `PR170-METAL-FIXTURE-FREEZE` | Metal fixture-freeze task | `FIXTURE-PROVENANCE + PHYSICAL-METAL` |
+| `tests/requirements.txt` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_adjudication_gate.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + ADJUDICATION-CERTIFICATE` |
+| `tests/test_anamnesis_incremental.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_anamnesis_inertness.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_anamnesis_p1.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_anamnesis_portability.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_aov.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_api_contracts.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_api_truth_pass.py` | `PR170-MAIN-RECONCILIATION` | current-main reconciliation task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_astro_night_golden.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_atmosphere_golden.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_atmosphere_lut_handoff.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_atmosphere_pt_reference.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_atmosphere_reference.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_atmosphere_spectral.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_bloom_execute_behavior.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_budget_enforce.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_buildings_extrude.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_california_cigar_smoke_hybrid.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_cam_phi_wiring.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_capability_negotiation.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_certificate_verifier.py` | `PR170-SIGNING-BOUNDARY` | signing-boundary task | `FOCUSED-CERTIFICATE-CONTRACT + PROTECTED-POLICY; HOSTED-PENDING` |
+| `tests/test_ci_cost_controls.py` | `PR170-SIGNING-BOUNDARY` | signing-boundary task | `FOCUSED-CERTIFICATE-CONTRACT + PROTECTED-POLICY; HOSTED-PENDING` |
+| `tests/test_cog_streaming.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + COG-LOOPBACK` |
+| `tests/test_color_management.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_dem_loading.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_determinism_hash.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_determinism_matrix.py` | `PR170-METAL-PROVENANCE` | Metal provenance-routing task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_example_catalog_docs.py` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_export_projection.py` | `PR170-STANDARDS-REMEDIATION` | standards remediation task | `PROJECTION-REGRESSION + PYTHON-PROJECTION-15` |
+| `tests/test_exr_output.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_f3dz_codec.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_flythrough_popping.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_heightfield_ao.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_hybrid_terrain_pt.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_hzb_culling.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_light_feature_enablement.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_lighting_alignment.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_lighting_preset.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_mapscene_examples.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_mapscene_label_occlusion.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_mapscene_quickstart.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_mapscene_vector_strokes.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_motion_vectors.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_msdf_fidelity.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_no_silent_degradation.py` | `PR170-APPLE-PREFLIGHT` | Apple-preflight task | `FOCUSED-APPLE-CONTRACT + POLICY-AUDIT; HOSTED-PENDING` |
+| `tests/test_p2_advanced_label_rules.py` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_p2_advanced_labels_repeated_curved.py` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_p2_determinism_noop.py` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_p2_quickstart.py` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_perspective_probe.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_perspective_projection.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_preset_visual_parity.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_provenance_offline_verify.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_provenance_veritas.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_recipe_goldens.py` | `PR170-OWNER-BOUNDARY` | owner-boundary/signing correction task | `PHYSICAL-RECIPE-SCOPE + PROTECTED-REFRESH-CONTRACT; FINAL-PHYSICAL-HOSTED-PENDING` |
+| `tests/test_render_certificate.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_render_certificate_contract.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_sdist_manifest.py` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_shader_proofs.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_shadow_techniques.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_shadow_tip.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_ssgi_ssr_wiring.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_sun_visibility.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_analysis_api.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_clipmap_streaming.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_demo.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_material_maps.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_probes.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_render_color_space.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_renderer.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_runtime.py` | `PR170-APPLE-PREFLIGHT` | Apple-preflight task | `FOCUSED-APPLE-CONTRACT + POLICY-AUDIT; HOSTED-PENDING` |
+| `tests/test_terrain_scatter.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_sky_parity.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_tv10_demo.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_tv10_goldens.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_tv10_subsurface.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_tv10_subsurface_materials.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_tv13_lod_pipeline.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_tv21_blending.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_tv21_demo.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_tv24_demo.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_tv4_demo.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_tv4_material_variation.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_tv6_heterogeneous_volumetrics.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_visual_goldens.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_terrain_vt_pbr_families.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_trust_boundary_diagnostics.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_tv12_offline_quality.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_tv20_virtual_texturing.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_tv22_scatter_wind.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_vector_coverage.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_viewshed_curvature.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_visibility_buffer.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_widgets.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/test_world_coord_f32_gate.py` | `PR170-MAIN-RECONCILIATION` | current-main reconciliation task | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/torture/COVERAGE.json` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `FULL-PROFILE + FOCUSED-CONTRACT` |
+| `tests/torture/labels/labels-057.json` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `FULL-PROFILE + FOCUSED-CONTRACT` |

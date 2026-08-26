@@ -91,13 +91,13 @@ def _metrics(baseline: np.ndarray, current: np.ndarray) -> tuple[float, int]:
 
 def render_demo(
     *,
-    dem_path=DEFAULT_DEM,
-    output_dir,
-    width=960,
-    height=600,
-    max_dem_size=768,
-    timeout=90.0,
-):
+    dem_path: str | Path = DEFAULT_DEM,
+    output_dir: str | Path,
+    width: int = 960,
+    height: int = 600,
+    max_dem_size: int = 768,
+    timeout: float = 90.0,
+) -> dict[str, object]:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     prepared_dem = output_dir / "viewer-dem.tif"

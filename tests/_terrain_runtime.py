@@ -98,9 +98,9 @@ def _running_on_unsupported_hosted_windows_ci() -> bool:
 def _terrain_rendering_unavailable_reason() -> "str | None":
     """Return None when terrain rendering is available, else why it is not.
 
-    The reason is what makes ``FORGE3D_TESSELLA_REQUIRED_GPU`` load-bearing:
-    on the required hardware lane an absent GPU must fail with a cause, not
-    silently degrade into a skip.
+    The reason makes required GPU acceptance markers load-bearing: on a
+    required hardware lane an absent GPU must fail with a cause, not silently
+    degrade into a skip.
     """
     if _running_on_unsupported_hosted_macos_ci() or _running_on_unsupported_hosted_windows_ci():
         return "hosted CI runner without a terrain-safe GPU"
@@ -153,6 +153,11 @@ def terrain_rendering_available() -> bool:
     reason = _terrain_rendering_unavailable_reason()
     if reason is None:
         return True
+    if os.environ.get("FORGE3D_APPLE_METAL_ACCEPTANCE") == "1":
+        raise RuntimeError(
+            "FORGE3D_APPLE_METAL_ACCEPTANCE=1 requires the Apple Metal acceptance lane, "
+            f"but terrain rendering is unavailable: {reason}"
+        )
     if os.environ.get("FORGE3D_TESSELLA_REQUIRED_GPU") == "1":
         raise RuntimeError(
             "FORGE3D_TESSELLA_REQUIRED_GPU=1 requires the TESSELLA hardware lane, "

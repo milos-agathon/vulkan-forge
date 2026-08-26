@@ -181,13 +181,13 @@ def _render(
 
 def render_tv21_demo(
     *,
-    dem_path=DEFAULT_DEM,
-    output_dir,
-    width=960,
-    height=600,
-    max_dem_size=768,
-    crop_size=160,
-):
+    dem_path: str | Path = DEFAULT_DEM,
+    output_dir: str | Path,
+    width: int = 960,
+    height: int = 600,
+    max_dem_size: int = 768,
+    crop_size: int = 160,
+) -> dict[str, object]:
     output_dir = Path(output_dir)
     normalized = load_dem(Path(dem_path), int(max_dem_size))
     side = min(int(crop_size), *normalized.shape)

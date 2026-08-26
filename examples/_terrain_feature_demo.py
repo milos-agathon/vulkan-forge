@@ -12,7 +12,12 @@ from _import_shim import ensure_repo_import
 ensure_repo_import()
 
 import forge3d as f3d
-from forge3d.terrain_params import PomSettings, make_terrain_params_config
+from forge3d.terrain_params import (
+    MaterialLayerSettings,
+    PomSettings,
+    ReflectionProbeSettings,
+    make_terrain_params_config,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +41,7 @@ def load_dem(path: Path, max_size: int) -> np.ndarray:
     return np.ascontiguousarray(dem, dtype=np.float32)
 
 
-def terrain_overlay():
+def terrain_overlay() -> f3d.OverlayLayer:
     cmap = f3d.Colormap1D.from_stops(
         [
             (0.0, "#17351b"),
@@ -70,8 +75,8 @@ def render(
     width: int,
     height: int,
     *,
-    materials=None,
-    reflection_probes=None,
+    materials: MaterialLayerSettings | None = None,
+    reflection_probes: ReflectionProbeSettings | None = None,
     debug_mode: int = 0,
     water_mask: np.ndarray | None = None,
     albedo_mode: str = "colormap",
@@ -88,7 +93,7 @@ def render(
     fov_y_deg: float = 50.0,
     camera_mode: str = "screen",
     ibl_intensity: float = 1.0,
-) -> tuple[np.ndarray, object]:
+) -> tuple[np.ndarray, f3d.TerrainRenderer]:
     session = f3d.Session(window=False)
     renderer = f3d.TerrainRenderer(session)
     config = make_terrain_params_config(

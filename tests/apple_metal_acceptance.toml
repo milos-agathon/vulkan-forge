@@ -1,6 +1,6 @@
 version = 1
-# Owner contract: 22 recipe specs; 2 fresh TV20 normal processes plus
-# 13 other exact nodes and those 22 parameterized recipe cases = 37 tests.
+# Owner contract: 228 semantic physical cases; 2 fresh TV20 normal processes;
+# and 35 contract-matrix cases = 265 total executions.
 recipe_cases = 22
 expected_tests = 265
 

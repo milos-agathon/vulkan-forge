@@ -3,9 +3,11 @@
 //! Handles 3D to 2D projection using view-projection matrices and
 //! 2D bounds to screen coordinate mapping.
 
+#[cfg(feature = "extension-module")]
+use crate::core::error::{RenderError, RenderResult};
 use glam::{Mat4, Vec2, Vec3};
 #[cfg(feature = "extension-module")]
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
 /// 2D axis-aligned bounding box for coordinate mapping.
 #[derive(Debug, Clone, Copy)]
@@ -186,10 +188,10 @@ pub fn project_3d_to_2d_py(
     point: (f32, f32, f32),
     view_proj: Vec<f32>,
     viewport: (u32, u32),
-) -> PyResult<Option<(f32, f32)>> {
+) -> RenderResult<Option<(f32, f32)>> {
     if view_proj.len() != 16 {
-        return Err(PyValueError::new_err(
-            "view_proj must contain 16 column-major values",
+        return Err(RenderError::Upload(
+            "view_proj must contain 16 column-major values".into(),
         ));
     }
     let matrix = Mat4::from_cols_slice(&view_proj);

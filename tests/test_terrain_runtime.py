@@ -78,6 +78,22 @@ def test_terrain_rendering_available_short_circuits_on_hosted_macos_ci(monkeypat
         terrain_runtime._terrain_rendering_unavailable_reason.cache_clear()
 
 
+def test_apple_metal_acceptance_fails_closed_without_tessella_marker(monkeypatch) -> None:
+    monkeypatch.setenv("FORGE3D_APPLE_METAL_ACCEPTANCE", "1")
+    monkeypatch.delenv("FORGE3D_TESSELLA_REQUIRED_GPU", raising=False)
+    monkeypatch.setattr(
+        terrain_runtime,
+        "_terrain_rendering_unavailable_reason",
+        lambda: "test adapter unavailable",
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="FORGE3D_APPLE_METAL_ACCEPTANCE=1 requires the Apple Metal acceptance lane",
+    ):
+        terrain_runtime.terrain_rendering_available()
+
+
 def test_terrain_rendering_available_uses_child_probe(monkeypatch) -> None:
     terrain_runtime._terrain_rendering_unavailable_reason.cache_clear()
     monkeypatch.delenv("FORGE3D_TESSELLA_REQUIRED_GPU", raising=False)

@@ -19,28 +19,26 @@ certificate in this directory.
 
 ## How they are used by the test suite
 
-In normal (hardware-backed) mode, `test_recipe_goldens_render_and_match`:
+Ordinary recipe pixel tests and the dedicated Metal and NVIDIA/Vulkan physical
+lanes prove the selected backend pixels, physical adapter identity, absence of
+software fallback, expected adapter features, and fixture provenance. These
+tests do not call the certificate emitter or verifier, require a signing secret,
+or compare changed pull-request WGSL with protected-base signed certificates.
 
-1. asserts the committed `<scene_id>.json` exists and
-   `forge3d.certificate.verify(cert, signing.pub)` is `True`;
-2. asserts the committed certificate's `degradations` are empty; and
-3. asserts the FRESH in-process render's `engine.wgsl_module_hashes` match the
-   committed certificate's — the load-bearing **shader tamper** check that ties
-   the committed certificates to the current WGSL sources. If a shader changes,
-   this assertion fails with a message directing you to regenerate.
+Pre-merge certificate proof is owned by the protected base and runs only in the
+required `workflow_dispatch` with `scope=full` (and scheduled acceptance), not
+on ordinary pull-request or push events. It requires the candidate catalog,
+`signing.pub`, and certificate bytes to be identical to the protected-base
+versions, then uses the public verifier to check signatures and reject tampering
+and replay. This proof requires no signing secret.
 
 ## How to regenerate
 
-Run the recipe golden suite with the update flag (this also refreshes the
-committed pixel goldens under `tests/golden/recipes/`):
-
-```bash
-FORGE3D_UPDATE_RECIPE_GOLDENS=1 .venv/Scripts/python -m pytest tests/test_recipe_goldens.py -q
-```
-
-Regenerate only after you have verified the pixel goldens are correct. The WGSL
-hash check exists precisely so that a shader edit forces a conscious
-regeneration rather than silently drifting.
+For a genuine certificate rotation, manually dispatch `certificate-refresh.yml`
+from protected `main`. The protected production secret signs clean fresh
+certificates for the complete recipe catalog; each certificate is checked
+against the pinned public key before it is written. Certificate rotation never
+creates or updates pixel goldens.
 
 ## Production signing provenance
 
@@ -50,8 +48,10 @@ GitHub Actions secret `FORGE3D_CERT_SIGNING_KEY`. A protected, explicitly
 dispatched acceptance/release signing lane fails when the secret is absent,
 when a certificate uses the local development key, when its public key differs
 from `signing.pub`, or when verification fails. Routine internal and fork pull
-requests receive no production secret; they verify structure, canonicalization,
-the pinned public key, and tamper rejection as explicitly untrusted work.
+requests receive no production secret and do not run the dedicated base-owned
+verifier; their Fast/static contracts exercise candidate-owned contract code.
+Pre-merge acceptance requires the separate full manual dispatch, where the
+base-owned verifier treats the candidate tree as explicitly untrusted work.
 
 Offline verification needs no secret or native extension:
 

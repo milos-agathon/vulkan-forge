@@ -21,7 +21,13 @@ DEFAULT_DEMS = (
 )
 
 
-def render_demo(*, output_dir, width=960, height=600, max_dem_size=768):
+def render_demo(
+    *,
+    output_dir: str | Path,
+    width: int = 960,
+    height: int = 600,
+    max_dem_size: int = 768,
+) -> dict[str, object]:
     output_dir = Path(output_dir)
     baseline_materials = MaterialLayerSettings(
         snow_enabled=True,

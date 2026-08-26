@@ -217,6 +217,12 @@ class TestRustProjection:
             (50.0, 25.0), (0.0, 0.0, 100.0, 100.0), (800, 600)
         ) == pytest.approx((400.0, 450.0))
 
+    def test_rust_3d_rejects_invalid_matrix_length(self):
+        with pytest.raises(
+            RuntimeError, match="view_proj must contain 16 column-major values"
+        ):
+            rust_project_3d((0.0, 0.0, 0.0), [1.0] * 15, (800, 600))
+
 
 class TestProjectionEdgeCases:
     """Test edge cases in projection."""

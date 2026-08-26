@@ -120,6 +120,7 @@ def test_ci_cost_controls_are_scoped_and_retained() -> None:
         assert preflight.count(live_base_ref) == 1
         assert "name: Snapshot live policy base" in preflight
         assert "id: policy-base" in preflight
+        assert "policy_base_sha: ${{ steps.policy-base.outputs.sha }}" in preflight
         assert 'echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"' in preflight
         assert "name: Resolve protected policy base for manual acceptance" in preflight
         assert "POLICY_BRANCH: ${{ github.event.repository.default_branch }}" in preflight
@@ -268,8 +269,84 @@ def test_ci_cost_controls_are_scoped_and_retained() -> None:
     assert "github.ref_protected" in certificate
     assert "environment: production-signing" in certificate
     assert "group: certificate-refresh-production" in certificate
+    assert "test_recipe_certificates_render_and_refresh" in certificate
+    assert "test_nvidia_vulkan_recipe_pixel_golden_render_and_match" in certificate
+    assert "test_recipe_goldens_render_and_match" not in certificate
+    assert 'python scripts/assert_junit_zero_skips.py "$junit"' in certificate
     assert "retention-days: 90" in _artifact_step(
         _job(certificate, "refresh"), "refreshed-recipe-certificates"
+    )
+
+    public_verifier = _job(workflow, "verify-recipe-certificates")
+    assert "github.event_name == 'pull_request'" not in public_verifier
+    assert "github.event_name == 'push'" not in public_verifier
+    assert "github.event_name == 'schedule'" in public_verifier
+    assert "inputs.scope == 'full'" in public_verifier
+    assert "needs: preflight" in public_verifier
+    assert (
+        "ref: ${{ github.event.pull_request.head.sha || github.sha }}"
+        in public_verifier
+    )
+    assert (
+        "POLICY_BASE_SHA: ${{ needs.preflight.outputs.policy_base_sha }}"
+        in public_verifier
+    )
+    assert (
+        'git worktree add --detach .ci-contracts "$POLICY_BASE_SHA"'
+        in public_verifier
+    )
+    assert 'git -C .ci-contracts rev-parse HEAD' in public_verifier
+    assert "test \"$actual_head\" = \"$EXPECTED_HEAD\"" in public_verifier
+    assert "test -z \"$(git status --porcelain --untracked-files=no)\"" in public_verifier
+    assert 'trusted_dir="$candidate_dir/.ci-contracts"' in public_verifier
+    for module in ("certificate.py", "_canonical_json.py", "_ed25519.py"):
+        assert f'cp "$trusted_dir/python/forge3d/{module}" "$scratch/forge3d/"' in public_verifier
+    assert ': > "$scratch/forge3d/__init__.py"' in public_verifier
+    assert 'PYTHONNOUSERSITE: \'1\'' in public_verifier
+    assert 'PYTHONPATH="$scratch"' in public_verifier
+    assert 'cd "$scratch"' in public_verifier
+    assert "candidate repository entered verifier sys.path" in public_verifier
+    assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in public_verifier
+    assert "--noconftest --rootdir=\"$scratch\"" in public_verifier
+    assert "python -m forge3d.certificate verify" in public_verifier
+    assert "trusted-catalog.txt" in public_verifier
+    assert "candidate-catalog.txt" in public_verifier
+    assert "diff -u" in public_verifier
+    assert 'cmp "$trusted_key" "$candidate_key"' in public_verifier
+    assert 'cmp "$trusted_cert" "$candidate_cert"' in public_verifier
+    assert '--pubkey "$trusted_key"' in public_verifier
+    assert "._acceptance_tamper_probe = true" in public_verifier
+    assert "accepted a signed-payload tamper" in public_verifier
+    assert "test_cli_verify_without_native_module" in public_verifier
+    zero_skip = public_verifier.split(
+        "- name: Require clean zero-skip certificate acceptance", 1
+    )[1].split("\n      - ", 1)[0]
+    assert "if: always()" in zero_skip
+    assert (
+        'cp "$GITHUB_WORKSPACE/.ci-contracts/scripts/assert_junit_zero_skips.py" '
+        '"$scratch/"' in zero_skip
+    )
+    assert 'cd "$scratch"' in zero_skip
+    assert 'PYTHONNOUSERSITE=1 PYTHONPATH="$scratch"' in zero_skip
+    assert 'python "$scratch/assert_junit_zero_skips.py"' in zero_skip
+    assert '"$CERTIFICATE_ACCEPTANCE_DIR/junit.xml"' in zero_skip
+    assert public_verifier.count("FORGE3D_CERT_SIGNING_KEY") == 1
+    assert 'test -z "${FORGE3D_CERT_SIGNING_KEY:-}"' in public_verifier
+    assert "secrets.FORGE3D_CERT_SIGNING_KEY" not in public_verifier
+    evidence = _artifact_step(
+        public_verifier,
+        "recipe-certificate-acceptance-${{ github.run_id }}-${{ github.run_attempt }}",
+    )
+    assert "if: always()" in evidence
+    assert "if-no-files-found: error" in evidence
+    assert "retention-days: 90" in evidence
+
+    summary = _job(workflow, "full-acceptance-summary")
+    assert "verify-recipe-certificates" in summary.split("\n    runs-on:", 1)[0]
+    assert (
+        'check_selected "$full_selected" '
+        "'${{ needs.verify-recipe-certificates.result }}' recipe-certificates"
+        in summary
     )
 
 
@@ -282,7 +359,6 @@ def test_only_the_small_core_jobs_can_run_on_pr_or_push_events() -> None:
     assert jobs["preflight"].get("if") is None
     assert jobs["test-fast-contract"].get("if") is None
     assert jobs["pr-core-success"].get("if") == "always()"
-
     for name, job in jobs.items():
         if name in routine:
             continue
@@ -521,11 +597,7 @@ def test_tessella_acceptance_is_absent_or_exactly_scoped() -> None:
         ), f"TESSELLA jobs require an explicit scoped contract: {tessella_jobs}"
         return
 
-    assert tessella_jobs == [
-        "test-apple-metal-acceptance",
-        "test-tessella-gpu",
-        "full-acceptance-summary",
-    ]
+    assert tessella_jobs == ["test-tessella-gpu", "full-acceptance-summary"]
 
     for path in tessella_markers[len(baseline_paths) :]:
         assert f"              - '{path}'" in paths

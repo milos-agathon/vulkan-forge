@@ -80,7 +80,18 @@ jobs:
         env:
           FORGE3D_RUN_TERRAIN_GOLDENS: '1'
           FORGE3D_UPDATE_RECIPE_CERTIFICATES: '1'
-        run: python -m pytest tests/test_recipe_goldens.py::test_recipe_goldens_render_and_match -v --tb=short
+        shell: pwsh
+        run: |
+          $junit = Join-Path $env:RUNNER_TEMP "certificate-refresh-junit.xml"
+          python -m pytest `
+            tests/test_recipe_goldens.py::test_recipe_certificates_render_and_refresh `
+            tests/test_recipe_goldens.py::test_nvidia_vulkan_recipe_pixel_golden_render_and_match `
+            --junitxml="$junit" -v --tb=short
+          $pytestCode = $LASTEXITCODE
+          python scripts/assert_junit_zero_skips.py "$junit"
+          $verifyCode = $LASTEXITCODE
+          if ($pytestCode -ne 0) { exit $pytestCode }
+          exit $verifyCode
 
       - name: Upload signed certificates and provenance
         uses: actions/upload-artifact@v4
@@ -90,5 +101,6 @@ jobs:
             tests/golden/certificates/*.json
             ${{ runner.temp }}/certificate-refresh-head.txt
             ${{ runner.temp }}/certificate-refresh-adapter.json
+            ${{ runner.temp }}/certificate-refresh-junit.xml
           if-no-files-found: error
           retention-days: 90

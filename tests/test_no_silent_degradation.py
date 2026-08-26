@@ -832,7 +832,7 @@ def test_e_full_acceptance_requires_authoritative_apple_metal_lane():
     )
     job = ci["jobs"]["test-apple-metal-acceptance"]
     assert job["runs-on"] == "macos-14"
-    assert job["needs"] == ["build-wheel-macos"]
+    assert job["needs"] == ["build-wheel-macos", "prepare-lfs-fixtures"]
     assert "continue-on-error" not in job
     assert "vars." not in str(job["if"])
 
@@ -844,11 +844,32 @@ def test_e_full_acceptance_requires_authoritative_apple_metal_lane():
     assert env["WGPU_BACKEND"] == "metal"
     assert env["WGPU_BACKENDS"] == "metal"
     assert env["FORGE3D_RECIPE_GOLDEN_VARIANT"] == "metal"
-    assert env["FORGE3D_TESSELLA_REQUIRED_GPU"] == "1"
+    assert "FORGE3D_TESSELLA_REQUIRED_GPU" not in env
     assert "FORGE3D_TESSELLA_TIMING_REQUIRED" not in env
     assert env["FORGE3D_RUN_LIVE_TEXT_GPU"] == "1"
 
     steps = {step["name"]: step for step in job["steps"] if "name" in step}
+    download = steps["Download shared LFS fixture artifact"]
+    assert download["uses"] == "actions/download-artifact@v4"
+    assert download["with"] == {
+        "name": "lfs-fixture-bundles",
+        "path": "lfs-fixture-bundles",
+    }
+    restore = steps["Restore and verify Apple Metal TIFF fixtures"]["run"]
+    assert restore.count("python-tiffs.zip") == 1
+    assert "assets/tif/dem_rainier.tif" in restore
+    assert "was not restored" in restore
+    assert "is still an LFS pointer" in restore
+    step_names = [step.get("name") for step in job["steps"]]
+    assert step_names.index("Download shared LFS fixture artifact") < step_names.index(
+        "Restore and verify Apple Metal TIFF fixtures"
+    ) < step_names.index("Run authoritative Apple Metal acceptance matrix")
+    tv21_source = (ROOT / "tests" / "test_terrain_tv21_demo.py").read_text(
+        encoding="utf-8"
+    )
+    assert "@pytest.mark.apple_metal_physical" in tv21_source
+    assert 'REPO_ROOT / "assets" / "tif" / "dem_rainier.tif"' in tv21_source
+
     install = steps["Install exact macOS wheel and acceptance dependencies"]["run"]
     assert "python scripts/install_compatible_wheel.py dist" in install
     assert "python -m pip install -r tests/requirements.txt" in install

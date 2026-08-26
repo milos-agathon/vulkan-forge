@@ -1071,92 +1071,45 @@ def _clear_degradation_sinks() -> None:
 
 
 def _emit_or_verify_certificate(spec: RecipeGolden) -> None:
-    """Emit (UPDATE mode) or verify (normal GPU mode) the committed signed
-    certificate for ``spec``.
+    """Emit a protected-main signed certificate for ``spec``.
 
     The certificate reflects the LAST in-process native render, so this must be
-    called immediately after this scene's ``render()`` and golden match.
+    called immediately after this scene's ``render()``.
 
-    UPDATE mode: sign a fresh certificate with the configured seed, write it to
-    ``tests/golden/certificates/<scene_id>.json``, and (first scene only) write
-    the dev public key hex to ``signing.pub``.
+    Require protected production signing, verify the fresh clean
+    certificate against the reviewed pinned ``signing.pub``, and write only
+    ``tests/golden/certificates/<scene_id>.json``.  The pinned key is never
+    changed here.
 
-    Normal mode: assert the committed cert exists and verifies against
-    ``signing.pub``, that its ``degradations`` are empty, and that the FRESH
-    render's ``wgsl_module_hashes`` match the committed cert's — the load-bearing
-    golden-gate check that ties committed certs to the current WGSL sources.
+    Pre-merge verification of committed certificates is deliberately separate:
+    protected-base code byte-compares and verifies the candidate catalog without
+    exposing the production signing secret to candidate-controlled code.
     """
     from forge3d import certificate as _certificate
     from forge3d.diagnostics import render_certificate
 
+    assert _update_certificates_enabled(), (
+        "certificate emission requires protected certificate refresh mode"
+    )
     cert = render_certificate()  # signed; reflects the last completed render
     cert_path = _committed_cert_path(spec)
-
-    if _update_certificates_enabled():
-        _assert_certificate_is_clean(cert)
-        CERT_DIR.mkdir(parents=True, exist_ok=True)
-        _certificate.write_certificate(cert, cert_path)
-        pubkey_hex = cert["signature"]["pubkey"]
-        if not SIGNING_PUB_PATH.exists():
-            SIGNING_PUB_PATH.write_text(pubkey_hex + "\n", encoding="utf-8")
-        return
-
-    assert cert_path.exists(), (
-        f"Missing recipe golden certificate {cert_path}. "
-        "Regenerate with FORGE3D_UPDATE_RECIPE_GOLDENS=1."
+    assert _production_signing_required(), (
+        "certificate refresh requires the protected production-signing contract"
     )
-    assert SIGNING_PUB_PATH.exists(), (
-        f"Missing signing public key {SIGNING_PUB_PATH}. "
-        "Regenerate with FORGE3D_UPDATE_RECIPE_GOLDENS=1."
+    assert os.environ.get("FORGE3D_CERT_SIGNING_KEY"), (
+        "certificate refresh requires FORGE3D_CERT_SIGNING_KEY"
     )
-    pubkey = SIGNING_PUB_PATH.read_text(encoding="utf-8").strip()
-    committed = json.loads(cert_path.read_text(encoding="utf-8"))
-    assert (committed.get("signature") or {}).get("pubkey") == pubkey, (
-        f"{cert_path} was not signed by the pinned production public key"
+    _assert_certificate_is_clean(cert)
+    assert SIGNING_PUB_PATH.is_file(), (
+        "certificate refresh requires the reviewed pinned signing.pub"
     )
-    assert _certificate.verify(cert_path, pubkey) is True, (
-        f"Committed certificate {cert_path} failed Ed25519 verification against "
-        f"{SIGNING_PUB_PATH}."
+    pubkey_hex = SIGNING_PUB_PATH.read_text(encoding="utf-8").strip()
+    assert (cert.get("signature") or {}).get("pubkey") == pubkey_hex, (
+        "fresh certificate was not signed by the pinned production key"
     )
-
-    if _production_signing_required():
-        assert os.environ.get("FORGE3D_CERT_SIGNING_KEY"), (
-            "protected golden lane requires FORGE3D_CERT_SIGNING_KEY"
-        )
-        assert (cert.get("signature") or {}).get("pubkey") == pubkey, (
-            "fresh golden certificate was not signed by the pinned production key"
-        )
-        assert _certificate.verify(cert, pubkey) is True
-    assert committed.get("degradations") == [], (
-        f"{spec.scene_id} committed certificate records degradations "
-        f"{committed.get('degradations')!r}; a clean golden must degrade nothing. "
-        "Investigate the fallback before regenerating."
-    )
-
-    fresh_hashes = (cert.get("engine") or {}).get("wgsl_module_hashes") or {}
-    committed_hashes = (committed.get("engine") or {}).get("wgsl_module_hashes") or {}
-    # The shader-hash registry is process-lifetime: other GPU tests running
-    # earlier in the same pytest process may register EXTRA modules (e.g. the
-    # minimal terrain pipeline). The tamper gate therefore checks that every
-    # module recorded in the committed certificate still exists with an
-    # identical hash — extra fresh entries are fine, changed or missing ones
-    # are not.
-    missing = sorted(set(committed_hashes) - set(fresh_hashes))
-    assert not missing, (
-        f"WGSL modules {missing} named in the committed certificate were never "
-        "compiled by this render; regenerate with FORGE3D_UPDATE_RECIPE_GOLDENS=1 "
-        "after verifying the pixel goldens"
-    )
-    changed = {
-        label: (committed_hashes[label], fresh_hashes[label])
-        for label in committed_hashes
-        if fresh_hashes[label] != committed_hashes[label]
-    }
-    assert not changed, (
-        "WGSL source changed since golden certificates were generated; regenerate "
-        "with FORGE3D_UPDATE_RECIPE_GOLDENS=1 after verifying the pixel goldens: "
-        f"{changed}"
-    )
+    assert _certificate.verify(cert, pubkey_hex) is True
+    CERT_DIR.mkdir(parents=True, exist_ok=True)
+    _certificate.write_certificate(cert, cert_path)
 
 
 def test_recipe_golden_manifest_catalog_has_required_coverage() -> None:
@@ -1222,6 +1175,29 @@ def test_certificate_update_mode_never_enables_pixel_updates(
     monkeypatch.setenv("FORGE3D_UPDATE_RECIPE_CERTIFICATES", "1")
     assert _update_certificates_enabled() is True
     assert _update_goldens_enabled() is False
+
+
+def test_certificate_refresh_rejects_a_non_pinned_signer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from forge3d import certificate as _certificate
+    from forge3d import diagnostics
+
+    spec = RECIPE_GOLDENS[0]
+    fresh = json.loads(_committed_cert_path(spec).read_text(encoding="utf-8"))
+    fresh["signature"]["pubkey"] = "00" * 32
+    monkeypatch.setattr(diagnostics, "render_certificate", lambda: fresh)
+    monkeypatch.setattr(
+        _certificate,
+        "write_certificate",
+        lambda *_args, **_kwargs: pytest.fail("untrusted certificate was written"),
+    )
+    monkeypatch.setenv("FORGE3D_UPDATE_RECIPE_CERTIFICATES", "1")
+    monkeypatch.setenv("FORGE3D_REQUIRE_PRODUCTION_SIGNING", "1")
+    monkeypatch.setenv("FORGE3D_CERT_SIGNING_KEY", "11" * 32)
+
+    with pytest.raises(AssertionError, match="pinned production key"):
+        _emit_or_verify_certificate(spec)
 
 
 @pytest.mark.parametrize(
@@ -1390,27 +1366,31 @@ def test_recipe_golden_gate_rejects_pixel_regression(
     )
 
 
-def _render_recipe_golden_pixels(tmp_path: Path, spec: RecipeGolden) -> None:
+def _render_recipe_golden_pixels(
+    tmp_path: Path, spec: RecipeGolden, *, compare_pixels: bool
+) -> None:
     assert terrain_rendering_available(), (
         "Recipe goldens require a terrain-capable hardware-backed forge3d runtime"
     )
-    _require_recipe_golden_fixture(spec)
+    if compare_pixels:
+        _require_recipe_golden_fixture(spec)
     scene = spec.build(tmp_path)
-    manifest = f3d.recipe_manifest(
-        scene,
-        golden_fixture_intent={
-            "scene_id": spec.scene_id,
-            "family": spec.family,
-            "golden_path": str(spec.golden_path.relative_to(ROOT)).replace("\\", "/"),
-            "command": spec.command,
-            "backend": "gpu_terrain",
-            "tolerance": {"ssim_min": spec.ssim_min, "mean_abs_max": spec.mean_abs_max},
-        },
-    )
-    intent = manifest["golden_fixture_intent"]
-    assert intent["scene_id"] == spec.scene_id
-    assert intent["family"] == spec.family
-    assert intent["backend"] == "gpu_terrain"
+    if compare_pixels:
+        manifest = f3d.recipe_manifest(
+            scene,
+            golden_fixture_intent={
+                "scene_id": spec.scene_id,
+                "family": spec.family,
+                "golden_path": str(spec.golden_path.relative_to(ROOT)).replace("\\", "/"),
+                "command": spec.command,
+                "backend": "gpu_terrain",
+                "tolerance": {"ssim_min": spec.ssim_min, "mean_abs_max": spec.mean_abs_max},
+            },
+        )
+        intent = manifest["golden_fixture_intent"]
+        assert intent["scene_id"] == spec.scene_id
+        assert intent["family"] == spec.family
+        assert intent["backend"] == "gpu_terrain"
 
     _clear_degradation_sinks()
     report = scene.render()
@@ -1444,8 +1424,9 @@ def _render_recipe_golden_pixels(tmp_path: Path, spec: RecipeGolden) -> None:
     if spec.scene_id == "mapscene_label_arabic_joining":
         rendered = f3d.png_to_numpy(output_path)
         assert np.count_nonzero(np.max(rendered[..., :3], axis=-1) > 245) > 20
-    _assert_matches_golden(spec, output_path)
-    if _recipe_golden_variant() == "metal":
+    if compare_pixels:
+        _assert_matches_golden(spec, output_path)
+    if compare_pixels and _recipe_golden_variant() == "metal":
         pixels = f3d.png_to_numpy(spec.golden_path)
         height, width = pixels.shape[:2]
         if _update_goldens_enabled():
@@ -1486,9 +1467,32 @@ def _render_recipe_golden_pixels(tmp_path: Path, spec: RecipeGolden) -> None:
 @pytest.mark.recipe_golden
 @pytest.mark.parametrize("spec", RECIPE_GOLDENS, ids=lambda item: item.scene_id)
 def test_recipe_goldens_render_and_match(tmp_path, spec: RecipeGolden) -> None:
-    """Render pixels and enforce the protected signed-certificate contract."""
-    _render_recipe_golden_pixels(tmp_path, spec)
+    """Render pixels and enforce the selected backend fixture and provenance."""
+    _render_recipe_golden_pixels(tmp_path, spec, compare_pixels=True)
+
+
+@pytest.mark.recipe_golden
+@pytest.mark.parametrize("spec", RECIPE_GOLDENS, ids=lambda item: item.scene_id)
+def test_recipe_certificates_render_and_refresh(
+    tmp_path: Path, spec: RecipeGolden
+) -> None:
+    """Refresh certificates without claiming uncommitted backend pixel fixtures."""
+    assert _update_certificates_enabled()
+    assert _production_signing_required()
+    _render_recipe_golden_pixels(tmp_path, spec, compare_pixels=False)
     _emit_or_verify_certificate(spec)
+
+
+def test_backend_recipe_pixel_tests_are_certificate_independent() -> None:
+    for physical_test in (
+        test_metal_recipe_pixel_golden_render_and_match,
+        test_nvidia_vulkan_recipe_pixel_golden_render_and_match,
+    ):
+        names = set(physical_test.__code__.co_names)
+        assert "_render_recipe_golden_pixels" in names
+        assert "_emit_or_verify_certificate" not in names
+        assert "_verify_committed_certificate" not in names
+        assert "_update_certificates_enabled" not in names
 
 
 @pytest.mark.recipe_golden
@@ -1500,7 +1504,7 @@ def test_metal_recipe_pixel_golden_render_and_match(
     assert _recipe_golden_variant() == "metal", (
         "Metal recipe pixel proof requires its explicit physical lane"
     )
-    _render_recipe_golden_pixels(tmp_path, spec)
+    _render_recipe_golden_pixels(tmp_path, spec, compare_pixels=True)
 
 
 @pytest.mark.recipe_golden
@@ -1518,4 +1522,4 @@ def test_nvidia_vulkan_recipe_pixel_golden_render_and_match(
     assert nvidia_vulkan_golden_selected("FORGE3D_RECIPE_GOLDEN_VARIANT"), (
         "NVIDIA/Vulkan recipe pixel proof requires its explicit physical lane"
     )
-    _render_recipe_golden_pixels(tmp_path, spec)
+    _render_recipe_golden_pixels(tmp_path, spec, compare_pixels=True)

@@ -19,8 +19,13 @@ DEFAULT_DEM = ROOT / "assets" / "tif" / "dem_rainier.tif"
 
 
 def render_demo(
-    *, dem_path=DEFAULT_DEM, output_dir, width=960, height=600, max_dem_size=768
-):
+    *,
+    dem_path: str | Path = DEFAULT_DEM,
+    output_dir: str | Path,
+    width: int = 960,
+    height: int = 600,
+    max_dem_size: int = 768,
+) -> dict[str, object]:
     output_dir = Path(output_dir)
     dem = load_dem(Path(dem_path), int(max_dem_size))
     water_mask = (dem < float(np.quantile(dem, 0.32))).astype(np.float32)

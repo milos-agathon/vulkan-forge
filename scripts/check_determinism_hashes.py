@@ -211,9 +211,34 @@ def golden_provenance_record(
     }
 
 
-def write_golden_provenance(path: Path, **fields) -> dict:
+def write_golden_provenance(
+    path: Path,
+    *,
+    repository: Path,
+    candidate_sha: str,
+    wheel: Path,
+    native: Path,
+    adapter: object,
+    width: int,
+    height: int,
+    generation_command: str,
+    fixture: Path,
+    allowed_outputs: Iterable[Path] = (),
+) -> dict:
     """Write one canonical provenance record next to a generated fixture."""
-    record = golden_provenance_record(provenance_output=path, **fields)
+    record = golden_provenance_record(
+        repository=repository,
+        candidate_sha=candidate_sha,
+        wheel=wheel,
+        native=native,
+        adapter=adapter,
+        width=width,
+        height=height,
+        generation_command=generation_command,
+        fixture=fixture,
+        provenance_output=path,
+        allowed_outputs=allowed_outputs,
+    )
     path.write_text(
         json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
