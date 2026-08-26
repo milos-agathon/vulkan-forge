@@ -64,15 +64,22 @@ satisfies a physical acceptance requirement.
 
 M-06, F3DZ, ANAMNESIS, and TESSELLA keep their existing exact NVIDIA/Vulkan or
 DX12 acceptance commands, zero-skip contracts, thresholds, and 90-day evidence.
-The frequency is narrow:
+`Apple Metal Acceptance` is a separate `macos-14` family. It depends on the
+exact macOS wheel and prepared LFS fixtures, checks out the exact candidate,
+runs the checked Apple matrix against one physical Apple/Metal adapter with
+`software_fallback=false`, requires zero skips, and uploads its evidence for 90
+days. The frequency is narrow:
 
-- the nightly schedule runs every physical family;
-- manual `full`, `m06`, `f3dz`, `anamnesis`, or `tessella` selects the named
-  family;
-- pull requests and ordinary pushes never allocate a self-hosted GPU runner.
+- the nightly schedule runs every physical family, including Apple Metal;
+- manual `full` selects Apple Metal and the complete physical set, while `m06`,
+  `f3dz`, `anamnesis`, or `tessella` selects only the named physical family;
+- pull requests and ordinary pushes never select Apple Metal acceptance or
+  allocate a self-hosted GPU runner.
 
-`Full Acceptance Summary` validates every selected hosted and physical family.
-It is a reporting/acceptance context, not the global merge gate.
+`Full Acceptance Summary` requires the Apple job and validates every selected
+hosted and physical family. It is a reporting/acceptance context, not the
+global merge gate. Generic Metal diagnostics, `ABSENT`, an unknown adapter, or
+software fallback never satisfy Apple physical acceptance.
 
 ## Certificate refresh
 

@@ -3257,14 +3257,14 @@ or “current evidence” remains authoritative for this continuation.
 | Fact | Exact continuation evidence | Status |
 |---|---|---|
 | Branch | `codex/refactor-forge3d-20260812` | `VALIDATED` |
-| Comparison base | `origin/main` = `92cf80d20d7d5c6e9a564b853e79d596f3f5088f` | `VALIDATED` |
-| Committed predecessor | HEAD `e342855a0b8f1f9707b76b4588f3ca8cdb54f07b`; tree `4658a6b832bbf0d34b2bc97f23d8d455c806ff3e` | `DIAGNOSTIC_PREDECESSOR` |
-| Live candidate | the committed predecessor plus 19 modified non-ledger paths and this modified ledger; all 20 are assigned in the mapping below | `VALIDATED` |
-| Precommit index/worktree state | immediately before this ledger update: 20 paths were staged, 19 were non-ledger, only the prior ledger self-description was unstaged, and `git write-tree` produced `b33be43ea726376884ee900e82c676faaa290bcb`; this self-describing update leaves that same staged tree and only the ledger unstaged, still 20 unique dirty paths because the ledger is both staged and unstaged | `VALIDATED` |
-| Final branch delta | 253 paths and 253 unique paths versus `origin/main`; only `A` and `M` statuses, with no deletion or rename | `VALIDATED` |
-| Canonical changed-path list | `git diff --name-only origin/main`, newline after every path including the last; SHA-256 `9690b7c7ab853cb926ea3deb8dd1aad103e518f7a914701019bac32184aae8eb` | `VALIDATED` |
-| Canonical non-ledger source manifest | 252 rows; SHA-256 `2117a991251dd001685f360426bdaec502cedb76a8ee9fbe175af5df6a224c6d` | `VALIDATED` |
-| Final committed HEAD and tree | not created by this ledger task | `PENDING / NOT_PROVEN` |
+| Exact comparison base | `92cf80d20d7d5c6e9a564b853e79d596f3f5088f` | `VALIDATED` |
+| Current committed predecessor | HEAD `57dd32830549cc499699256afa368a166ab1436b`; tree `8fcfbdf0be1f6d7b73dd3f1e25263cc2e2a97cff` | `VALIDATED_PREDECESSOR` |
+| Live candidate | the committed predecessor plus four modified non-ledger paths and this modified ledger | `VALIDATED` |
+| Dirty paths and porcelain status | ` M .github/workflows/ci.yml`<br>` M docs/ci-validation.md`<br>` M docs/gallery/index.md`<br>` M docs/refactor-forge3d.md`<br>` M tests/test_ci_cost_controls.py` | `VALIDATED` |
+| Current full base delta | 255 paths and 255 unique paths versus the exact comparison base: 64 `A`, 191 `M`, no deletion or rename | `VALIDATED` |
+| Canonical changed-path list | `git diff --name-only 92cf80d20d7d5c6e9a564b853e79d596f3f5088f`, newline after every path including the last; SHA-256 `0e45d47a7a1b783f4dcf17040427966819c10bb795694d9706e7283df9a035b6` | `VALIDATED` |
+| Canonical non-ledger source manifest | 254 rows; SHA-256 `616a022b8e5e74fb728b04f5094eca15cbe581c414fe5cbb79c1697c373cb088` | `VALIDATED` |
+| Final committed HEAD and tree | no post-change commit exists | `PENDING / NOT_PROVEN` |
 
 The canonical non-ledger manifest makes the implementation/source identity
 stable when this tracked ledger changes. Its exact UTF-8 serialization is one
@@ -3272,65 +3272,58 @@ line per path in Git diff order:
 
 `status<TAB>path<TAB>SHA256(current file bytes)<LF>`
 
-It excludes only `docs/refactor-forge3d.md` from the 253-path delta. The
+It excludes only `docs/refactor-forge3d.md` from the 255-path delta. The
 verified command is:
 
 ```bash
-git diff --name-status origin/main -- . ':(exclude)docs/refactor-forge3d.md' |
+git diff --name-status 92cf80d20d7d5c6e9a564b853e79d596f3f5088f -- . ':(exclude)docs/refactor-forge3d.md' |
 while IFS=$'\t' read -r diff_state file_path; do
   digest="$(shasum -a 256 "$file_path" | cut -d ' ' -f 1)"
   printf '%s\t%s\t%s\n' "$diff_state" "$file_path" "$digest"
 done
 ```
 
-Hashing that stdout, including its final newline, produced the 252-row manifest
-SHA-256 above. A second enumeration proved 252 unique paths, no missing path,
-and no `D` or rename status. The 253-path mapping below independently binds
+Hashing that stdout, including its final newline, produced the 254-row manifest
+SHA-256 above. A second enumeration proved 254 unique paths, no missing path,
+and no `D` or rename status. The 255-path mapping below independently binds
 every delta path to its claim, owner, and proof category.
 
 ### Diagnostic predecessor evidence only
 
-The following values are preserved because they diagnose the last clean local
+The following values are preserved because they diagnose the clean `57dd3283`
 candidate. They are not current-candidate, final-commit, or hosted acceptance
-evidence: 19 non-ledger files changed after they were produced.
+evidence: the two-file workflow-parser fix and this documentation reconciliation
+changed tracked files after they were produced.
 
 | Predecessor fact | Recorded value | Status |
 |---|---|---|
-| Commit and tree | `e342855a0b8f1f9707b76b4588f3ca8cdb54f07b`; `4658a6b832bbf0d34b2bc97f23d8d455c806ff3e` | `DIAGNOSTIC_PREDECESSOR` |
-| Evidence root and index | `target/pr170-cycle4-evidence/`; `MATRIX-RESULTS.md`; `SHA256SUMS` | `DIAGNOSTIC_PREDECESSOR` |
-| Evidence manifest | 78 artifacts; SHA-256 `50fe82224bb7ccf504035306a4caf5c4a74b35e1103962f79fdc7e318780a335` | `DIAGNOSTIC_PREDECESSOR` |
-| Wheel | `wheelhouse/forge3d-1.35.0-cp310-abi3-macosx_11_0_arm64.whl`; SHA-256 `12b8752fa7dffeeb93075159f7be42a5ded3773b844189fc914fd61890d5988d` | `DIAGNOSTIC_PREDECESSOR` |
-| Installed native library | SHA-256 `d55145f9c7cb68014de805f82340e9501b87cba3055deddd06650fe03dbb4f3c` | `DIAGNOSTIC_PREDECESSOR` |
-| Adapter and aggregate | Apple M4 / Metal / integrated / `software_fallback=false`; 4,800 required JUnit executions with zero failures, errors, or skips | `DIAGNOSTIC_PREDECESSOR` |
+| Commit and tree | `57dd32830549cc499699256afa368a166ab1436b`; `8fcfbdf0be1f6d7b73dd3f1e25263cc2e2a97cff` | `DIAGNOSTIC_PREDECESSOR` |
+| Evidence root and index | `target/pr170-exact-final-20260826-evidence/`; `MATRIX-RESULTS.md`; `ACCEPTANCE-MANIFEST.tsv`; `SHA256SUMS` | `DIAGNOSTIC_PREDECESSOR` |
+| Evidence indexes | matrix SHA-256 `2c7f11f60c2ab130ce0ca4ac61da18e61c9524ab7c43133dc908c77c68d70086`; manifest SHA-256 `1e00a77a41d2dc35ceca0279a9d431f782f32525886afdcf1713e25507704d07` | `DIAGNOSTIC_PREDECESSOR` |
+| Wheel | `wheelhouse/forge3d-1.35.0-cp310-abi3-macosx_11_0_arm64.whl`; SHA-256 `8bd34610d5791bbca7909e3e9a628c184c05026e07ca0fc0dd9262651c52dea9` | `DIAGNOSTIC_PREDECESSOR` |
+| Installed native library | `native/_forge3d.abi3.so`; SHA-256 `67de5718ac3a5956e17d77c2fc735bc62259c971b05a5bd0b15dc6f136551a79` | `DIAGNOSTIC_PREDECESSOR` |
+| Adapter and aggregate | Apple M4 / Metal / integrated / `software_fallback=false`; 4,817 non-duplicated required JUnit executions with zero failures, errors, or skips | `DIAGNOSTIC_PREDECESSOR` |
 
-No cycle-4 wheel, native library, manifest, JUnit, count, or physical result may
-be relabelled as proof for the live candidate or final committed head.
+No `57dd3283` wheel, native library, manifest, JUnit, count, review, or physical
+result may be relabelled as proof for the live candidate or final committed
+head.
 
 ### Predeclared exact-head evidence boundary
 
-`target/pr170-final-evidence/` is stale diagnostic evidence for candidate
-`8ee3d04aa69cc898a1eba9c60f5cf2d3855ce258`; its `MATRIX-RESULTS.md` is RED at
-the complete non-slow Python profile. That directory and every artifact, wheel,
-native library, manifest, checksum, count, and result beneath it are forbidden
-for final reuse or relabelling.
-
-The verified-nonexistent fresh external evidence root is fixed now as
-`target/pr170-exact-final-20260826-evidence/`. Its future authoritative index,
-acceptance manifest, and checksum file are respectively:
-
-- `target/pr170-exact-final-20260826-evidence/MATRIX-RESULTS.md`
-- `target/pr170-exact-final-20260826-evidence/ACCEPTANCE-MANIFEST.tsv`
-- `target/pr170-exact-final-20260826-evidence/SHA256SUMS`
-
-The root and all three files remain `PENDING / NOT_PROVEN` until they are
-created from the final committed head after the tracked-file freeze.
+`target/pr170-final-evidence/` remains stale RED diagnostic evidence for
+`8ee3d04aa69cc898a1eba9c60f5cf2d3855ce258`. The newer
+`target/pr170-exact-final-20260826-evidence/` is complete local evidence only
+for `57dd32830549cc499699256afa368a166ab1436b`. Neither root nor any artifact,
+wheel, native library, manifest, checksum, count, or result beneath it may be
+reused or relabelled as post-change proof. No post-change evidence root or
+index has been created by this documentation task.
 
 | Final value | Authoritative destination | Current status |
 |---|---|---|
-| Final committed HEAD and tree | new-root `MATRIX-RESULTS.md`, `ACCEPTANCE-MANIFEST.tsv`, and PR #170 body | `PENDING / NOT_PROVEN` |
-| Fresh locked release-LTO wheel path and SHA-256 | new-root `ACCEPTANCE-MANIFEST.tsv` and `SHA256SUMS` | `PENDING / NOT_PROVEN` |
-| Fresh installed native-library path and SHA-256 | new-root `ACCEPTANCE-MANIFEST.tsv` and `SHA256SUMS` | `PENDING / NOT_PROVEN` |
-| Exact local matrix commands, artifact hashes, adapter/backend/fallback identity, and test accounting | `target/pr170-exact-final-20260826-evidence/` and PR #170 body | `PENDING / NOT_PROVEN` |
+| Final committed HEAD and tree | new post-change `MATRIX-RESULTS.md`, `ACCEPTANCE-MANIFEST.tsv`, and PR #170 body | `PENDING / NOT_PROVEN` |
+| Fresh locked release-LTO wheel path and SHA-256 | new post-change `ACCEPTANCE-MANIFEST.tsv` and `SHA256SUMS` | `PENDING / NOT_PROVEN` |
+| Fresh installed native-library path and SHA-256 | new post-change `ACCEPTANCE-MANIFEST.tsv` and `SHA256SUMS` | `PENDING / NOT_PROVEN` |
+| Exact local matrix commands, artifact hashes, adapter/backend/fallback identity, and test accounting | new post-change evidence root and PR #170 body | `PENDING / NOT_PROVEN` |
 | Exact hosted run IDs, head SHAs, artifact links, and selected-job accounting | PR #170 body and downloaded external evidence | `PENDING / NOT_PROVEN` |
 
 No future wheel, native, artifact hash, or test count is guessed here. Once the
@@ -3385,6 +3378,12 @@ cleanup removed only that regenerated cache and reclaimed another 1.6 GiB. All
 four named cache roots are currently absent, every prior evidence directory
 remains preserved, and the future fresh final build cannot reuse those caches.
 
+All local-matrix and exact-tree review results below predate the two-file
+workflow-parser fix and this documentation reconciliation. They remain valid
+only for the named `57dd3283` predecessor. The parser fix arrived as an
+already-approved input to this task; that component approval does not establish
+post-change exact-head acceptance.
+
 | Required proof | Exact evidence boundary | Status |
 |---|---|---|
 | Protected-public signing implementation review | certificate JSON and `signing.pub` remain byte-identical to the protected base; the base-owned public verifier remains the pre-merge signing proof and secret refresh remains protected-main-only | `APPROVED` |
@@ -3393,9 +3392,10 @@ remains preserved, and the future fresh final build cannot reuse those caches.
 | Final certificate README topology review | dedicated base-owned verification is schedule/full-manual-only, ordinary PR/push is excluded and candidate-owned Fast/static remains local scope; pre-merge requires separate `scope=full`, 4 focused controls passed, and independent high review approved | `APPROVED` |
 | Fresh-render certificate binding and Metal timestamp-policy closure | superseded and rejected as PR scope under explicit owner authority; their prior focused results do not establish current-candidate or final acceptance | `REJECTED / SUPERSEDED` |
 | Protected policy review | all 10 protected-policy checks are approved, `10/10` | `APPROVED` |
-| Candidate-wide non-ledger review | the prior 16 modified non-ledger paths are independently approved as one candidate | `APPROVED` |
-| Standards remediation review | all three additional paths are independently approved; release-LTO extension build passed, Rust projection 7 passed, Python projection 15 passed, determinism/provenance 38 passed, Fast passed 740 with 28 policy skips, and formatting, Clippy, and diff checks are green | `APPROVED` |
-| Final post-ledger combined-diff audit | independent `gpt-5.6-sol:xhigh` review must be rerun against the exact candidate including the owner-boundary and final README-topology corrections plus this ledger | `PENDING / NOT_PROVEN` |
+| `57dd3283` exact-local matrix and reviews | exact-tree Standards, Spec, combined-diff, and ponytail reviews plus the 4,817-test local matrix apply only to the committed predecessor | `DIAGNOSTIC_PREDECESSOR` |
+| Two-file workflow-parser fix | `.github/workflows/ci.yml` and `tests/test_ci_cost_controls.py` arrived already approved; no approval is inferred for later documentation or the combined candidate | `APPROVED_COMPONENT` |
+| Post-change focused documentation/source-contract checks | `git diff --check` passed; 13 focused workflow-parser and Apple selection/topology contracts passed; documentation wording was checked against the current workflow | `VALIDATED_FOCUSED_ONLY` |
+| Final post-ledger combined-diff audit | independent `gpt-5.6-sol:xhigh` review must run against the exact post-change candidate | `PENDING / NOT_PROVEN` |
 | Final ponytail review | must run against the post-ledger candidate before push | `PENDING / NOT_PROVEN` |
 | Final two-axis code-review reruns | Standards and Spec review must rerun against the post-ledger candidate before push | `PENDING / NOT_PROVEN` |
 | Final documentation commit and push | this task performs neither | `PENDING / NOT_PROVEN` |
@@ -3410,30 +3410,30 @@ secret-backed signer executed. Pre-merge acceptance requires protected public
 certificate verification at the exact hosted head. Secret-backed refresh stays
 protected-main-only and is `NOT_REQUIRED` unless certificates rotate.
 
-PR #170 therefore has an approved protected-public signing implementation and
-owner-boundary correction, but still awaits final combined and code-review
-reruns, the final commit, a fresh post-commit wheel/venv matrix, physical full
-runs, hosted CI, push, live-head identity, and mergeability/readiness readback.
-Every one of those gates remains `PENDING / NOT_PROVEN`; the PR is not final,
-merge-ready, or ready for review.
+PR #170 therefore preserves the previously approved implementation components,
+but the live candidate still awaits post-change reviews, the final commit, a
+fresh post-commit wheel/venv matrix, physical full runs, hosted CI, push,
+live-head identity, and mergeability/readiness readback. Every one of those
+post-change gates remains `PENDING / NOT_PROVEN`; the `57dd3283` evidence is
+diagnostic only, and the PR is not final, merge-ready, or ready for review.
 
 ### Lossless final changed-path mapping
 
 The canonical mapping is `path<TAB>claim<TAB>task owner<TAB>proof category`.
-It has exactly 253 rows and 253 unique paths. Its first column is byte-for-byte
-the same ordered path list as `git diff --name-only origin/main`, with no
+It has exactly 255 rows and 255 unique paths. Its first column is byte-for-byte
+the same ordered path list as `git diff --name-only
+92cf80d20d7d5c6e9a564b853e79d596f3f5088f`, with no
 missing, extra, or duplicate path. Its exact TSV serialization, including the
 final newline, has SHA-256
-`0e29d06aca84c3a8c7f5cdac1ed2fa297e297dfd754086b01475d51ee10bf65c`. The canonical newline-delimited changed-path list has
-SHA-256 `9690b7c7ab853cb926ea3deb8dd1aad103e518f7a914701019bac32184aae8eb`.
+`4e131c8da9cbac5860e6c06f910fcaf652b64ffe2e3d22a45c9e5cf02e9ef277`. The canonical newline-delimited
+changed-path list has SHA-256
+`0e45d47a7a1b783f4dcf17040427966819c10bb795694d9706e7283df9a035b6`.
 
 The deterministic ownership rule is: current paths retain their distinct
 signing-boundary, owner-boundary, Apple-preflight, Apple-manifest,
-example-typing, standards-remediation, or final-ledger claim. The shared
-`.github/workflows/ci.yml` row uses the signing-boundary claim as its latest
-owner and records Apple-preflight sharing in the owner and proof fields. Every
-other path retains the most recent historical contract-task owner that changed
-its final branch content. Shared historical touches remain in Git history.
+example-typing, standards-remediation, workflow-parser, documentation, or
+final-ledger claim. Every path retains the latest contract-task owner that
+changed its current content; earlier shared touches remain in Git history.
 Proof categories name the local proof family; `HOSTED-PENDING` never upgrades
 source or policy review into hosted execution.
 
@@ -3449,19 +3449,21 @@ source or policy review into hosted execution.
 | `PR170-TESSELLA-TIMING` | 1 | TESSELLA timing-acceptance task | separate functional correctness from physical timing acceptance |
 | `PR170-ACCEPTANCE-OWNERSHIP` | 73 | acceptance lane-ownership task | make generic, physical, COG, timing, and hosted routes disjoint, complete, and auditable |
 | `PR170-APPLE-SELECTION-ORDER` | 1 | Apple Metal selection-audit task | audit skip and xfail decorators after marker deselection |
-| `PR170-SIGNING-BOUNDARY` | 5 | signing-boundary task; CI workflow shared with Apple-preflight | close protected trust-root, verifier isolation, catalog binding, protected signing intent, and certificate-boundary documentation |
+| `PR170-SIGNING-BOUNDARY` | 3 | signing-boundary task | close protected trust-root, verifier isolation, catalog binding, protected signing intent, and certificate-boundary documentation |
 | `PR170-APPLE-PREFLIGHT` | 3 | Apple-preflight task | make Apple acceptance fail closed and preserve hosted fixture prerequisites |
 | `PR170-APPLE-MANIFEST` | 1 | Apple-manifest correction task | make the TOML ownership comment match the authoritative 265 executions |
 | `PR170-EXAMPLE-TYPING` | 6 | example-typing task | preserve the six independently approved example typing corrections |
 | `PR170-STANDARDS-REMEDIATION` | 3 | standards remediation task | make provenance signatures explicit, centralize projection errors, and lock the regression |
 | `PR170-OWNER-BOUNDARY` | 1 | owner-boundary/signing correction task | keep physical recipe proof certificate-independent while preserving protected public verification and secret-backed refresh ownership |
+| `PR170-WORKFLOW-PARSER` | 2 | workflow-parser fix task | remove job-level use of step-only runner context and lock the parser contract |
+| `PR170-DOC-RECONCILIATION` | 2 | acceptance-documentation reconciliation task | distinguish ordinary CI from required Apple physical acceptance and record its selection topology |
 | `PR170-FINAL-LEDGER` | 1 | final evidence-ledger task | bind the live candidate, pending exact-head proof, and lossless changed-path mapping |
 
 | Path | Claim | Task owner | Proof category |
 |---|---|---|---|
 | `.claude/rules/build-and-ci.md` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `WORKFLOW-CONTRACT; HOSTED-PENDING` |
 | `.github/workflows/certificate-refresh.yml` | `PR170-SIGNING-BOUNDARY` | signing-boundary task | `FOCUSED-CERTIFICATE-CONTRACT + PROTECTED-POLICY; HOSTED-PENDING` |
-| `.github/workflows/ci.yml` | `PR170-SIGNING-BOUNDARY` | signing-boundary task; shared with Apple-preflight task | `FOCUSED-CERTIFICATE-CONTRACT + FOCUSED-APPLE-CONTRACT + PROTECTED-POLICY; HOSTED-PENDING` |
+| `.github/workflows/ci.yml` | `PR170-WORKFLOW-PARSER` | workflow-parser fix task | `FOCUSED-WORKFLOW-PARSER-CONTRACT; HOSTED-PENDING` |
 | `.github/workflows/determinism-matrix.yml` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `WORKFLOW-CONTRACT; HOSTED-PENDING` |
 | `.github/workflows/test-python-wheel.yml` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `WORKFLOW-CONTRACT; HOSTED-PENDING` |
 | `.gitignore` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `STATIC-CONTRACT + LOCAL-MATRIX` |
@@ -3469,7 +3471,9 @@ source or policy review into hosted execution.
 | `Cargo.toml` | `PR170-MAIN-RECONCILIATION` | current-main reconciliation task | `STATIC-CONTRACT + LOCAL-MATRIX` |
 | `MANIFEST.in` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `STATIC-CONTRACT + LOCAL-MATRIX` |
 | `build.rs` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `STATIC-CONTRACT + LOCAL-MATRIX` |
+| `docs/ci-validation.md` | `PR170-DOC-RECONCILIATION` | acceptance-documentation reconciliation task | `DOC-SOURCE-CONTRACT; HOSTED-PENDING` |
 | `docs/examples/index.md` | `PR170-TESSELLA-TIMING` | TESSELLA timing-acceptance task | `DOC-REFERENCE + FULL-PROFILE` |
+| `docs/gallery/index.md` | `PR170-DOC-RECONCILIATION` | acceptance-documentation reconciliation task | `DOC-SOURCE-CONTRACT; HOSTED-PENDING` |
 | `docs/guides/data_and_scene_workflows.md` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `DOC-REFERENCE + FULL-PROFILE` |
 | `docs/guides/feature_map.md` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `DOC-REFERENCE + FULL-PROFILE` |
 | `docs/refactor-forge3d-w1-a.md` | `PR170-INITIAL` | initial refactor and Metal-recovery tasks | `LEDGER-SOURCE-LOCK` |
@@ -3636,7 +3640,7 @@ source or policy review into hosted execution.
 | `tests/test_cam_phi_wiring.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
 | `tests/test_capability_negotiation.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
 | `tests/test_certificate_verifier.py` | `PR170-SIGNING-BOUNDARY` | signing-boundary task | `FOCUSED-CERTIFICATE-CONTRACT + PROTECTED-POLICY; HOSTED-PENDING` |
-| `tests/test_ci_cost_controls.py` | `PR170-SIGNING-BOUNDARY` | signing-boundary task | `FOCUSED-CERTIFICATE-CONTRACT + PROTECTED-POLICY; HOSTED-PENDING` |
+| `tests/test_ci_cost_controls.py` | `PR170-WORKFLOW-PARSER` | workflow-parser fix task | `FOCUSED-WORKFLOW-PARSER-CONTRACT; HOSTED-PENDING` |
 | `tests/test_cog_streaming.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + COG-LOOPBACK` |
 | `tests/test_color_management.py` | `PR170-ACCEPTANCE-OWNERSHIP` | acceptance lane-ownership task | `FULL-PROFILE + FOCUSED-CONTRACT` |
 | `tests/test_dem_loading.py` | `PR170-CONTRACT-CLOSURE` | local contract-closure task | `FULL-PROFILE + FOCUSED-CONTRACT` |

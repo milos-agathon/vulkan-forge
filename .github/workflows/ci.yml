@@ -184,7 +184,6 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
     runs-on: ubuntu-latest
     env:
-      CERTIFICATE_ACCEPTANCE_DIR: ${{ runner.temp }}/forge3d-recipe-certificates-${{ github.run_id }}-${{ github.run_attempt }}
       PYTHONNOUSERSITE: '1'
     steps:
       - name: Checkout exact candidate
@@ -208,6 +207,7 @@ jobs:
 
       - name: Verify exact-head committed recipe certificates
         env:
+          CERTIFICATE_ACCEPTANCE_DIR: ${{ runner.temp }}/forge3d-recipe-certificates-${{ github.run_id }}-${{ github.run_attempt }}
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         shell: bash
         run: |
@@ -302,6 +302,8 @@ jobs:
 
       - name: Require clean zero-skip certificate acceptance
         if: always()
+        env:
+          CERTIFICATE_ACCEPTANCE_DIR: ${{ runner.temp }}/forge3d-recipe-certificates-${{ github.run_id }}-${{ github.run_attempt }}
         shell: bash
         run: |
           set -euo pipefail
@@ -320,7 +322,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: recipe-certificate-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.CERTIFICATE_ACCEPTANCE_DIR }}/
+          path: ${{ runner.temp }}/forge3d-recipe-certificates-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
           retention-days: 90
 
@@ -1006,7 +1008,6 @@ jobs:
       FORGE3D_RECIPE_GOLDEN_VARIANT: metal
       WGPU_BACKEND: metal
       WGPU_BACKENDS: metal
-      FORGE3D_APPLE_METAL_ARTIFACT_DIR: ${{ runner.temp }}/forge3d-apple-metal-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1056,6 +1057,8 @@ jobs:
           python -m pip install -r tests/requirements.txt
 
       - name: Run authoritative Apple Metal acceptance matrix
+        env:
+          FORGE3D_APPLE_METAL_ARTIFACT_DIR: ${{ runner.temp }}/forge3d-apple-metal-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           python scripts/run_apple_metal_acceptance.py \
             --junit "$FORGE3D_APPLE_METAL_ARTIFACT_DIR/junit.xml" \
@@ -1063,6 +1066,8 @@ jobs:
 
       - name: Verify Apple Metal acceptance has zero skips
         if: always()
+        env:
+          FORGE3D_APPLE_METAL_ARTIFACT_DIR: ${{ runner.temp }}/forge3d-apple-metal-${{ github.run_id }}-${{ github.run_attempt }}
         run: python scripts/assert_junit_zero_skips.py "$FORGE3D_APPLE_METAL_ARTIFACT_DIR/junit.xml"
 
       - name: Upload Apple Metal acceptance evidence
@@ -1070,7 +1075,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: apple-metal-acceptance-evidence
-          path: ${{ env.FORGE3D_APPLE_METAL_ARTIFACT_DIR }}/
+          path: ${{ runner.temp }}/forge3d-apple-metal-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
           retention-days: 90
 

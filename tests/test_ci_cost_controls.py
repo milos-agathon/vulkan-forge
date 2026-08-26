@@ -44,6 +44,22 @@ def _workflow_data(name: str) -> dict:
     return data
 
 
+def test_job_env_does_not_use_step_only_runner_context() -> None:
+    violations = []
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        jobs = _workflow_data(path.name)["jobs"]
+        for job_name, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            for key, value in (job.get("env") or {}).items():
+                if re.search(r"\$\{\{\s*runner\.", value):
+                    violations.append(f"{path.name}:{job_name}:env.{key}")
+
+    assert not violations, "runner context is unavailable in job-level env: " + ", ".join(
+        violations
+    )
+
+
 def test_paths_filter_literals_are_valid_yaml_without_duplicate_keys() -> None:
     workflow = _workflow("ci.yml")
     steps = re.findall(
