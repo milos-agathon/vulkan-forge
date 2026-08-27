@@ -146,7 +146,10 @@ def _bind_render_process_to_expected_adapter() -> None:
         "vendor",
         "device",
         "software_fallback",
+        "raw_vendor",
+        "raw_device",
     ):
+        assert field in actual and field in expected
         assert str(actual.get(field, "")).lower() == str(expected.get(field, "")).lower()
     artifact_dir = os.environ.get("FORGE3D_SUBSTRATIA_ARTIFACT_DIR")
     if artifact_dir:

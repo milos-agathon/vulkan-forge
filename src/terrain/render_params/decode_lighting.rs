@@ -140,6 +140,10 @@ pub(super) fn parse_sampling_settings(
             &sampling.getattr("address_w")?.extract::<String>()?,
             "sampling.address_w",
         )?,
+        height_filter: parse_filter_mode(
+            &sampling.getattr("height_filter")?.extract::<String>()?,
+            "sampling.height_filter",
+        )?,
     })
 }
 

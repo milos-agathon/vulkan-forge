@@ -38,6 +38,8 @@ def test_premium_presets_are_self_contained_renderer_configs() -> None:
         assert "azimuth_deg" in preset["sun"]
         assert "intensity" in preset["ibl"]
 
+    assert presets.get("rainier_showcase")["height_sampling"] == "Nearest"
+
     assert "CLI" not in (presets.rainier_showcase.__doc__ or "")
     assert "CLI" not in (presets.rainier_relief.__doc__ or "")
 
@@ -57,6 +59,7 @@ def test_mapscene_resolves_named_lighting_preset_into_recipe_fields() -> None:
     assert scene.recipe.lighting.settings["resolved_preset"] == "rainier_showcase"
     assert scene.recipe.lighting.settings["renderer_config"]["shadows"]["technique"] == "pcss"
     assert scene.recipe.lighting.settings["renderer_config"]["ibl"]["builtin"] == "clear_sky"
+    assert scene.recipe.lighting.settings["height_sampling"] == "Nearest"
     assert scene.recipe.reproducibility_profile is not None
     assert scene.recipe.reproducibility_profile.renderer_backend == "gpu_terrain"
 

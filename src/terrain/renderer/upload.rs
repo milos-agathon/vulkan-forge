@@ -408,6 +408,14 @@ impl TerrainScene {
                     flags |= 1 << 2;
                 }
             }
+            // Bit 3 selects nearest height reconstruction. This is carried in
+            // the existing vertex-visible flags lane; bits 0-2 are POM modes.
+            if matches!(
+                decoded.sampling.height_filter,
+                crate::terrain::render_params::FilterModeNative::Nearest
+            ) {
+                flags |= 1 << 3;
+            }
             flags
         };
 

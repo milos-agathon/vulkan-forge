@@ -317,8 +317,18 @@ jobs:
                 "$CERTIFICATE_ACCEPTANCE_DIR/junit.xml"
           )
 
-      - name: Upload exact-head public certificate evidence
+      - name: Bind certificate evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: ${{ runner.temp }}/forge3d-recipe-certificates-${{ github.run_id }}-${{ github.run_attempt }}/
+          output-path: ${{ runner.temp }}/forge3d-recipe-certificates-${{ github.run_id }}-${{ github.run_attempt }}/checked-out-head.txt
+          if-no-files-found: error
+
+      - name: Upload exact-head public certificate evidence
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: recipe-certificate-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
@@ -390,13 +400,26 @@ jobs:
             assets/tif/switzerland_dem.tif \
             assets/tif/moon_south_pole_lola.tif
           zip -q lfs-fixture-bundles/m06-dem.zip \
+            assets/tif/dem_rainier.tif \
             assets/tif/switzerland_dem.tif
 
+      - name: Bind LFS fixture bundles to exact head
+        id: bind-artifact-head
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: lfs-fixture-bundles/*.zip
+          output-path: lfs-fixture-bundles/checked-out-head.txt
+          if-no-files-found: error
+
       - name: Upload shared LFS fixture bundles
+        if: steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: lfs-fixture-bundles
-          path: lfs-fixture-bundles/*.zip
+          path: |
+            lfs-fixture-bundles/*.zip
+            lfs-fixture-bundles/checked-out-head.txt
           if-no-files-found: error
           retention-days: 1
 
@@ -987,16 +1010,18 @@ jobs:
       test_mode: full
       restore_lfs: true
 
-  # Required physical Apple/Metal closure for the exact full-acceptance
-  # candidate. The checked manifest owns repeat and ordering semantics that a
-  # generic marker selector cannot express.
+  # Required physical Apple/Metal closure for PR #170. The PR-specific label
+  # belongs only to the dedicated ephemeral runner; default self-hosted labels
+  # stay disabled so unrelated jobs cannot select it. The checked manifest owns
+  # repeat and ordering semantics that a generic marker selector cannot express.
   test-apple-metal-acceptance:
     name: Apple Metal Acceptance
     needs: [build-wheel-macos, prepare-lfs-fixtures]
     if: >-
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
-    runs-on: macos-14
+      github.event_name == 'workflow_dispatch' &&
+      inputs.scope == 'full' &&
+      github.ref == 'refs/heads/codex/refactor-forge3d-20260812'
+    runs-on: [forge3d-pr170-apple-metal]
     env:
       PYTHONNOUSERSITE: '1'
       FORGE3D_NO_BOOTSTRAP: '1'
@@ -1009,6 +1034,28 @@ jobs:
       WGPU_BACKEND: metal
       WGPU_BACKENDS: metal
     steps:
+      - name: Prove dedicated physical Apple Silicon runner
+        shell: bash
+        env:
+          FORGE3D_APPLE_METAL_ARTIFACT_DIR: ${{ runner.temp }}/forge3d-apple-metal-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = "forge3d-pr170-apple-metal"
+          test "$RUNNER_OS" = "macOS"
+          test "$RUNNER_ARCH" = "ARM64"
+          test "$(uname -m)" = "arm64"
+          test "$(sysctl -n hw.optional.arm64)" = "1"
+          test "$(sysctl -n kern.hv_vmm_present)" = "0"
+          chip="$(sysctl -n machdep.cpu.brand_string)"
+          case "$chip" in
+            Apple\ *) ;;
+            *) echo "::error::runner is not physical Apple Silicon"; exit 1 ;;
+          esac
+          mkdir -p "$FORGE3D_APPLE_METAL_ARTIFACT_DIR"
+          printf 'runner_name=%s\nrunner_os=%s\nrunner_arch=%s\nhost_arch=%s\nchip=%s\nhypervisor=0\nrequired_label=forge3d-pr170-apple-metal\n' \
+            "$RUNNER_NAME" "$RUNNER_OS" "$RUNNER_ARCH" "$(uname -m)" "$chip" \
+            > "$FORGE3D_APPLE_METAL_ARTIFACT_DIR/host-identity.txt"
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -1070,8 +1117,18 @@ jobs:
           FORGE3D_APPLE_METAL_ARTIFACT_DIR: ${{ runner.temp }}/forge3d-apple-metal-${{ github.run_id }}-${{ github.run_attempt }}
         run: python scripts/assert_junit_zero_skips.py "$FORGE3D_APPLE_METAL_ARTIFACT_DIR/junit.xml"
 
-      - name: Upload Apple Metal acceptance evidence
+      - name: Bind Apple Metal acceptance evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: ${{ runner.temp }}/forge3d-apple-metal-${{ github.run_id }}-${{ github.run_attempt }}/
+          output-path: ${{ runner.temp }}/forge3d-apple-metal-${{ github.run_id }}-${{ github.run_attempt }}/checked-out-head.txt
+          if-no-files-found: error
+
+      - name: Upload Apple Metal acceptance evidence
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: apple-metal-acceptance-evidence
@@ -1130,8 +1187,18 @@ jobs:
         if: always()
         run: python scripts/assert_junit_zero_skips.py test-results/python-slow.xml
 
-      - name: Upload slow Python lane JUnit
+      - name: Bind slow Python lane JUnit to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: test-results/python-slow*
+          output-path: test-results/python-slow-checked-out-head.txt
+          if-no-files-found: error
+
+      - name: Upload slow Python lane JUnit
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: python-slow-junit
@@ -1186,8 +1253,18 @@ jobs:
             2>&1 | tee target/terminus-fuzz-evidence/terminus-fuzz.log
           cat target/terminus-fuzz-evidence/terminus-fuzz-summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload TERMINUS fuzzer evidence
+      - name: Bind TERMINUS fuzzer evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: target/terminus-fuzz-evidence/
+          output-path: target/terminus-fuzz-evidence/checked-out-head.txt
+          if-no-files-found: error
+
+      - name: Upload TERMINUS fuzzer evidence
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: terminus-fuzzer-evidence
@@ -1336,8 +1413,17 @@ jobs:
             --run-attempt '${{ github.run_attempt }}' \
             --job '${{ github.job }}'
           echo "aether_lane=ran" >> "$GITHUB_OUTPUT"
-      - name: Upload AETHER physical Metal evidence
+      - name: Bind AETHER physical Metal evidence to exact head
+        id: bind-aether-physical
         if: always() && steps.aether-metal-probe.outputs.probe == 'positive'
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: tests/artifacts/aether/
+          output-path: tests/artifacts/aether/checked-out-head.txt
+          if-no-files-found: error
+      - name: Upload AETHER physical Metal evidence
+        if: always() && steps.aether-metal-probe.outputs.probe == 'positive' && steps.bind-aether-physical.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: aether-physical-metal-evidence
@@ -1360,24 +1446,53 @@ jobs:
           mkdir -p aether-out
           echo "AETHER closure lane ABSENT: software execution does not prove physical Metal" > aether-out/aether.ABSENT
           echo "aether_lane=absent" >> "$GITHUB_OUTPUT"
-      - name: Upload AETHER Metal lane marker
+      - name: Bind AETHER Metal lane marker to exact head
+        id: bind-aether-marker
         if: always() && (steps.aether-absent.outcome == 'success' || steps.aether-software-absent.outcome == 'success')
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: aether-out/
+          output-path: aether-out/checked-out-head.txt
+          if-no-files-found: error
+      - name: Upload AETHER Metal lane marker
+        if: always() && (steps.aether-absent.outcome == 'success' || steps.aether-software-absent.outcome == 'success') && steps.bind-aether-marker.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: aether-metal-lane-marker
           path: aether-out/
           if-no-files-found: error
           retention-days: 7
-      - name: Upload optional Metal absence marker
+      - name: Bind optional Metal absence marker to exact head
+        id: bind-golden-marker
         if: steps.metal-probe.outputs.probe == 'absent'
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: metal-diagnostic-out/
+          output-path: metal-diagnostic-out/checked-out-head.txt
+          if-no-files-found: error
+      - name: Upload optional Metal absence marker
+        if: >-
+          (steps.metal-probe.outputs.probe == 'absent') &&
+          steps.bind-golden-marker.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: golden-lane-marker
           path: metal-diagnostic-out/
           if-no-files-found: error
           retention-days: 7
-      - name: Upload optional Metal diagnostic diffs
+      - name: Bind optional Metal diagnostic diffs to exact head
+        id: bind-golden-diffs
         if: failure()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: tests/artifacts/
+          output-path: tests/artifacts/checked-out-head.txt
+          if-no-files-found: warn
+      - name: Upload optional Metal diagnostic diffs
+        if: (failure()) && steps.bind-golden-diffs.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: visual-golden-diffs
@@ -1497,8 +1612,18 @@ jobs:
         shell: pwsh
         run: '"sidera_lane=ran" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'
 
-      - name: Upload SHA- and adapter-bound visual evidence
+      - name: Bind visual evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: ${{ runner.temp }}/forge3d-visual-${{ github.run_id }}-${{ github.run_attempt }}/
+          output-path: ${{ runner.temp }}/forge3d-visual-${{ github.run_id }}-${{ github.run_attempt }}/checked-out-head.txt
+          if-no-files-found: error
+
+      - name: Upload SHA- and adapter-bound visual evidence
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: visual-gpu-evidence
@@ -1578,8 +1703,17 @@ jobs:
             --render-adapter "$FORGE3D_SUBSTRATIA_ARTIFACT_DIR/render-process-adapter.json" \
             --junit "$FORGE3D_SUBSTRATIA_ARTIFACT_DIR/pytest-junit.xml" \
             --expected-backend metal
-      - name: Upload optional Metal SUBSTRATIA evidence
+      - name: Bind optional Metal SUBSTRATIA evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: tests/artifacts/substratia-metal-diagnostic/
+          output-path: tests/artifacts/substratia-metal-diagnostic/checked-out-head.txt
+          if-no-files-found: error
+      - name: Upload optional Metal SUBSTRATIA evidence
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: substratia-metal-diagnostic-evidence
@@ -1682,8 +1816,18 @@ jobs:
           "lane=ran" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "verifier=pass" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      - name: Upload SHA- and adapter-bound SUBSTRATIA evidence
+      - name: Bind SUBSTRATIA evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: ${{ runner.temp }}/forge3d-substratia-${{ github.run_id }}-${{ github.run_attempt }}/
+          output-path: ${{ runner.temp }}/forge3d-substratia-${{ github.run_id }}-${{ github.run_attempt }}/checked-out-head.txt
+          if-no-files-found: error
+
+      - name: Upload SHA- and adapter-bound SUBSTRATIA evidence
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: substratia-nvidia-physical-gpu-evidence
@@ -1717,6 +1861,7 @@ jobs:
       WGPU_BACKEND: vulkan
       FORGE3D_NO_BOOTSTRAP: '1'
       FORGE3D_TEST_INSTALLED_WHEEL: '1'
+      RUN_INTERACTIVE_VIEWER_CI: '1'
       RUN_M06_VIEWER_CI: '1'
       RUN_LIMES_GPU_CI: '1'
       FORGE3D_TEST_DEM: ${{ github.workspace }}/assets/tif/switzerland_dem.tif
@@ -1908,8 +2053,18 @@ jobs:
             })
           } | ConvertTo-Json -Depth 5 | Set-Content "$env:FORGE3D_M06_ARTIFACT_DIR/evidence-manifest.json"
 
-      - name: Upload M-06 evidence
+      - name: Bind M-06 evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: ${{ runner.temp }}/forge3d-m06-${{ github.run_id }}-${{ github.run_attempt }}/
+          output-path: ${{ runner.temp }}/forge3d-m06-${{ github.run_id }}-${{ github.run_attempt }}/checked-out-head.txt
+          if-no-files-found: error
+
+      - name: Upload M-06 evidence
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: m06-full-geospatial-viewer-evidence
@@ -2031,8 +2186,17 @@ jobs:
           } | ConvertTo-Json -Depth 3 | Set-Content "$env:FORGE3D_F3DZ_ARTIFACT_DIR/benchmark-provenance.json"
           cargo bench --bench f3dz_bench *>&1 | Tee-Object "$env:FORGE3D_F3DZ_ARTIFACT_DIR/benchmark.log"
           exit $LASTEXITCODE
-      - name: Upload F3DZ physical-GPU evidence
+      - name: Bind F3DZ physical-GPU evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: ${{ runner.temp }}/forge3d-f3dz-${{ github.run_id }}-${{ github.run_attempt }}/
+          output-path: ${{ runner.temp }}/forge3d-f3dz-${{ github.run_id }}-${{ github.run_attempt }}/checked-out-head.txt
+          if-no-files-found: error
+      - name: Upload F3DZ physical-GPU evidence
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: f3dz-physical-gpu-evidence
@@ -2130,7 +2294,21 @@ jobs:
             --runner-name '${{ runner.name }}' `
             --producer-backend vulkan --consumer-backend dx12
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Bind ANAMNESIS physical seed to exact head
+        id: bind-artifact-head
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: |
+            anamnesis-portable-store/
+            anamnesis-portable-record.json
+            anamnesis-portable-producer.jsonl
+            anamnesis-portability-producer-adapter.json
+            anamnesis-portability-producer-machine-id.txt
+          output-path: anamnesis-checked-out-head.txt
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: steps.bind-artifact-head.outputs.bound == 'true'
         with:
           name: anamnesis-physical-portable-store
           path: |
@@ -2139,6 +2317,7 @@ jobs:
             anamnesis-portable-producer.jsonl
             anamnesis-portability-producer-adapter.json
             anamnesis-portability-producer-machine-id.txt
+            anamnesis-checked-out-head.txt
           if-no-files-found: error
           retention-days: 90
 
@@ -2218,8 +2397,21 @@ jobs:
             --record seeded/anamnesis-portable-record.json `
             --producer-backend vulkan --consumer-backend dx12
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@v4
+      - name: Bind ANAMNESIS portability evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: |
+            anamnesis-portability-result.json
+            anamnesis-portable-consumer.jsonl
+            anamnesis-portability-consumer-adapter.json
+            anamnesis-portability-consumer-machine-id.txt
+          output-path: anamnesis-checked-out-head.txt
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         with:
           name: anamnesis-portability-evidence
           path: |
@@ -2227,6 +2419,7 @@ jobs:
             anamnesis-portable-consumer.jsonl
             anamnesis-portability-consumer-adapter.json
             anamnesis-portability-consumer-machine-id.txt
+            anamnesis-checked-out-head.txt
           if-no-files-found: error
           retention-days: 90
 
@@ -2245,6 +2438,7 @@ jobs:
     runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
     timeout-minutes: 50
     env:
+      FORGE3D_DETERMINISTIC: '1'
       WGPU_BACKEND: vulkan
       FORGE3D_NO_BOOTSTRAP: '1'
       FORGE3D_TEST_INSTALLED_WHEEL: '1'
@@ -2302,8 +2496,21 @@ jobs:
           $verifyCode = $LASTEXITCODE
           if ($pytestCode -ne 0) { exit $pytestCode }
           exit $verifyCode
-      - name: Upload ANAMNESIS production evidence
+      - name: Bind ANAMNESIS production evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: |
+            ${{ runner.temp }}/anamnesis-production-result.json
+            ${{ runner.temp }}/anamnesis-physical-junit.xml
+            ${{ runner.temp }}/anamnesis-p0-adapter.json
+            ${{ runner.temp }}/anamnesis-checked-out-head.txt
+          output-path: ${{ runner.temp }}/anamnesis-checked-out-head.txt
+          if-no-files-found: error
+      - name: Upload ANAMNESIS production evidence
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: anamnesis-production-evidence
@@ -2443,8 +2650,17 @@ jobs:
           python scripts/tessella_evidence_report.py "$env:FORGE3D_TESSELLA_ARTIFACT_DIR" `
             *>&1 | Tee-Object "$env:FORGE3D_TESSELLA_ARTIFACT_DIR/verification-report.log"
           exit $LASTEXITCODE
-      - name: Upload TESSELLA physical-GPU evidence
+      - name: Bind TESSELLA evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: ${{ runner.temp }}/forge3d-tessella-${{ github.run_id }}-${{ github.run_attempt }}/
+          output-path: ${{ runner.temp }}/forge3d-tessella-${{ github.run_id }}-${{ github.run_attempt }}/checked-out-head.txt
+          if-no-files-found: error
+      - name: Upload TESSELLA physical-GPU evidence
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: tessella-physical-gpu-evidence
@@ -2493,8 +2709,17 @@ jobs:
         id: helios-rust-pass
         shell: bash
         run: echo "gate=pass" >> "$GITHUB_OUTPUT"
-      - name: Upload HELIOS Rust proof
+      - name: Bind HELIOS Rust proof to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: ${{ runner.temp }}/forge3d-helios-rust-${{ github.run_id }}-${{ github.run_attempt }}/
+          output-path: ${{ runner.temp }}/forge3d-helios-rust-${{ github.run_id }}-${{ github.run_attempt }}/rust-checked-out-head.txt
+          if-no-files-found: error
+      - name: Upload HELIOS Rust proof
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: helios-rust-conservative-${{ github.run_id }}-${{ github.run_attempt }}
@@ -2612,8 +2837,17 @@ jobs:
           if ($lane.status -ne "RAN" -or $verification.status -ne "PASS") { throw "HELIOS evidence did not record RAN/PASS" }
           "lane=ran" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "verifier=pass" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-      - name: Upload SHA-, adapter-, and metric-bound HELIOS evidence
+      - name: Bind HELIOS physical evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-paths: ${{ runner.temp }}/forge3d-helios-${{ github.run_id }}-${{ github.run_attempt }}/
+          output-path: ${{ runner.temp }}/forge3d-helios-${{ github.run_id }}-${{ github.run_attempt }}/checked-out-head.txt
+          if-no-files-found: error
+      - name: Upload SHA-, adapter-, and metric-bound HELIOS evidence
+        if: always() && steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: helios-physical-gpu-evidence
@@ -2728,6 +2962,7 @@ jobs:
             failed=1
           fi
           full_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full') }}"
+          apple_metal_selected="${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'full' && github.ref == 'refs/heads/codex/refactor-forge3d-20260812' }}"
           m06_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'm06')) }}"
           f3dz_physical_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'f3dz')) }}"
           anamnesis_physical_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'anamnesis')) }}"
@@ -2742,7 +2977,7 @@ jobs:
           check_selected "$full_selected" '${{ needs.test-python-full-windows.result }}' python-full-windows
           check_selected "$full_selected" '${{ needs.test-python-full-macos.result }}' python-full-macos
           check_selected "$full_selected" '${{ needs.verify-recipe-certificates.result }}' recipe-certificates
-          check_selected "$full_selected" '${{ needs.test-apple-metal-acceptance.result }}' apple-metal
+          check_selected "$apple_metal_selected" '${{ needs.test-apple-metal-acceptance.result }}' apple-metal
           check_selected "$full_selected" '${{ needs.test-python-slow.result }}' python-slow
           check_selected "$full_selected" '${{ needs.test-terminus-fuzz.result }}' terminus-fuzz
           check_selected "$full_selected" '${{ needs.test-python-linux-arm.result }}' python-linux-arm

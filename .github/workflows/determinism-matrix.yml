@@ -87,7 +87,16 @@ jobs:
             tests/test_f3dz_codec.py::test_error_bound_stored_page_error_nan_and_determinism \
             tests/test_f3dz_codec.py::test_cross_platform_determinism_hashes \
             -v --tb=short
+      - name: Bind F3DZ stream evidence to exact head
+        id: bind-artifact-head
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ inputs.ref }}
+          artifact-paths: f3dz-determinism/
+          output-path: f3dz-determinism/checked-out-head.txt
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: steps.bind-artifact-head.outputs.bound == 'true'
         with:
           name: f3dz-determinism-${{ matrix.os }}
           path: f3dz-determinism/
@@ -188,10 +197,19 @@ jobs:
             --output "hash-out/dupla-proof-${{ matrix.leg }}.json" \
             --absence-output "hash-out/dupla-proof-${{ matrix.leg }}.ABSENT" \
             --failure-output "hash-out/dupla-proof-${{ matrix.leg }}.FAILED"
+      - name: Bind hosted render evidence to exact head
+        id: bind-artifact-head
+        if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ inputs.ref }}
+          artifact-paths: hash-out/
+          output-path: hash-out/checked-out-head.txt
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         # always(): a gated leg that fails still uploads its .FAILED marker so
         # the diff job can report the reason instead of a silent hole.
-        if: always()
+        if: (always()) && steps.bind-artifact-head.outputs.bound == 'true'
         with:
           name: determinism-hash-${{ matrix.leg }}
           path: hash-out/
@@ -246,8 +264,17 @@ jobs:
         run: |
           python scripts/run_dupla_proof.py --output hash-out/dupla-proof-nvidia.json --absence-output hash-out/dupla-proof-nvidia.ABSENT --failure-output hash-out/dupla-proof-nvidia.FAILED
           exit $LASTEXITCODE
-      - uses: actions/upload-artifact@v4
+      - name: Bind NVIDIA render evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ inputs.ref }}
+          artifact-paths: hash-out/
+          output-path: hash-out/checked-out-head.txt
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: (always()) && steps.bind-artifact-head.outputs.bound == 'true'
         with:
           name: determinism-hash-nvidia
           path: hash-out/
@@ -307,8 +334,17 @@ jobs:
             fi
             exit $status
           fi
-      - uses: actions/upload-artifact@v4
+      - name: Bind optional Metal diagnostic to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ inputs.ref }}
+          artifact-paths: metal-diagnostic-out/
+          output-path: metal-diagnostic-out/checked-out-head.txt
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: (always()) && steps.bind-artifact-head.outputs.bound == 'true'
         with:
           name: determinism-metal-diagnostic-apple
           path: metal-diagnostic-out/
@@ -339,7 +375,16 @@ jobs:
           echo "informational leg 'wasm': hosted runners have no browser WebGPU device;" \
                "render leg activates when a browser-backed runner (e.g. wgpu-in-chrome) is available." \
                > "hash-out/${SCENE}.ABSENT"
+      - name: Bind WASM policy evidence to exact head
+        id: bind-artifact-head
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ inputs.ref }}
+          artifact-paths: hash-out/
+          output-path: hash-out/checked-out-head.txt
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: steps.bind-artifact-head.outputs.bound == 'true'
         with:
           name: determinism-hash-wasm
           path: hash-out/
@@ -425,7 +470,20 @@ jobs:
               --golden tests/goldens/determinism/terra_determinata_v1.sha256 \
               --adapter-record anamnesis-render.jsonl
           fi
+      - name: Bind ANAMNESIS seed evidence to exact head
+        id: bind-artifact-head
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ inputs.ref }}
+          artifact-paths: |
+            anamnesis-store/
+            anamnesis-record.json
+            anamnesis-seed-adapter.json
+            ANAMNESIS.ABSENT
+          output-path: anamnesis-checked-out-head.txt
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: steps.bind-artifact-head.outputs.bound == 'true'
         with:
           name: anamnesis-store-linux
           path: |
@@ -433,6 +491,7 @@ jobs:
             anamnesis-record.json
             anamnesis-seed-adapter.json
             ANAMNESIS.ABSENT
+            anamnesis-checked-out-head.txt
           if-no-files-found: error
           retention-days: 7
 
@@ -501,14 +560,27 @@ jobs:
             python scripts/check_anamnesis_portability.py mismatch \
               --cache seeded/anamnesis-store --record seeded/anamnesis-record.json
           fi
-      - uses: actions/upload-artifact@v4
+      - name: Bind hosted ANAMNESIS consumer evidence to exact head
+        id: bind-artifact-head
         if: always()
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ inputs.ref }}
+          artifact-paths: |
+            anamnesis-consumer-adapter.json
+            anamnesis-consumer.jsonl
+            ANAMNESIS.CONSUMER.ABSENT
+          output-path: anamnesis-consumer-checked-out-head.txt
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: (always()) && steps.bind-artifact-head.outputs.bound == 'true'
         with:
           name: anamnesis-hosted-consumer-evidence
           path: |
             anamnesis-consumer-adapter.json
             anamnesis-consumer.jsonl
             ANAMNESIS.CONSUMER.ABSENT
+            anamnesis-consumer-checked-out-head.txt
           if-no-files-found: warn
           retention-days: 7
 

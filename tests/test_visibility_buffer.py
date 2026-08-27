@@ -47,6 +47,27 @@ def test_visibility_parameter_contract():
     assert forward.culling in {"none", "frustum", "hzb_two_phase"}
 
 
+def test_forward_and_visibility_clipmap_routes_allocate_stats_buffer():
+    root = Path(__file__).resolve().parents[1]
+    execute = (root / "src/terrain/renderer/draw/execute.rs").read_text(
+        encoding="utf-8"
+    )
+    allocation = execute.split("let visibility_requested", 1)[1].split(
+        "encoder.clear_buffer", 1
+    )[0]
+
+    assert (
+        "visibility_requested && geometry.is_clipmap() "
+        "&& render_targets.sample_count == 1"
+    ) in allocation
+    assert "if visibility_enabled" in allocation
+    assert (
+        "else if geometry.is_clipmap() && render_targets.sample_count == 1"
+        in allocation
+    )
+    assert allocation.count("self.ensure_visibility_buffer(") == 2
+
+
 def test_feedback_counter_tracks_the_physical_surface_write():
     root = Path(__file__).resolve().parents[1]
     shader = (root / "src/shaders/terrain_pbr_pom.wgsl").read_text(

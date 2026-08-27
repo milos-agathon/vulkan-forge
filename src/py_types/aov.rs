@@ -280,7 +280,7 @@ impl AovFrame {
             .ok_or_else(|| anyhow::anyhow!("Normal AOV not available"))?;
         let mut rgba = self.read_texture_rgba_f32(texture, self.color_format)?;
         if self.normal_encoded_unorm {
-            for pixel in rgba.chunks_exact_mut(4) {
+            for pixel in rgba.as_chunks_mut::<4>().0 {
                 decode_unorm_normal(pixel);
             }
         }

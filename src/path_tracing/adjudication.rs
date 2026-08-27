@@ -344,11 +344,12 @@ mod tests {
                 .count(),
             1
         );
+        let normalized_shadow = shadow.replace("\r\n", "\n");
         assert!(
-            shadow
+            normalized_shadow
                 .find("return;\n    }\n\n    // Persistent threads")
                 .unwrap()
-                < shadow
+                < normalized_shadow
                     .find("atomicAdd(&shadow_queue_header.out_count")
                     .unwrap()
         );

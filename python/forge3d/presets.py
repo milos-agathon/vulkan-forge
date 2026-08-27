@@ -149,14 +149,14 @@ def toon_viz() -> Dict[str, Any]:
 
 def rainier_showcase() -> Dict[str, Any]:
     """Terrain showcase preset optimized for dramatic mountain lighting.
-    
+
     Designed to avoid the "flat Rainier" problem by:
     - Offsetting sun azimuth ~90° from typical camera angles for cross-lighting
     - Using lower sun elevation (25°) for longer shadows
     - Reducing IBL intensity to 0.3 to let shadows dominate
     - Increasing sun intensity to 4.0 to compensate for reduced fill
     - Using 4 CSM cascades at high resolution for detailed shadows
-    
+
     Includes camera, sun, IBL, and terrain exaggeration values so MapScene can
     consume the preset without hidden command-line parameters.
     """
@@ -211,6 +211,7 @@ def rainier_showcase() -> Dict[str, Any]:
             "intensity": 0.3,
         },
         "exaggeration": 1.35,
+        "height_sampling": "Nearest",
         "reproducibility": {
             "seed": 1350,
             "renderer_backend": "gpu_terrain",

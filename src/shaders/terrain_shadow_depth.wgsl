@@ -11,7 +11,7 @@ struct ShadowPassUniforms {
     terrain_params: vec4<f32>,
     // Grid params: (grid_resolution, _pad, _pad, _pad) (16 bytes)
     grid_params: vec4<f32>,
-    // Height curve params: (mode, strength, power, _pad) (16 bytes)
+    // Height curve params: (mode, strength, power, nearest_height_filter) (16 bytes)
     // mode: 0=linear, 1=pow, 2=smoothstep, 3=lut
     height_curve: vec4<f32>,
 }
@@ -64,6 +64,24 @@ fn sample_height_bilinear(uv: vec2<f32>) -> f32 {
     let h01 = textureLoad(height_tex, vec2<i32>(x0, y1), 0).r;
     let h11 = textureLoad(height_tex, vec2<i32>(x1, y1), 0).r;
     return det_mix(det_mix(h00, h10, blend.x), det_mix(h01, h11, blend.x), blend.y);
+}
+
+fn sample_height_nearest(uv: vec2<f32>) -> f32 {
+    let dimensions = textureDimensions(height_tex, 0);
+    let max_x = max(i32(dimensions.x) - 1, 0);
+    let max_y = max(i32(dimensions.y) - 1, 0);
+    let texel = vec2<i32>(
+        clamp(i32(floor(clamp(uv.x, 0.0, 1.0) * f32(dimensions.x))), 0, max_x),
+        clamp(i32(floor(clamp(uv.y, 0.0, 1.0) * f32(dimensions.y))), 0, max_y),
+    );
+    return textureLoad(height_tex, texel, 0).r;
+}
+
+fn sample_height_filtered(uv: vec2<f32>) -> f32 {
+    if (u_shadow.height_curve.w > 0.5) {
+        return sample_height_nearest(uv);
+    }
+    return sample_height_bilinear(uv);
 }
 
 /// Apply height curve to normalized height value (matching main shader exactly)
@@ -142,7 +160,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32) -> VertexOutput {
         f32(grid_y) / f32(grid_res - 1u)
     );
     
-    let h_raw = sample_height_bilinear(uv);
+    let h_raw = sample_height_filtered(uv);
     
     // Match terrain_pbr_pom.wgsl::normalize_for_shadow exactly.
     let world_xy = (uv - vec2<f32>(0.5)) * terrain_span;

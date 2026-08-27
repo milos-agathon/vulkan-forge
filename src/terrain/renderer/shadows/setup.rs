@@ -274,7 +274,10 @@ impl TerrainScene {
             },
             params.height_curve_strength.clamp(0.0, 1.0),
             params.height_curve_power.max(0.01),
-            0.0,
+            match decoded.sampling.height_filter {
+                crate::terrain::render_params::FilterModeNative::Nearest => 1.0,
+                crate::terrain::render_params::FilterModeNative::Linear => 0.0,
+            },
         ];
 
         let shadow_bind_group = if shadow_settings.enabled {

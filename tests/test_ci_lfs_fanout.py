@@ -87,6 +87,9 @@ def test_ci_lfs_manifest_contains_only_lane_fixtures() -> None:
 
 def test_python_and_m06_restore_only_their_fixture_bundles() -> None:
     workflow = _workflow()
+    prepare = workflow.split("  prepare-lfs-fixtures:", 1)[1].split(
+        "  terrain-golden-paths:", 1
+    )[0]
     python_workflow = (
         ROOT / ".github" / "workflows" / "test-python-wheel.yml"
     ).read_text(encoding="utf-8")
@@ -128,6 +131,13 @@ def test_python_and_m06_restore_only_their_fixture_bundles() -> None:
     assert "needs: [build-wheel-windows, prepare-lfs-fixtures, terrain-golden-paths]" in m06_job
     assert "m06-dem.zip" in m06_job
     assert "python-tiffs.zip" not in m06_job
+    m06_bundle = prepare.split(
+        "zip -q lfs-fixture-bundles/m06-dem.zip", 1
+    )[1].split("\n\n", 1)[0]
+    assert re.findall(r"assets/tif/[^\s\\]+", m06_bundle) == [
+        "assets/tif/dem_rainier.tif",
+        "assets/tif/switzerland_dem.tif",
+    ]
     assert "Get-PSDrive -PSProvider FileSystem" in m06_job
     assert "Sort-Object Free -Descending" in m06_job
     assert (

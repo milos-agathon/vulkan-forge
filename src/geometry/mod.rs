@@ -112,7 +112,7 @@ pub(super) fn recompute_normals(mesh: &mut MeshBuffers) {
     mesh.normals.clear();
     mesh.normals.resize(mesh.positions.len(), [0.0, 0.0, 0.0]);
     let mut counts = vec![0u32; mesh.positions.len()];
-    for tri in mesh.indices.chunks_exact(3) {
+    for tri in mesh.indices.as_chunks::<3>().0 {
         let a = mesh.positions[tri[0] as usize];
         let b = mesh.positions[tri[1] as usize];
         let c = mesh.positions[tri[2] as usize];

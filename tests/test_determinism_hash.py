@@ -79,6 +79,7 @@ def test_intra_backend_bit_identity(tmp_path):
     )
 
 
+@pytest.mark.apple_metal_physical
 def test_dupla_dd_demo_is_backend_pinned_and_byte_identical():
     """The committed DD render participates in the determinism harness."""
     backend = _local_backend()

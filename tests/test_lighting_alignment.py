@@ -124,6 +124,7 @@ class TestRainierShowcasePreset:
     def test_preset_has_pcss_shadows(self):
         """Verify preset uses PCSS with 4 cascades."""
         cfg = presets.get("rainier_showcase")
+        assert cfg["shadows"]["enabled"] is True
         assert cfg["shadows"]["technique"] == "pcss"
         assert cfg["shadows"]["cascades"] == 4
         assert cfg["shadows"]["map_size"] == 4096
@@ -132,6 +133,7 @@ class TestRainierShowcasePreset:
         """Verify preset enables IBL for fill lighting."""
         cfg = presets.get("rainier_showcase")
         assert "ibl" in cfg["gi"]["modes"]
+        assert cfg["height_sampling"] == "Nearest"
 
     def test_preset_aliases(self):
         """Verify preset aliases work."""
@@ -139,6 +141,8 @@ class TestRainierShowcasePreset:
             cfg = presets.get(alias)
             assert cfg["shadows"]["technique"] == "pcss"
             assert cfg["shadows"]["cascades"] == 4
+            assert "ibl" in cfg["gi"]["modes"]
+            assert cfg["height_sampling"] == "Nearest"
 
 
 @pytest.mark.apple_metal_physical

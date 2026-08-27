@@ -64,22 +64,36 @@ satisfies a physical acceptance requirement.
 
 M-06, F3DZ, ANAMNESIS, and TESSELLA keep their existing exact NVIDIA/Vulkan or
 DX12 acceptance commands, zero-skip contracts, thresholds, and 90-day evidence.
-`Apple Metal Acceptance` is a separate `macos-14` family. It depends on the
-exact macOS wheel and prepared LFS fixtures, checks out the exact candidate,
-runs the checked Apple matrix against one physical Apple/Metal adapter with
-`software_fallback=false`, requires zero skips, and uploads its evidence for 90
-days. The frequency is narrow:
+`Apple Metal Acceptance` is the PR #170 physical family. It selects only the
+dedicated ephemeral runner label `forge3d-pr170-apple-metal`; the runner name is
+the same, and its default self-hosted, OS, and architecture labels must be
+disabled so no generic job can select it. Registration material must never be
+logged, and the runner must be removed after the required run.
 
-- the nightly schedule runs every physical family, including Apple Metal;
-- manual `full` selects Apple Metal and the complete physical set, while `m06`,
-  `f3dz`, `anamnesis`, or `tessella` selects only the named physical family;
-- pull requests and ordinary pushes never select Apple Metal acceptance or
-  allocate a self-hosted GPU runner.
+Before checkout, the job verifies the exact runner name, macOS/ARM64 runner
+context, arm64 host, Apple CPU identity, and absence of a host hypervisor. It
+then consumes the exact macOS wheel and prepared LFS fixtures and runs the
+checked Apple matrix against one Metal integrated/discrete adapter with
+`software_fallback=false`. Parent and every rendering subprocess must report
+the same physical adapter identity. The job requires zero skips and uploads
+the host, adapter, test, and exact-head evidence for 90 days. The selection is
+narrow:
 
-`Full Acceptance Summary` requires the Apple job and validates every selected
-hosted and physical family. It is a reporting/acceptance context, not the
-global merge gate. Generic Metal diagnostics, `ABSENT`, an unknown adapter, or
-software fallback never satisfy Apple physical acceptance.
+- manual `full` on `codex/refactor-forge3d-20260812` selects Apple Metal and the
+  complete physical set;
+- schedules, pull requests, ordinary pushes, other branches, and the named
+  `m06`, `f3dz`, `anamnesis`, or `tessella` scopes never select the ephemeral
+  Apple runner;
+- the separately named, disabled-by-default hosted Metal diagnostic remains
+  optional support evidence and cannot satisfy physical acceptance.
+
+`Full Acceptance Summary` requires the Apple job for that exact PR #170 manual
+selection and validates every selected hosted and physical family. It is a
+reporting/acceptance context, not the global merge gate. Generic Metal
+diagnostics, `ABSENT`, an unknown adapter, or software fallback never satisfy
+Apple physical acceptance. `FORGE3D_ALLOW_HOSTED_MACOS_TERRAIN=1` only disables
+the test harness's blanket GitHub-Actions/macOS terrain guard after these host
+checks; it is not an adapter-classification bypass.
 
 ## Certificate refresh
 

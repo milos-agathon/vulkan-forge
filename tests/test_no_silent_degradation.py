@@ -831,10 +831,26 @@ def test_e_full_acceptance_requires_authoritative_apple_metal_lane():
         (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     )
     job = ci["jobs"]["test-apple-metal-acceptance"]
-    assert job["runs-on"] == "macos-14"
+    runner_label = "forge3d-pr170-apple-metal"
+    assert job["runs-on"] == [runner_label]
     assert job["needs"] == ["build-wheel-macos", "prepare-lfs-fixtures"]
     assert "continue-on-error" not in job
     assert "vars." not in str(job["if"])
+    assert "github.event_name == 'schedule'" not in job["if"]
+    assert "github.event_name == 'workflow_dispatch'" in job["if"]
+    assert "inputs.scope == 'full'" in job["if"]
+    assert (
+        "github.ref == 'refs/heads/codex/refactor-forge3d-20260812'" in job["if"]
+    )
+    label_owners = []
+    workflows = ROOT / ".github" / "workflows"
+    workflow_paths = sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml")))
+    for workflow_path in workflow_paths:
+        workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+        for job_name, candidate in workflow.get("jobs", {}).items():
+            if runner_label in yaml.safe_dump(candidate):
+                label_owners.append((workflow_path.name, job_name))
+    assert label_owners == [("ci.yml", "test-apple-metal-acceptance")]
 
     env = job["env"]
     assert env["PYTHONNOUSERSITE"] == "1"
@@ -849,6 +865,23 @@ def test_e_full_acceptance_requires_authoritative_apple_metal_lane():
     assert env["FORGE3D_RUN_LIVE_TEXT_GPU"] == "1"
 
     steps = {step["name"]: step for step in job["steps"] if "name" in step}
+    host = steps["Prove dedicated physical Apple Silicon runner"]
+    assert host["shell"] == "bash"
+    for contract in (
+        "set -euo pipefail",
+        'test "$RUNNER_NAME" = "forge3d-pr170-apple-metal"',
+        'test "$RUNNER_OS" = "macOS"',
+        'test "$RUNNER_ARCH" = "ARM64"',
+        'test "$(uname -m)" = "arm64"',
+        'test "$(sysctl -n hw.optional.arm64)" = "1"',
+        'test "$(sysctl -n kern.hv_vmm_present)" = "0"',
+        "machdep.cpu.brand_string",
+        "Apple\\ *) ;;",
+        '*) echo "::error::runner is not physical Apple Silicon"; exit 1 ;;',
+        "host-identity.txt",
+    ):
+        assert contract in host["run"]
+    assert job["steps"][0]["name"] == "Prove dedicated physical Apple Silicon runner"
     download = steps["Download shared LFS fixture artifact"]
     assert download["uses"] == "actions/download-artifact@v4"
     assert download["with"] == {
@@ -893,14 +926,31 @@ def test_e_full_acceptance_requires_authoritative_apple_metal_lane():
     assert "test-apple-metal-acceptance" in summary["needs"]
     summary_run = summary["steps"][0]["run"]
     assert (
-        "check_selected \"$full_selected\" "
+        "apple_metal_selected=\"${{ github.event_name == 'workflow_dispatch' && "
+        "inputs.scope == 'full' && github.ref == "
+        "'refs/heads/codex/refactor-forge3d-20260812' }}\""
+    ) in summary_run
+    assert (
+        "check_selected \"$apple_metal_selected\" "
         "'${{ needs.test-apple-metal-acceptance.result }}' apple-metal"
     ) in summary_run
+    diagnostic = (
+        ROOT / ".github" / "workflows" / "determinism-matrix.yml"
+    ).read_text(encoding="utf-8").split("  metal-diagnostic:", 1)[1].split(
+        "\n  wasm-policy:", 1
+    )[0]
+    assert "runs-on: ${{ matrix.os }}" in diagnostic
+    assert "os: macos-14" in diagnostic
+    assert "continue-on-error: true" in diagnostic
+    assert "FORGE3D_RUN_METAL_DIAGNOSTIC" in diagnostic
     policy = (ROOT / ".claude" / "rules" / "build-and-ci.md").read_text(
         encoding="utf-8"
     )
     assert "test-apple-metal-acceptance" in policy
-    assert "required physical Apple/Metal" in policy
+    assert "required only by manual `scope=full`" in policy
+    assert "on `codex/refactor-forge3d-20260812`" in policy
+    assert "Scheduled full acceptance must leave that Apple job skipped" in policy
+    assert "prerequisite for scheduled" not in policy
 
 
 def test_e_apple_metal_selection_is_one_checked_fail_closed_manifest():
@@ -959,6 +1009,10 @@ def test_e_apple_metal_selection_is_one_checked_fail_closed_manifest():
         "device_type": "IntegratedGpu",
         "software_fallback": False,
         "name": "Apple M4",
+        "vendor": 0x106B,
+        "device": 0x1234,
+        "raw_vendor": 0,
+        "raw_device": 0,
     }
     metal._require_physical_apple_metal(valid_adapter, "test")
     for invalid in (
@@ -967,13 +1021,20 @@ def test_e_apple_metal_selection_is_one_checked_fail_closed_manifest():
         {**valid_adapter, "software_fallback": True},
         {**valid_adapter, "name": "Apple Paravirtual GPU"},
         {**valid_adapter, "name": "NVIDIA RTX"},
+        {key: value for key, value in valid_adapter.items() if key != "vendor"},
+        {key: value for key, value in valid_adapter.items() if key != "device"},
+        {**valid_adapter, "vendor": 0},
+        {**valid_adapter, "vendor": 0x10DE},
+        {**valid_adapter, "device": 0},
+        {key: value for key, value in valid_adapter.items() if key != "raw_vendor"},
+        {key: value for key, value in valid_adapter.items() if key != "raw_device"},
     ):
         with pytest.raises(RuntimeError):
             metal._require_physical_apple_metal(invalid, "test")
 
     manifest = metal._read_manifest()
     assert manifest["recipe_cases"] == 22
-    assert manifest["expected_tests"] == 265
+    assert manifest["expected_tests"] == 266
     runner_source = (ROOT / "scripts" / "run_apple_metal_acceptance.py").read_text(
         encoding="utf-8"
     )
@@ -994,6 +1055,78 @@ def test_e_apple_metal_skip_audit_runs_after_marker_deselection():
 
     hook = metal.pytest_collection_modifyitems.pytest_impl
     assert hook["trylast"] is True
+
+
+def _import_sidera_night_for_collection(monkeypatch, probe, *, apple=False):
+    import runpy
+    import types
+
+    session_calls = []
+
+    def session(**kwargs):
+        session_calls.append(kwargs)
+        raise AssertionError("Session called during test-module import")
+
+    forge3d = types.ModuleType("forge3d")
+    forge3d.Session = session
+    forge3d.device_probe = probe
+    native = types.ModuleType("forge3d._forge3d")
+    native.engine_info = lambda: {}
+    diagnostics = types.ModuleType("forge3d.diagnostics")
+    diagnostics.render_certificate = lambda **kwargs: {}
+    forge3d._forge3d = native
+    monkeypatch.setitem(sys.modules, "forge3d", forge3d)
+    monkeypatch.setitem(sys.modules, "forge3d._forge3d", native)
+    monkeypatch.setitem(sys.modules, "forge3d.diagnostics", diagnostics)
+    monkeypatch.setenv("FORGE3D_DETERMINISM_TEST_BACKEND", "vulkan")
+    monkeypatch.delenv("FORGE3D_EXPECTED_ADAPTER_PROBE", raising=False)
+    if apple:
+        monkeypatch.setenv("FORGE3D_APPLE_METAL_ACCEPTANCE", "1")
+    else:
+        monkeypatch.delenv("FORGE3D_APPLE_METAL_ACCEPTANCE", raising=False)
+    return runpy.run_path(TESTS / "test_astro_night_golden.py"), session_calls
+
+
+def test_e_sidera_generic_no_adapter_imports_without_session(monkeypatch):
+    probe_calls = []
+
+    def no_adapter(backend):
+        probe_calls.append(backend)
+        return {"status": "no_adapter"}
+
+    module, session_calls = _import_sidera_night_for_collection(monkeypatch, no_adapter)
+
+    assert session_calls == []
+    assert probe_calls == ["vulkan", "vulkan"]
+    tests = {
+        name: value
+        for name, value in module.items()
+        if name.startswith("test_") and callable(value)
+    }
+    assert len(tests) == 5
+    for name, test in tests.items():
+        assert any(
+            marker.name == "apple_metal_physical"
+            for marker in getattr(test, "pytestmark", ())
+        ), name
+
+
+def test_e_sidera_strict_apple_no_adapter_fails_closed(monkeypatch):
+    with pytest.raises(RuntimeError, match="required Apple Metal SIDERA adapter"):
+        _import_sidera_night_for_collection(
+            monkeypatch, lambda backend: {"status": "no_adapter"}, apple=True
+        )
+
+
+def test_e_sidera_unexpected_probe_error_propagates(monkeypatch):
+    class ProbeError(Exception):
+        pass
+
+    def broken_probe(backend):
+        raise ProbeError(backend)
+
+    with pytest.raises(ProbeError, match="vulkan"):
+        _import_sidera_night_for_collection(monkeypatch, broken_probe)
 
 
 def test_e_apple_metal_skip_audit_rejects_selected_decorators(monkeypatch):
@@ -1132,6 +1265,10 @@ def test_e_apple_metal_phase_process_records_rendered_adapter(
         "device_name": "Apple M4",
         "device_type": "integratedgpu",
         "software_fallback": False,
+        "vendor": 0x106B,
+        "device": 0x1234,
+        "raw_vendor": 0,
+        "raw_device": 0,
     }
     events = []
 
@@ -1155,6 +1292,54 @@ def test_e_apple_metal_phase_process_records_rendered_adapter(
     }
 
 
+def test_e_apple_metal_preflight_probes_the_initialized_context(
+    monkeypatch, tmp_path
+):
+    import forge3d as f3d
+    from scripts import run_apple_metal_acceptance as metal
+
+    active = {
+        "backend": "metal",
+        "adapter_name": "Apple M4",
+        "device_name": "Apple M4",
+        "device_type": "integratedgpu",
+        "software_fallback": False,
+        "vendor": 0x106B,
+        "device": 0x1234,
+        "raw_vendor": 0,
+        "raw_device": 0,
+    }
+    probe = {
+        **active,
+        "name": active["adapter_name"],
+        "backend": "Metal",
+        "device_type": "IntegratedGpu",
+    }
+    events = []
+
+    def engine_info():
+        events.append("engine_info")
+        return active
+
+    def device_probe(backend):
+        events.append(f"device_probe:{backend}")
+        return probe
+
+    monkeypatch.setattr(metal, "_initialized_engine_info", engine_info)
+    monkeypatch.setattr(f3d, "device_probe", device_probe)
+    record = tmp_path / "adapter-before.json"
+
+    assert metal._active_adapter_record(record) == {
+        "requested_backend": "metal",
+        "probe": probe,
+        "active_adapter": active,
+    }
+    assert events == ["engine_info", "device_probe:metal"]
+    assert json.loads(record.read_text(encoding="utf-8"))["probe"]["device"] == active[
+        "device"
+    ]
+
+
 def test_e_apple_metal_requires_every_render_phase_adapter_and_exact_identity(
     tmp_path,
 ):
@@ -1165,6 +1350,10 @@ def test_e_apple_metal_requires_every_render_phase_adapter_and_exact_identity(
         "name": "Apple M4",
         "device_type": "IntegratedGpu",
         "software_fallback": False,
+        "vendor": 0x106B,
+        "device": 0x1234,
+        "raw_vendor": 0,
+        "raw_device": 0,
     }
     active = {
         "backend": "metal",
@@ -1172,6 +1361,10 @@ def test_e_apple_metal_requires_every_render_phase_adapter_and_exact_identity(
         "device_name": "Apple M4",
         "device_type": "integratedgpu",
         "software_fallback": False,
+        "vendor": 0x106B,
+        "device": 0x1234,
+        "raw_vendor": 0,
+        "raw_device": 0,
     }
     before = {"requested_backend": "metal", "probe": probe, "active_adapter": active}
     phases = (
@@ -1187,6 +1380,20 @@ def test_e_apple_metal_requires_every_render_phase_adapter_and_exact_identity(
 
     metal._validate_phase_adapter_records(before, phases, tmp_path)
     mismatched = {**active, "adapter_name": "Apple M3", "device_name": "Apple M3"}
+    (tmp_path / "second-adapter.json").write_text(
+        json.dumps({"phase": "second", "active_adapter": mismatched}),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="second.*identity"):
+        metal._validate_phase_adapter_records(before, phases, tmp_path)
+    mismatched = {**active, "device": 0x5678}
+    (tmp_path / "second-adapter.json").write_text(
+        json.dumps({"phase": "second", "active_adapter": mismatched}),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="second.*identity"):
+        metal._validate_phase_adapter_records(before, phases, tmp_path)
+    mismatched = {**active, "raw_device": 1}
     (tmp_path / "second-adapter.json").write_text(
         json.dumps({"phase": "second", "active_adapter": mismatched}),
         encoding="utf-8",
@@ -1743,6 +1950,7 @@ def test_anamnesis_family_has_one_complete_zero_skip_junit():
         path = nodeid.split("::", 1)[0]
         assert job.count(path) == 1
     assert "-m anamnesis_physical" in job
+    assert "FORGE3D_DETERMINISTIC: '1'" in job
     assert "FORGE3D_RUN_GPU_ANAMNESIS: '1'" in job
     assert job.count("--junitxml=") == 1
     assert job.count("assert_junit_zero_skips.py") == 1
@@ -1849,6 +2057,7 @@ def test_all_interactive_viewer_records_are_owned_once_by_required_m06(
     }
     assert "runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]" in job
     assert "WGPU_BACKEND: vulkan" in job
+    assert "RUN_INTERACTIVE_VIEWER_CI: '1'" in job
     assert job.count("--junitxml=") == 1
     assert job.count("assert_junit_zero_skips.py") == 1
     assert "if: always()" in job and "uses: actions/upload-artifact@v4" in job

@@ -81,7 +81,10 @@ def _assert_same_adapter(actual: dict, expected: dict) -> None:
         "vendor",
         "device",
         "software_fallback",
+        "raw_vendor",
+        "raw_device",
     ):
+        assert field in actual and field in expected
         assert str(actual.get(field, "")).lower() == str(expected.get(field, "")).lower()
 
 
@@ -123,17 +126,20 @@ def _determinism_backend() -> str:
 
 
 REFERENCE_BACKEND = "vulkan"
-_REFERENCE_SESSION = (
-    f3d.Session(window=False)
-    if _determinism_backend().strip().lower() == REFERENCE_BACKEND
-    else None
-)
+if APPLE_METAL_ACCEPTANCE:
+    native.engine_info()
 DETERMINISM_ADAPTER_INFO = f3d.device_probe(_determinism_backend())
 REFERENCE_ADAPTER_INFO = f3d.device_probe("vulkan")
 _assert_expected_adapter(DETERMINISM_ADAPTER_INFO)
 HARDWARE_ADAPTER = _adapter_is_hardware(DETERMINISM_ADAPTER_INFO)
 REFERENCE_ADAPTER = _adapter_is_nvidia_vulkan(REFERENCE_ADAPTER_INFO)
-if APPLE_METAL_ACCEPTANCE and not HARDWARE_ADAPTER:
+if APPLE_METAL_ACCEPTANCE and (
+    not HARDWARE_ADAPTER
+    or DETERMINISM_ADAPTER_INFO.get("vendor") != 0x106B
+    or not isinstance(DETERMINISM_ADAPTER_INFO.get("device"), int)
+    or isinstance(DETERMINISM_ADAPTER_INFO.get("device"), bool)
+    or DETERMINISM_ADAPTER_INFO["device"] <= 0
+):
     raise RuntimeError(
         "required Apple Metal SIDERA adapter is unavailable or non-physical: "
         f"{DETERMINISM_ADAPTER_INFO}"

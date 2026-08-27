@@ -112,8 +112,20 @@ jobs:
         if: always() && inputs.test_mode == 'full'
         run: python scripts/assert_junit_zero_skips.py test-results/python-full.xml
 
-      - name: Upload full Python lane JUnit
+      - name: Bind full Python lane JUnit to exact head
+        id: bind-artifact-head
         if: always() && inputs.test_mode == 'full'
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ inputs.ref }}
+          artifact-paths: test-results/python-full*
+          output-path: test-results/python-full-checked-out-head.txt
+          if-no-files-found: error
+
+      - name: Upload full Python lane JUnit
+        if: >-
+          (always() && inputs.test_mode == 'full') &&
+          steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: python-full-junit-${{ runner.os }}-${{ matrix.python-version }}

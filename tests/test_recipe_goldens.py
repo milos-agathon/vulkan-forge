@@ -97,6 +97,10 @@ def _assert_active_recipe_golden_adapter(
         assert "nvidia" in identity and "apple" not in identity
     else:
         assert "apple" in identity and "nvidia" not in identity
+        assert adapter.get("vendor") == 0x106B
+        device = adapter.get("device")
+        assert isinstance(device, int) and not isinstance(device, bool)
+        assert device > 0
     return adapter
 
 
@@ -1273,6 +1277,10 @@ def _active_adapter_record(**overrides: object) -> dict[str, object]:
         "device_name": "Apple M4",
         "device_type": "integratedgpu",
         "software_fallback": False,
+        "vendor": 0x106B,
+        "device": 0x1234,
+        "raw_vendor": 0,
+        "raw_device": 0,
     }
     record.update(overrides)
     return record
@@ -1286,8 +1294,20 @@ def _active_adapter_record(**overrides: object) -> dict[str, object]:
         _active_adapter_record(device_type="cpu"),
         _active_adapter_record(software_fallback=True),
         _active_adapter_record(device_type="virtualgpu"),
+        _active_adapter_record(vendor=0),
+        _active_adapter_record(vendor=0x10DE),
+        _active_adapter_record(device=0),
     ],
-    ids=("unavailable", "ambiguous", "cpu", "software", "virtual"),
+    ids=(
+        "unavailable",
+        "ambiguous",
+        "cpu",
+        "software",
+        "virtual",
+        "zero-vendor",
+        "wrong-vendor",
+        "zero-device",
+    ),
 )
 def test_recipe_golden_rejects_untrusted_active_adapter(
     monkeypatch: pytest.MonkeyPatch, record: dict[str, object]
@@ -1319,6 +1339,10 @@ def test_recipe_golden_rejects_unknown_variant(
                 adapter_name="NVIDIA GeForce RTX 3070",
                 device_name="NVIDIA GeForce RTX 3070",
                 device_type="discretegpu",
+                vendor=0x10DE,
+                device=0x2484,
+                raw_vendor=0x10DE,
+                raw_device=0x2484,
             ),
         ),
     ],
@@ -1412,6 +1436,14 @@ def _render_recipe_golden_pixels(
         active_adapter.get("device_type", "")
     ).lower()
     assert probe.get("software_fallback") is False
+    for field in (
+        "vendor",
+        "device",
+        "raw_vendor",
+        "raw_device",
+    ):
+        assert field in probe and field in active_adapter
+        assert probe.get(field) == active_adapter.get(field)
     assert scene.last_render_backend == "gpu_terrain"
     for feature in spec.expected_features:
         assert report.supported_features[feature] == "supported"

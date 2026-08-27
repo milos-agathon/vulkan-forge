@@ -52,11 +52,89 @@ pub fn active_backend() -> Option<String> {
         .map(|c| format!("{:?}", c.adapter.get_info().backend).to_lowercase())
 }
 
-/// Adapter that owns the initialized global render context, if any.
+#[cfg(any(feature = "extension-module", test))]
+pub(crate) const APPLE_VENDOR_ID: u32 = 0x106b;
+
+#[cfg(any(feature = "extension-module", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AdapterIdentity {
+    pub vendor_id: u32,
+    pub device_id: u64,
+    pub raw_vendor_id: u32,
+    pub raw_device_id: u32,
+}
+
+#[cfg(any(feature = "extension-module", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeMetalIdentity {
+    registry_id: u64,
+    supports_apple_gpu_family: bool,
+}
+
+#[cfg(any(feature = "extension-module", test))]
+fn normalize_adapter_identity(
+    adapter_info: &wgpu::AdapterInfo,
+    native_metal_identity: Option<NativeMetalIdentity>,
+) -> AdapterIdentity {
+    let attributable_apple_metal = adapter_info.backend == wgpu::Backend::Metal
+        && native_metal_identity.is_some_and(|identity| {
+            identity.registry_id != 0 && identity.supports_apple_gpu_family
+        });
+    AdapterIdentity {
+        vendor_id: if attributable_apple_metal {
+            APPLE_VENDOR_ID
+        } else {
+            adapter_info.vendor
+        },
+        device_id: if attributable_apple_metal {
+            native_metal_identity
+                .map(|identity| identity.registry_id)
+                .unwrap_or_default()
+        } else {
+            u64::from(adapter_info.device)
+        },
+        raw_vendor_id: adapter_info.vendor,
+        raw_device_id: adapter_info.device,
+    }
+}
+
+#[cfg(all(feature = "extension-module", target_os = "macos"))]
+fn active_native_metal_identity(ctx: &GpuContext) -> Option<NativeMetalIdentity> {
+    use metal::MTLGPUFamily::{
+        Apple1, Apple2, Apple3, Apple4, Apple5, Apple6, Apple7, Apple8, Apple9,
+    };
+
+    // SAFETY: `as_hal` borrows wgpu's live device for this callback only. The
+    // raw MTLDevice is neither retained nor destroyed; only native identity
+    // and GPU-family properties are read.
+    unsafe {
+        ctx.device
+            .as_hal::<wgpu::hal::api::Metal, _, _>(|device| {
+                device.map(|device| {
+                    let device = device.raw_device().lock();
+                    NativeMetalIdentity {
+                        registry_id: device.registry_id(),
+                        supports_apple_gpu_family: [
+                            Apple1, Apple2, Apple3, Apple4, Apple5, Apple6, Apple7, Apple8, Apple9,
+                        ]
+                        .into_iter()
+                        .any(|family| device.supports_family(family)),
+                    }
+                })
+            })
+            .flatten()
+    }
+}
+
+#[cfg(all(feature = "extension-module", not(target_os = "macos")))]
+fn active_native_metal_identity(_ctx: &GpuContext) -> Option<NativeMetalIdentity> {
+    None
+}
+
 #[cfg(feature = "extension-module")]
-pub(crate) fn active_adapter_info() -> Option<(wgpu::AdapterInfo, bool)> {
-    CTX.get()
-        .map(|c| (c.adapter.get_info(), c.software_fallback))
+pub(crate) fn active_adapter_identity(ctx: &GpuContext) -> AdapterIdentity {
+    let adapter_info = ctx.adapter.get_info();
+    normalize_adapter_identity(&adapter_info, active_native_metal_identity(ctx))
 }
 
 /// TERRA-DETERMINATA: deterministic rendering mode.
@@ -517,7 +595,10 @@ pub fn create_device_and_queue_for_test() -> Option<(wgpu::Device, wgpu::Queue)>
 
 #[cfg(test)]
 mod backend_request_tests {
-    use super::{is_virtualized_adapter_name, parse_backend_request};
+    use super::{
+        is_virtualized_adapter_name, normalize_adapter_identity, parse_backend_request,
+        NativeMetalIdentity, APPLE_VENDOR_ID,
+    };
 
     #[test]
     fn backend_request_is_exact_and_rejects_ambiguous_or_substring_values() {
@@ -544,5 +625,83 @@ mod backend_request_tests {
         assert!(!is_virtualized_adapter_name("NVIDIA GeForce RTX 3070"));
         assert!(!is_virtualized_adapter_name("AMD Radeon RX 7900 XTX"));
         assert!(!is_virtualized_adapter_name("Intel Arc A770"));
+    }
+
+    #[test]
+    fn apple_metal_identity_uses_registry_id_and_keeps_raw_wgpu_ids() {
+        let info = wgpu::AdapterInfo {
+            name: "Apple M4".to_string(),
+            vendor: 0,
+            device: 0,
+            device_type: wgpu::DeviceType::IntegratedGpu,
+            driver: String::new(),
+            driver_info: String::new(),
+            backend: wgpu::Backend::Metal,
+        };
+
+        let identity = normalize_adapter_identity(
+            &info,
+            Some(NativeMetalIdentity {
+                registry_id: 0x1234,
+                supports_apple_gpu_family: true,
+            }),
+        );
+
+        assert_eq!(identity.vendor_id, APPLE_VENDOR_ID);
+        assert_eq!(identity.device_id, 0x1234);
+        assert_eq!(identity.raw_vendor_id, 0);
+        assert_eq!(identity.raw_device_id, 0);
+    }
+
+    #[test]
+    fn zero_metal_registry_id_does_not_claim_authoritative_apple_identity() {
+        let info = wgpu::AdapterInfo {
+            name: "Apple M4".to_string(),
+            vendor: 0,
+            device: 0,
+            device_type: wgpu::DeviceType::IntegratedGpu,
+            driver: String::new(),
+            driver_info: String::new(),
+            backend: wgpu::Backend::Metal,
+        };
+
+        let identity = normalize_adapter_identity(
+            &info,
+            Some(NativeMetalIdentity {
+                registry_id: 0,
+                supports_apple_gpu_family: true,
+            }),
+        );
+
+        assert_eq!(identity.vendor_id, 0);
+        assert_eq!(identity.device_id, 0);
+        assert_eq!(identity.raw_vendor_id, 0);
+        assert_eq!(identity.raw_device_id, 0);
+    }
+
+    #[test]
+    fn non_apple_metal_device_keeps_raw_identity() {
+        let info = wgpu::AdapterInfo {
+            name: "AMD Radeon Pro".to_string(),
+            vendor: 0,
+            device: 0,
+            device_type: wgpu::DeviceType::DiscreteGpu,
+            driver: String::new(),
+            driver_info: String::new(),
+            backend: wgpu::Backend::Metal,
+        };
+
+        let identity = normalize_adapter_identity(
+            &info,
+            Some(NativeMetalIdentity {
+                registry_id: 0x5678,
+                supports_apple_gpu_family: false,
+            }),
+        );
+
+        assert_eq!(identity.vendor_id, 0);
+        assert_eq!(identity.device_id, 0);
+        assert_eq!(identity.raw_vendor_id, 0);
+        assert_eq!(identity.raw_device_id, 0);
     }
 }

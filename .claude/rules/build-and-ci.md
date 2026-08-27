@@ -23,9 +23,12 @@ paths: ["Cargo.toml", "pyproject.toml", ".cargo/**", ".github/workflows/**", "py
   routine invariants. Candidate-selected physical NVIDIA/Vulkan goldens and
   GPU lanes are acceptance evidence summarized by `Full Acceptance Summary`;
   a probe crash or pixel mismatch remains fatal whenever that lane is selected.
-  Generic Metal support diagnostics remain opt-in. The checked
-  `test-apple-metal-acceptance` manifest is a required physical Apple/Metal
-  prerequisite for scheduled and explicitly selected full acceptance.
+  Generic Metal support diagnostics remain opt-in. For PR #170, the checked
+  `test-apple-metal-acceptance` manifest is required only by manual `scope=full`
+  on `codex/refactor-forge3d-20260812`, using its dedicated ephemeral runner.
+  Scheduled full acceptance must leave that Apple job skipped and must not queue
+  the removed runner; `Full Acceptance Summary` enforces it only when the exact
+  manual selector is true.
 - Production signing is required only by protected acceptance/release work.
   Routine internal and fork PRs remain explicitly untrusted and verify schema,
   canonicalization, and tamper rejection without the production secret.

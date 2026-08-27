@@ -69,6 +69,7 @@ pub struct SamplingSettingsNative {
     pub address_u: AddressModeNative,
     pub address_v: AddressModeNative,
     pub address_w: AddressModeNative,
+    pub height_filter: FilterModeNative,
 }
 
 /// Shadow settings extracted from Python ShadowSettings dataclass

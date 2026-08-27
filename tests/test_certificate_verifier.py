@@ -116,6 +116,27 @@ def _public_verifier_script(*, through_pytest_install: bool = False) -> str:
     )
 
 
+def _bash_command(script: str) -> list[str]:
+    bash: str | Path = "bash"
+    if sys.platform == "win32":
+        program_files = os.environ.get("ProgramFiles")
+        if not program_files:
+            raise RuntimeError("ProgramFiles is unavailable on Windows")
+        bash = Path(program_files) / "Git" / "bin" / "bash.exe"
+        if not bash.is_absolute() or not bash.is_file():
+            raise RuntimeError(f"Git for Windows Bash not found at {bash}")
+    return [
+        str(bash),
+        "--noprofile",
+        "--norc",
+        "-e",
+        "-o",
+        "pipefail",
+        "-c",
+        script,
+    ]
+
+
 def _prepare_public_verifier_candidate(tmp_path: Path) -> Path:
     root = Path(__file__).parents[1]
     candidate = tmp_path / "candidate"
@@ -182,17 +203,19 @@ def _run_public_verifier(
             "PATH": f"{trusted_bin}{os.pathsep}{env['PATH']}",
         }
     )
-    return subprocess.run(
-        [
-            "bash",
-            "-c",
-            _public_verifier_script(through_pytest_install=through_pytest_install),
-        ],
+    result = subprocess.run(
+        _bash_command(
+            _public_verifier_script(through_pytest_install=through_pytest_install)
+        ),
         cwd=candidate,
         env=env,
         capture_output=True,
         text=True,
     )
+    recorded_head = candidate / "evidence/checked-out-head.txt"
+    assert recorded_head.is_file(), result.stdout + result.stderr
+    assert recorded_head.read_text(encoding="utf-8").strip() == head
+    return result
 
 
 def _resign_candidate_catalog(candidate: Path, seed: bytes) -> None:
@@ -304,11 +327,9 @@ def test_zero_skip_verifier_ignores_candidate_pythonpath_shadow(tmp_path):
         }
     )
     result = subprocess.run(
-        [
-            "bash",
-            "-c",
-            _workflow_step_script("Require clean zero-skip certificate acceptance"),
-        ],
+        _bash_command(
+            _workflow_step_script("Require clean zero-skip certificate acceptance")
+        ),
         cwd=candidate,
         env=env,
         capture_output=True,

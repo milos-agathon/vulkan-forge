@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "tests" / "apple_metal_acceptance.toml"
 RECIPE_SOURCE = ROOT / "tests" / "test_recipe_goldens.py"
 PHYSICAL_TYPES = {"integratedgpu", "discretegpu"}
+APPLE_VENDOR_ID = 0x106B
 SOFTWARE_TOKENS = (
     "cpu",
     "llvmpipe",
@@ -122,18 +123,36 @@ def _require_physical_apple_metal(record: dict, label: str) -> None:
         raise RuntimeError(f"{label}: software_fallback must be false: {record}")
     if "apple" not in identity or any(token in identity for token in SOFTWARE_TOKENS):
         raise RuntimeError(f"{label}: adapter is not physical Apple hardware: {record}")
+    if record.get("vendor") != APPLE_VENDOR_ID:
+        raise RuntimeError(
+            f"{label}: authoritative Apple vendor must be {APPLE_VENDOR_ID:#06x}: {record}"
+        )
+    device = record.get("device")
+    if isinstance(device, bool) or not isinstance(device, int) or device <= 0:
+        raise RuntimeError(
+            f"{label}: authoritative Metal registry device identity is missing or zero: {record}"
+        )
+    for field in ("raw_vendor", "raw_device"):
+        value = record.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise RuntimeError(f"{label}: raw wgpu {field} is missing or invalid: {record}")
 
 
-def _adapter_identity(record: dict) -> tuple[str, str, str, bool | None]:
+def _adapter_identity(record: dict) -> tuple[object, ...]:
     return (
         _name(record).lower(),
         str(record.get("backend", "")).lower(),
         str(record.get("device_type", "")).lower(),
         record.get("software_fallback"),
+        record.get("vendor"),
+        record.get("device"),
+        record.get("raw_vendor"),
+        record.get("raw_device"),
     )
 
 
 def _require_same_adapter(reference: dict, actual: dict, label: str) -> None:
+    _require_physical_apple_metal(reference, f"{label} reference")
     _require_physical_apple_metal(actual, label)
     if _adapter_identity(actual) != _adapter_identity(reference):
         raise RuntimeError(
@@ -154,14 +173,16 @@ def _initialized_engine_info() -> dict:
 def _active_adapter_record(output: Path) -> dict:
     import forge3d as f3d
 
-    probe = dict(f3d.device_probe("metal"))
-    payload = {"requested_backend": "metal", "probe": probe}
-    _write_json(output, payload)
-    _require_physical_apple_metal(probe, "device probe")
     active = _initialized_engine_info()
-    payload["active_adapter"] = active
+    _require_physical_apple_metal(active, "initialized adapter")
+    probe = dict(f3d.device_probe("metal"))
+    payload = {
+        "requested_backend": "metal",
+        "probe": probe,
+        "active_adapter": active,
+    }
     _write_json(output, payload)
-    _require_same_adapter(probe, active, "initialized adapter")
+    _require_same_adapter(active, probe, "device probe")
     return payload
 
 

@@ -1919,6 +1919,9 @@ class SamplingSettings:
     address_u: str  # "Repeat", "ClampToEdge", "MirrorRepeat"
     address_v: str
     address_w: str
+    # R32Float terrain height reconstruction. Linear preserves the portable
+    # renderer default; Nearest is an explicit compatibility contract.
+    height_filter: str = "Linear"
 
     def __post_init__(self) -> None:
         valid_filters = {"Linear", "Nearest"}
@@ -1930,6 +1933,9 @@ class SamplingSettings:
 
         if self.mip_filter not in valid_filters:
             raise ValueError(f"Invalid mip_filter: {self.mip_filter}")
+
+        if self.height_filter not in valid_filters:
+            raise ValueError(f"Invalid height_filter: {self.height_filter}")
 
         valid_address = {"Repeat", "ClampToEdge", "MirrorRepeat"}
         for name, value in [

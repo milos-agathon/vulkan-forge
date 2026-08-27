@@ -56,10 +56,22 @@ jobs:
           args: ${{ inputs.maturin_args }}
           manylinux: ${{ inputs.manylinux }}
 
+      - name: Bind wheel artifact to exact head
+        id: bind-artifact-head
+        uses: ./.github/actions/bind-artifact-head
+        with:
+          expected-sha: ${{ inputs.ref }}
+          artifact-paths: dist/*.whl
+          output-path: dist/checked-out-head.txt
+          if-no-files-found: error
+
       - name: Upload wheel artifact
+        if: steps.bind-artifact-head.outputs.bound == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact }}
-          path: dist/*.whl
+          path: |
+            dist/*.whl
+            dist/checked-out-head.txt
           if-no-files-found: error
           retention-days: 1

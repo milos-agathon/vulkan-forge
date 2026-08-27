@@ -31,9 +31,8 @@
 #     its stable finest-grid lattice; at least 90% of transitions still rebuild;
 #   * asserts the crack metric, the seam-gap headroom and a threshold-free hole
 #     count on EVERY frame, not once at the end;
-#   * warms the height mosaic to asserted full fine-tile residency before the
-#     measured run, so a fallback during the 600 frames is a defect rather than
-#     the streamer's start-up transient;
+#   * starts measuring from the first streaming update, so start-up fallback or
+#     tile/LOD pop cannot be hidden by pre-filling the height mosaic;
 #   * proves the crack metric is a measurement and not a constant (a control at
 #     the API's maximum relief must make the same detector fire), and proves the
 #     motion-compensated dE2000 gate discriminates at this resolution and DEM
@@ -932,7 +931,6 @@ def test_600_frame_streaming_flythrough_has_no_pop_or_crack():
         material_set = f3d.MaterialSet.terrain_default()
         overlay = build_overlay()
         _enable_streaming(renderer, dem)
-        warmup_steps = _warm_streaming_to_full_residency(renderer, _center_at(0))
 
         for index in range(FRAMES):
             center = _center_at(index)
@@ -943,12 +941,12 @@ def test_600_frame_streaming_flythrough_has_no_pop_or_crack():
                 depth_aov=True,
             )
             if previous_frame is not None:
-                # Isolate ordinary camera motion while the fully resident
-                # stream/clipmap centre is still the previous frame's.  A
-                # second render after stream_height_tiles then isolates the
-                # recenter at this fixed camera.  Combining both changes in a
-                # single comparison lets two individually sub-threshold
-                # quantised colour changes add nonlinearly in CIEDE2000.
+                # Isolate ordinary camera motion while the stream/clipmap centre
+                # is still the previous frame's. A second render after
+                # stream_height_tiles then isolates the recenter at this fixed
+                # camera. Combining both changes in a single comparison lets
+                # two individually sub-threshold quantised colour changes add
+                # nonlinearly in CIEDE2000.
                 camera_only_frame, camera_only_depth = render_rgba_depth(
                     renderer,
                     params,
@@ -1123,7 +1121,7 @@ def test_600_frame_streaming_flythrough_has_no_pop_or_crack():
             "hole_pixels_total": hole_pixels_total,
             "resident_height_tiles": int(height_vt["resident_tiles_height"]),
             "height_pending_requests": int(height_vt["height_pending_requests"]),
-            "streaming_warmup_steps": warmup_steps,
+            "streaming_warmup_steps": 0,
             "streaming_total_tiles": STREAM_TOTAL_TILES,
             "wall_clock_s": wall_clock_s,
         },

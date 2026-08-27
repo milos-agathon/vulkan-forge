@@ -613,6 +613,12 @@ mod tests {
 
     const PROOF_DEM_SIDE: usize = 256;
     const PROOF_CELL_COUNT: usize = PROOF_DEM_SIDE - 1;
+    const PROOF_RAY_COUNT: usize = 10_000 + PROOF_CELL_COUNT * PROOF_CELL_COUNT;
+    const _: () = assert!(PROOF_RAY_COUNT == 75_025);
+    const PROOF_HIT_BUFFER_SIZE: u64 = (PROOF_RAY_COUNT * std::mem::size_of::<u32>()) as u64;
+    const PROOF_RAY_BUFFER_SIZE: u64 =
+        (PROOF_RAY_COUNT * std::mem::size_of::<ProofGpuRay>()) as u64;
+    const PROOF_OUTPUT_SENTINEL: u32 = u32::MAX;
     const PROOF_SPACING_M: f32 = 500.0;
 
     fn curvature_fixture() -> Vec<f32> {
@@ -654,6 +660,80 @@ mod tests {
                 ],
             }
         }
+    }
+
+    fn proof_terrain_layout_entries() -> [wgpu::BindGroupLayoutEntry; 4] {
+        [
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        std::mem::size_of::<TerrainPtUniforms>() as u64,
+                    ),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 10,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                        EarthCurvatureUniforms,
+                    >() as u64),
+                },
+                count: None,
+            },
+        ]
+    }
+
+    fn proof_io_layout_entries() -> [wgpu::BindGroupLayoutEntry; 2] {
+        [
+            wgpu::BindGroupLayoutEntry {
+                binding: 8,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(PROOF_HIT_BUFFER_SIZE),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 9,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(PROOF_RAY_BUFFER_SIZE),
+                },
+                count: None,
+            },
+        ]
     }
 
     fn proof_height(heights: &[f32], cell_x: usize, cell_z: usize, x: f64, z: f64) -> f64 {
@@ -1649,8 +1729,10 @@ struct HeliosProofRay {
     direction_tmax: vec4<f32>,
 }
 
-@group(3) @binding(8) var<storage, read_write> helios_proof_hits: array<u32>;
-@group(3) @binding(9) var<storage, read> helios_proof_rays: array<HeliosProofRay>;
+const HELIOS_PROOF_COUNT: u32 = __HELIOS_PROOF_COUNT__u;
+
+@group(3) @binding(8) var<storage, read_write> helios_proof_hits: array<u32, HELIOS_PROOF_COUNT>;
+@group(3) @binding(9) var<storage, read> helios_proof_rays: array<HeliosProofRay, HELIOS_PROOF_COUNT>;
 
 // Test-only dispatch seam. The call resolves to the exact production
 // terrain_trace function assembled above; no traversal or curvature math is
@@ -1658,7 +1740,7 @@ struct HeliosProofRay {
 @compute @workgroup_size(64, 1, 1)
 fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid: vec3<u32>) {
     let index = gid.x;
-    if (index >= arrayLength(&helios_proof_rays)) { return; }
+    if (index >= HELIOS_PROOF_COUNT) { return; }
     let input = helios_proof_rays[index];
     var ray: Ray;
     ray.origin = input.origin_tmin.xyz;
@@ -1669,6 +1751,10 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
     helios_proof_hits[index] = select(0u, 1u, hit.hit != 0u);
 }
 "#;
+
+    fn production_gpu_proof_entry() -> String {
+        PRODUCTION_GPU_PROOF_ENTRY.replace("__HELIOS_PROOF_COUNT__", &PROOF_RAY_COUNT.to_string())
+    }
 
     fn assert_production_gpu_proof_calls_exact_trace(source: &str) -> Result<(), String> {
         let module = naga::front::wgsl::parse_str(source)
@@ -1695,6 +1781,26 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
                 (variable.name.as_deref() == Some("helios_proof_hits")).then_some(handle)
             })
             .ok_or("production GPU proof hit output is missing")?;
+        for name in ["helios_proof_hits", "helios_proof_rays"] {
+            let variable = module
+                .global_variables
+                .iter()
+                .find_map(|(_, variable)| {
+                    (variable.name.as_deref() == Some(name)).then_some(variable)
+                })
+                .ok_or_else(|| format!("production GPU proof {name} array is missing"))?;
+            match module.types[variable.ty].inner {
+                naga::TypeInner::Array {
+                    size: naga::ArraySize::Constant(size),
+                    ..
+                } if size.get() as usize == PROOF_RAY_COUNT => {}
+                _ => {
+                    return Err(format!(
+                        "production GPU proof {name} must contain exactly {PROOF_RAY_COUNT} elements"
+                    ));
+                }
+            }
+        }
         let mut reaches_output = false;
         visit_statements(&entry.body, &mut |statement| {
             if let naga::Statement::Store { pointer, value } = statement {
@@ -1711,6 +1817,12 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
         heights: &[f32],
         rays: &[ProofRay],
     ) -> Result<(Vec<u32>, wgpu::AdapterInfo, bool), String> {
+        if rays.len() != PROOF_RAY_COUNT {
+            return Err(format!(
+                "HELIOS production proof requires exactly {PROOF_RAY_COUNT} rays, got {}",
+                rays.len()
+            ));
+        }
         let context = try_ctx().map_err(|error| error.to_string())?;
         let device = &context.device;
         let queue = &context.queue;
@@ -1771,14 +1883,13 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
             },
         )
         .map_err(|error| error.to_string())?;
-        let output_size = (rays.len() * std::mem::size_of::<u32>()) as u64;
-        let output = tracked_create_buffer(
+        let output_sentinels = vec![PROOF_OUTPUT_SENTINEL; PROOF_RAY_COUNT];
+        let output = tracked_create_buffer_init(
             device,
-            &wgpu::BufferDescriptor {
+            &wgpu::util::BufferInitDescriptor {
                 label: Some("helios-production-proof-hit-bits"),
-                size: output_size,
+                contents: bytemuck::cast_slice(&output_sentinels),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
             },
         )
         .map_err(|error| error.to_string())?;
@@ -1786,7 +1897,7 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
             device,
             &wgpu::BufferDescriptor {
                 label: Some("helios-production-proof-readback"),
-                size: output_size,
+                size: PROOF_HIT_BUFFER_SIZE,
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             },
@@ -1796,29 +1907,46 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
         let source = format!(
             "{}\n{}",
             crate::shader_sources::hybrid_kernel(),
-            PRODUCTION_GPU_PROOF_ENTRY
+            production_gpu_proof_entry()
         );
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("helios-production-terrain-trace-proof"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let pipeline = crate::core::shader_registry::create_compute_pipeline_scoped(
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("helios-production-proof-empty-layout"),
+            entries: &[],
+        });
+        let terrain_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("helios-production-proof-terrain-layout"),
+            entries: &proof_terrain_layout_entries(),
+        });
+        let proof_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("helios-production-proof-io-layout"),
+            entries: &proof_io_layout_entries(),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("helios-production-proof-pipeline-layout"),
+            bind_group_layouts: &[&empty_layout, &empty_layout, &terrain_layout, &proof_layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = crate::core::shader_registry::try_create_compute_pipeline_scoped(
             device,
             &wgpu::ComputePipelineDescriptor {
                 label: Some("helios-production-terrain-trace-proof"),
-                layout: None,
+                layout: Some(&pipeline_layout),
                 module: &shader,
                 entry_point: "main_helios_production_terrain_trace_proof",
             },
-        );
+        )?;
         let empty0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("helios-production-proof-empty-0"),
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &empty_layout,
             entries: &[],
         });
         let empty1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("helios-production-proof-empty-1"),
-            layout: &pipeline.get_bind_group_layout(1),
+            layout: &empty_layout,
             entries: &[],
         });
         let height_view = pyramid
@@ -1829,7 +1957,7 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
             .create_view(&wgpu::TextureViewDescriptor::default());
         let terrain_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("helios-production-proof-terrain"),
-            layout: &pipeline.get_bind_group_layout(2),
+            layout: &terrain_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -1851,7 +1979,7 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
         });
         let proof_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("helios-production-proof-io"),
-            layout: &pipeline.get_bind_group_layout(3),
+            layout: &proof_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 8,
@@ -1876,9 +2004,9 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
             pass.set_bind_group(1, &empty1, &[]);
             pass.set_bind_group(2, &terrain_group, &[]);
             pass.set_bind_group(3, &proof_group, &[]);
-            pass.dispatch_workgroups((rays.len() as u32).div_ceil(64), 1, 1);
+            pass.dispatch_workgroups((PROOF_RAY_COUNT as u32).div_ceil(64), 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output_size);
+        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, PROOF_HIT_BUFFER_SIZE);
         queue.submit([encoder.finish()]);
         let slice = readback.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -1968,6 +2096,81 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
     }
 
     #[test]
+    fn production_gpu_proof_layout_count_and_sentinel_contract() {
+        assert_eq!(PROOF_RAY_COUNT, 75_025);
+        assert_eq!(PROOF_HIT_BUFFER_SIZE, 300_100);
+        assert_eq!(PROOF_RAY_BUFFER_SIZE, 2_400_800);
+        let output_sentinel = std::hint::black_box(PROOF_OUTPUT_SENTINEL);
+        assert_eq!(output_sentinel, u32::MAX);
+
+        let terrain = proof_terrain_layout_entries();
+        assert_eq!(terrain.map(|entry| entry.binding), [1, 2, 3, 10]);
+        for entry in &terrain[..2] {
+            match entry.ty {
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                } => {}
+                _ => panic!(
+                    "HELIOS proof texture layout drifted at binding {}",
+                    entry.binding
+                ),
+            }
+        }
+        for (entry, size) in [
+            (&terrain[2], std::mem::size_of::<TerrainPtUniforms>() as u64),
+            (
+                &terrain[3],
+                std::mem::size_of::<EarthCurvatureUniforms>() as u64,
+            ),
+        ] {
+            match entry.ty {
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(actual),
+                } => assert_eq!(actual.get(), size),
+                _ => panic!(
+                    "HELIOS proof uniform layout drifted at binding {}",
+                    entry.binding
+                ),
+            }
+        }
+
+        let io = proof_io_layout_entries();
+        assert_eq!(io.map(|entry| entry.binding), [8, 9]);
+        for (entry, size, read_only) in [
+            (&io[0], PROOF_HIT_BUFFER_SIZE, false),
+            (&io[1], PROOF_RAY_BUFFER_SIZE, true),
+        ] {
+            match entry.ty {
+                wgpu::BindingType::Buffer {
+                    ty:
+                        wgpu::BufferBindingType::Storage {
+                            read_only: actual_read_only,
+                        },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(actual),
+                } => {
+                    assert_eq!(actual.get(), size);
+                    assert_eq!(actual_read_only, read_only);
+                }
+                _ => panic!(
+                    "HELIOS proof storage layout drifted at binding {}",
+                    entry.binding
+                ),
+            }
+        }
+
+        let error = production_gpu_hits(&[], &[]).unwrap_err();
+        assert_eq!(
+            error,
+            "HELIOS production proof requires exactly 75025 rays, got 0"
+        );
+    }
+
+    #[test]
     fn captured_physical_mask_miss_survives_leaf_boundary_rounding() {
         let heights = curvature_fixture();
         let ray = ProofRay {
@@ -2003,7 +2206,7 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
         assert_eq!(std::mem::size_of::<EarthCurvatureUniforms>(), 24);
         let shader = crate::shader_sources::hybrid_kernel();
         assert_curvature_shader_dataflow(&shader).unwrap();
-        let production_proof = format!("{shader}\n{PRODUCTION_GPU_PROOF_ENTRY}");
+        let production_proof = format!("{shader}\n{}", production_gpu_proof_entry());
         assert_production_gpu_proof_calls_exact_trace(&production_proof).unwrap();
         let severed_proof = production_proof.replace(
             "let hit = terrain_trace(ray, true, true);",

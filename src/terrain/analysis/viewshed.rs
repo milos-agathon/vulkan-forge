@@ -699,11 +699,16 @@ mod tests {
         expected = "FXC cannot compile dynamically indexed function arrays in HELIOS traversal"
     )]
     fn fxc_traversal_shape_gate_rejects_child_selection_array_mutant() {
-        let source = shader_source().replace(
+        let source = shader_source().replace("\r\n", "\n");
+        let mutant = source.replace(
             "let cell_width = uniforms.dimensions.x - 1u;\n    let cell_height = uniforms.dimensions.y - 1u;\n    let child_level = parent_level - 1u;",
             "let cell_width = uniforms.dimensions.x - 1u;\n    let cell_height = uniforms.dimensions.y - 1u;\n    var fxc_mutant: array<u32, 4u>;\n    let child_level = parent_level - 1u;",
         );
-        let module = naga::front::wgsl::parse_str(&source).expect("mutant must remain valid WGSL");
+        assert_ne!(
+            mutant, source,
+            "FXC mutant anchor must change the assembled shader"
+        );
+        let module = naga::front::wgsl::parse_str(&mutant).expect("mutant must remain valid WGSL");
         assert_fxc_compatible_traversal(&module);
     }
 

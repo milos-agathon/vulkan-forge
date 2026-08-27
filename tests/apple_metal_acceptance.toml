@@ -1,8 +1,8 @@
 version = 1
-# Owner contract: 228 semantic physical cases; 2 fresh TV20 normal processes;
-# and 35 contract-matrix cases = 265 total executions.
+# Owner contract: 229 semantic physical cases; 2 fresh TV20 normal processes;
+# and 35 contract-matrix cases = 266 total executions.
 recipe_cases = 22
-expected_tests = 265
+expected_tests = 266
 
 [[phases]]
 name = "physical-family"

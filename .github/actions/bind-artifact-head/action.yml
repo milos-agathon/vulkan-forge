@@ -1,0 +1,137 @@
+name: Bind artifact to exact head
+description: Add the exact checked-out Git SHA to a non-empty artifact payload.
+
+inputs:
+  expected-sha:
+    description: Full candidate commit SHA expected at HEAD.
+    required: true
+  artifact-paths:
+    description: Original upload-artifact paths, before adding the SHA marker.
+    required: true
+  output-path:
+    description: Path of the checked-out-head marker selected by the upload.
+    required: true
+  if-no-files-found:
+    description: Match upload-artifact's error, warn, or ignore policy.
+    required: false
+    default: warn
+
+outputs:
+  bound:
+    description: Whether an existing payload was bound to the exact head.
+    value: ${{ steps.bind.outputs.bound }}
+
+runs:
+  using: composite
+  steps:
+    - id: bind
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ inputs.expected-sha }}
+        ARTIFACT_PATHS: ${{ inputs.artifact-paths }}
+        OUTPUT_PATH: ${{ inputs.output-path }}
+        IF_NO_FILES_FOUND: ${{ inputs.if-no-files-found }}
+      run: |
+        set -euo pipefail
+
+        if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "::error::artifact candidate SHA must be 40 lowercase hexadecimal characters"
+          exit 1
+        fi
+        actual_sha="$(git rev-parse HEAD)"
+        if [[ ! "$actual_sha" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "::error::checked-out HEAD is not a full lowercase Git SHA: $actual_sha"
+          exit 1
+        fi
+        if [ "$actual_sha" != "$EXPECTED_SHA" ]; then
+          echo "::error::artifact checkout mismatch: expected=$EXPECTED_SHA actual=$actual_sha"
+          exit 1
+        fi
+
+        case "$IF_NO_FILES_FOUND" in
+          error|warn|ignore) ;;
+          *)
+            echo "::error::invalid if-no-files-found policy: $IF_NO_FILES_FOUND"
+            exit 1
+            ;;
+        esac
+
+        is_output_path() {
+          [ -e "$OUTPUT_PATH" ] && [ "$1" -ef "$OUTPUT_PATH" ]
+        }
+
+        has_file() {
+          local candidate="$1"
+          local file
+          if [ -f "$candidate" ]; then
+            ! is_output_path "$candidate"
+            return
+          fi
+          if [ -d "$candidate" ]; then
+            while IFS= read -r file; do
+              if ! is_output_path "$file"; then
+                return 0
+              fi
+            done < <(find "$candidate" -type f -print)
+          fi
+          return 1
+        }
+
+        found=false
+        while IFS= read -r pattern; do
+          pattern="${pattern%$'\r'}"
+          [ -n "$pattern" ] || continue
+          case "$pattern" in
+            !*) continue ;;
+          esac
+          if has_file "$pattern"; then
+            found=true
+            break
+          fi
+          while IFS= read -r match; do
+            if has_file "$match"; then
+              found=true
+              break 2
+            fi
+          done < <(compgen -G "$pattern" || true)
+        done <<< "$ARTIFACT_PATHS"
+
+        if [ "$found" != true ]; then
+          echo "bound=false" >> "$GITHUB_OUTPUT"
+          case "$IF_NO_FILES_FOUND" in
+            error)
+              echo "::error::no original artifact content found"
+              exit 1
+              ;;
+            warn)
+              echo "::warning::no original artifact content found; no SHA marker created"
+              ;;
+          esac
+          exit 0
+        fi
+
+        if [ -f "$OUTPUT_PATH" ]; then
+          existing_with_sentinel="$(cat "$OUTPUT_PATH"; printf x)"
+          existing="${existing_with_sentinel%x}"
+          marker_size="$(wc -c < "$OUTPUT_PATH" | tr -d '[:space:]')"
+          valid_marker=false
+          case "$marker_size" in
+            40)
+              if [ "$existing" = "$actual_sha" ]; then valid_marker=true; fi
+              ;;
+            41)
+              if [ "$existing" = "$actual_sha"$'\n' ]; then valid_marker=true; fi
+              ;;
+            42)
+              if [ "$existing" = "$actual_sha"$'\r\n' ]; then valid_marker=true; fi
+              ;;
+          esac
+          if [ "$valid_marker" != true ]; then
+            echo "::error::existing artifact head marker must contain exactly one full SHA line"
+            exit 1
+          fi
+        else
+          mkdir -p "$(dirname "$OUTPUT_PATH")"
+          printf '%s\n' "$actual_sha" > "$OUTPUT_PATH"
+        fi
+        echo "bound=true" >> "$GITHUB_OUTPUT"

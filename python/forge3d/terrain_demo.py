@@ -15,6 +15,7 @@ from .terrain_params import (
     ShadowSettings as TerrainShadowSettings,
     FogSettings as TerrainFogSettings,
     ReflectionSettings as TerrainReflectionSettings,
+    SamplingSettings,
     TriplanarSettings,
     load_height_curve_lut,
     make_terrain_params_config,
@@ -506,6 +507,7 @@ def _build_params(
     lambert_contrast: float = 0.0,  # P5-L: Lambert contrast curve strength
     colormap_srgb: bool = False,  # P6.1: Use Rgba8UnormSrgb for colormap texture
     output_srgb_eotf: bool = False,  # P6.1: Use exact linear_to_srgb() output encoding
+    height_filter: str = "Linear",
 ):
     overlays = [
         f3d.OverlayLayer.from_colormap1d(
@@ -545,6 +547,16 @@ def _build_params(
         height_curve_power=height_curve_power,
         height_curve_lut=height_curve_lut,
         shadows=_make_terrain_shadow_settings(shadow_config),
+        sampling=SamplingSettings(
+            mag_filter="Linear",
+            min_filter="Linear",
+            mip_filter="Linear",
+            anisotropy=8,
+            address_u="Repeat",
+            address_v="Repeat",
+            address_w="Repeat",
+            height_filter=height_filter,
+        ),
         overlays=overlays,
         fog=fog_config,  # P2: Pass fog config (None = disabled)
         reflection=reflection_config,  # P4: Pass reflection config (None = disabled)
@@ -698,6 +710,7 @@ def _apply_preset_cli_defaults(args: Any) -> None:
     _set_arg_default(args, "ibl_intensity", ibl.get("intensity"), 1.0)
     _set_arg_default(args, "hdr", ibl.get("path") or ibl.get("hdr_path") or _builtin_ibl_path(ibl.get("builtin")), DEFAULT_HDR)
     _set_arg_default(args, "z_scale", preset.get("exaggeration"), 2.0)
+    _set_arg_default(args, "height_filter", preset.get("height_sampling", "Linear"), "Linear")
 
 
 def _apply_preset_dem_defaults(args: Any, terrain_span: float) -> None:
@@ -1145,6 +1158,7 @@ def run(args: Any) -> int:
         lambert_contrast=float(getattr(args, "lambert_contrast", 0.0)),  # P5-L
         colormap_srgb=bool(getattr(args, "colormap_srgb", False)),  # P6.1
         output_srgb_eotf=bool(getattr(args, "output_srgb_eotf", False)),  # P6.1
+        height_filter=str(getattr(args, "height_filter", "Linear")),
     )
 
     renderer = f3d.TerrainRenderer(sess)

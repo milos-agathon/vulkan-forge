@@ -103,6 +103,9 @@ proj = { version = "0.27", optional = true }
 # G-002c C4.1: pure-Rust polygon boolean operations, feature-gated.
 geo = { version = "0.33.1", default-features = false, optional = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.27"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
@@ -128,6 +131,7 @@ harness = false
 # can fail on newly introduced lints instead of the historical baseline.
 assign_op_pattern = "allow"
 bind_instead_of_map = "allow"
+chunks_exact_to_as_chunks = "allow"
 clone_on_copy = "allow"
 collapsible_else_if = "allow"
 collapsible_if = "allow"
@@ -154,14 +158,17 @@ manual_pattern_char_comparison = "allow"
 manual_range_contains = "allow"
 manual_range_patterns = "allow"
 manual_rotate = "allow"
+manual_slice_fill = "allow"
 manual_slice_size_calculation = "allow"
 manual_strip = "allow"
 map_clone = "allow"
 map_identity = "allow"
+map_or_identity = "allow"
 match_single_binding = "allow"
 mixed_attributes_style = "allow"
 needless_borrow = "allow"
 needless_borrows_for_generic_args = "allow"
+needless_late_init = "allow"
 needless_option_as_deref = "allow"
 needless_range_loop = "allow"
 needless_return = "allow"

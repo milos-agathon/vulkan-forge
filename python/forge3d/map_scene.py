@@ -1249,7 +1249,7 @@ def _build_mapscene_terrain_params(
     try:
         import forge3d as f3d
         from .config import load_renderer_config
-        from .terrain_params import make_terrain_params_config
+        from .terrain_params import SamplingSettings, make_terrain_params_config
     except Exception:
         return None
 
@@ -1318,6 +1318,16 @@ def _build_mapscene_terrain_params(
         camera_mode=camera_mode,
         clip=(0.1, clip_far),
         shadows=_mapscene_shadow_settings(renderer_config.shadows),
+        sampling=SamplingSettings(
+            mag_filter="Linear",
+            min_filter="Linear",
+            mip_filter="Linear",
+            anisotropy=8,
+            address_u="Repeat",
+            address_v="Repeat",
+            address_w="Repeat",
+            height_filter=str(settings.get("height_sampling") or "Linear").title(),
+        ),
         overlays=[overlay],
         aa_samples=max(1, int(output.samples if output is not None else 1)),
         aa_seed=_mapscene_aa_seed(recipe),
@@ -4429,6 +4439,7 @@ def _lighting_from_preset(current: LightingPreset, preset_data: Mapping[str, Any
             "camera": preset_data.get("camera") or {},
             "cli_params": preset_data.get("cli_params") or {},
             "exaggeration": preset_data.get("exaggeration"),
+            "height_sampling": preset_data.get("height_sampling") or "Linear",
         },
         current.settings,
     )

@@ -28,7 +28,8 @@ def test_sdist_manifest_inputs_and_archive_members(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, "-m", "maturin", "sdist", "--out", str(tmp_path)],
         cwd=ROOT,
-        text=True,
+        encoding="utf-8",
+        errors="strict",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import os
 import tempfile
 from pathlib import Path
@@ -62,6 +63,77 @@ def _terrain_main_gpu_ms() -> float:
 
 def _tessella_timing_required() -> bool:
     return os.environ.get("FORGE3D_TESSELLA_TIMING_REQUIRED") == "1"
+
+
+def _function_ast(path: Path, name: str) -> ast.FunctionDef:
+    module = ast.parse(path.read_text(encoding="utf-8"))
+    return next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+
+
+def test_tessella_acceptance_uses_cold_single_samples_without_residency_warmup():
+    root = Path(__file__).resolve().parent
+    hzb_gate = _function_ast(
+        root / "test_hzb_culling.py",
+        "test_two_phase_hzb_is_bitwise_identical_to_unculled_render",
+    )
+    hzb_render_calls = [
+        node
+        for node in ast.walk(hzb_gate)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_render_rgba"
+    ]
+    assert len(hzb_render_calls) == 2
+    assert not any(
+        isinstance(node, (ast.For, ast.While, ast.comprehension))
+        for node in ast.walk(hzb_gate)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "median"
+        for node in ast.walk(hzb_gate)
+    )
+
+    flythrough_gate = _function_ast(
+        root / "test_flythrough_popping.py",
+        "test_600_frame_streaming_flythrough_has_no_pop_or_crack",
+    )
+    calls = [node for node in ast.walk(flythrough_gate) if isinstance(node, ast.Call)]
+    assert not any(
+        isinstance(call.func, ast.Name)
+        and call.func.id == "_warm_streaming_to_full_residency"
+        for call in calls
+    )
+    stream_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Attribute)
+        and call.func.attr == "stream_height_tiles"
+    ]
+    assert len(stream_calls) == 1
+    frame_loop = next(
+        node
+        for node in ast.walk(flythrough_gate)
+        if isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "index"
+    )
+    assert stream_calls[0] in ast.walk(frame_loop)
+    warmup_values = [
+        value
+        for node in ast.walk(flythrough_gate)
+        if isinstance(node, ast.Dict)
+        for key, value in zip(node.keys, node.values)
+        if isinstance(key, ast.Constant) and key.value == "streaming_warmup_steps"
+    ]
+    assert len(warmup_values) == 1
+    assert isinstance(warmup_values[0], ast.Constant)
+    assert warmup_values[0].value == 0
 
 
 def test_culling_parameter_contract():
@@ -136,20 +208,16 @@ def test_two_phase_hzb_is_bitwise_identical_to_unculled_render():
         dem = _canyon_dem()
 
         baseline_renderer = f3d.TerrainRenderer(f3d.Session(window=False))
-        baseline_timings = []
-        for _ in range(7):
-            baseline = _render_rgba(baseline_renderer, _win2_params("none"), dem, ibl)
-            if require_performance:
-                baseline_timings.append(_terrain_main_gpu_ms())
+        baseline = _render_rgba(baseline_renderer, _win2_params("none"), dem, ibl)
+        if require_performance:
+            baseline_gpu_ms = _terrain_main_gpu_ms()
 
         culled_renderer = f3d.TerrainRenderer(f3d.Session(window=False))
-        culled_timings = []
-        for _ in range(7):
-            culled = _render_rgba(
-                culled_renderer, _win2_params("hzb_two_phase"), dem, ibl
-            )
-            if require_performance:
-                culled_timings.append(_terrain_main_gpu_ms())
+        culled = _render_rgba(
+            culled_renderer, _win2_params("hzb_two_phase"), dem, ibl
+        )
+        if require_performance:
+            culled_gpu_ms = _terrain_main_gpu_ms()
 
     np.testing.assert_array_equal(culled, baseline)
     stats = culling_stats()
@@ -162,8 +230,6 @@ def test_two_phase_hzb_is_bitwise_identical_to_unculled_render():
     if not require_performance:
         return
 
-    baseline_gpu_ms = float(np.median(baseline_timings[2:]))
-    culled_gpu_ms = float(np.median(culled_timings[2:]))
     assert "timestamp_query" in certificate["capabilities"]["granted"], certificate[
         "capabilities"
     ]

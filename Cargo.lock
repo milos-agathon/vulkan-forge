@@ -872,6 +872,7 @@ dependencies = [
  "lyon_geom",
  "lyon_path",
  "lyon_tessellation",
+ "metal",
  "naga",
  "ndarray",
  "numpy",

@@ -310,19 +310,22 @@ mod tests {
     }
 
     #[test]
-    fn terrain_height_sampling_is_portable_manual_bilinear() {
+    fn terrain_height_sampling_has_portable_linear_and_nearest_modes() {
         let source = terrain();
         assert!(source.contains("fn sample_height_bilinear_level("));
-        assert_eq!(source.matches("textureLoad(height_tex").count(), 4);
+        assert!(source.contains("fn sample_height_nearest_level("));
+        assert!(source.contains("fn sample_height_filtered_level("));
+        assert!(source.contains("& 0x8u"));
+        assert_eq!(source.matches("textureLoad(height_tex").count(), 5);
         assert!(!source.contains("textureSample(height_tex"));
         assert!(!source.contains("textureSampleLevel(height_tex"));
 
         // Both the ordinary geometry path and every clipmap morph lookup must
         // share the same reconstruction instead of drifting by callsite.
-        assert!(source.contains("let h_raw = sample_height_bilinear(uv);"));
-        assert!(source.contains("let h_fine = sample_height_bilinear(uv);"));
+        assert!(source.contains("let h_raw = sample_height_filtered(uv);"));
+        assert!(source.contains("let h_fine = sample_height_filtered(uv);"));
         assert_eq!(
-            source.matches("sample_height_bilinear(coarse_base").count(),
+            source.matches("sample_height_filtered(coarse_base").count(),
             4
         );
 
@@ -332,16 +335,18 @@ mod tests {
         let resolve = terrain_visbuffer_resolve(false);
         assert!(!resolve.contains("textureSample(height_tex"));
         assert!(!resolve.contains("textureSampleLevel(height_tex"));
-        assert_eq!(resolve.matches("textureLoad(height_tex").count(), 4);
-        assert!(resolve.contains("let h_fine = sample_height_bilinear(uv);"));
+        assert_eq!(resolve.matches("textureLoad(height_tex").count(), 5);
+        assert!(resolve.contains("let h_fine = sample_height_filtered(uv);"));
 
         // The CSM caster and visible surface must agree between texel centres.
         let shadow = terrain_shadow_depth();
         assert!(shadow.contains("fn sample_height_bilinear("));
-        assert_eq!(shadow.matches("textureLoad(height_tex").count(), 4);
+        assert!(shadow.contains("fn sample_height_nearest("));
+        assert!(shadow.contains("fn sample_height_filtered("));
+        assert_eq!(shadow.matches("textureLoad(height_tex").count(), 5);
         assert!(!shadow.contains("textureSample(height_tex"));
         assert!(!shadow.contains("textureSampleLevel(height_tex"));
-        assert!(shadow.contains("let h_raw = sample_height_bilinear(uv);"));
+        assert!(shadow.contains("let h_raw = sample_height_filtered(uv);"));
     }
 
     #[test]

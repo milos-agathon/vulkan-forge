@@ -3,6 +3,7 @@ use super::super::*;
 #[pyfunction]
 pub(crate) fn engine_info(py: Python<'_>) -> PyResult<Py<PyDict>> {
     let info = engine_context::engine_info()?;
+    let identity = crate::core::gpu::active_adapter_identity(crate::core::gpu::try_ctx()?);
     let d = PyDict::new_bound(py);
     d.set_item("backend", info.backend)?;
     d.set_item("adapter_name", info.adapter_name)?;
@@ -11,6 +12,10 @@ pub(crate) fn engine_info(py: Python<'_>) -> PyResult<Py<PyDict>> {
     d.set_item("max_buffer_size", info.max_buffer_size)?;
     d.set_item("device_type", info.device_type)?;
     d.set_item("software_fallback", info.software_fallback)?;
+    d.set_item("vendor", identity.vendor_id)?;
+    d.set_item("device", identity.device_id)?;
+    d.set_item("raw_vendor", identity.raw_vendor_id)?;
+    d.set_item("raw_device", identity.raw_device_id)?;
     Ok(d.into())
 }
 
@@ -263,17 +268,21 @@ pub(crate) fn device_probe(py: Python<'_>, backend: Option<String>) -> PyResult<
         .as_deref()
         .is_some_and(|name| name.eq_ignore_ascii_case("webgpu"));
     if !requested_webgpu {
-        if let Some((info, software_fallback)) = crate::core::gpu::active_adapter_info() {
+        if let Some(ctx) = crate::core::gpu::ctx_if_initialized() {
+            let info = ctx.adapter.get_info();
+            let identity = crate::core::gpu::active_adapter_identity(ctx);
             let d = PyDict::new_bound(py);
             d.set_item("status", "ok")?;
             d.set_item("name", info.name)?;
-            d.set_item("vendor", info.vendor)?;
-            d.set_item("device", info.device)?;
+            d.set_item("vendor", identity.vendor_id)?;
+            d.set_item("device", identity.device_id)?;
+            d.set_item("raw_vendor", identity.raw_vendor_id)?;
+            d.set_item("raw_device", identity.raw_device_id)?;
             d.set_item("device_type", format!("{:?}", info.device_type))?;
             d.set_item("backend", format!("{:?}", info.backend))?;
             d.set_item("driver", info.driver)?;
             d.set_item("driver_info", info.driver_info)?;
-            d.set_item("software_fallback", software_fallback)?;
+            d.set_item("software_fallback", ctx.software_fallback)?;
             return Ok(d.into_py(py));
         }
     }
@@ -302,6 +311,8 @@ pub(crate) fn device_probe(py: Python<'_>, backend: Option<String>) -> PyResult<
         d.set_item("name", info.name.clone())?;
         d.set_item("vendor", info.vendor)?;
         d.set_item("device", info.device)?;
+        d.set_item("raw_vendor", info.vendor)?;
+        d.set_item("raw_device", info.device)?;
         d.set_item("device_type", format!("{:?}", info.device_type))?;
         d.set_item("backend", format!("{:?}", info.backend))?;
         d.set_item("driver", info.driver)?;

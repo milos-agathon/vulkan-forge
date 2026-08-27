@@ -46,6 +46,10 @@ impl CpuVisibilityOracle {
 
         let decoded = params.decoded();
         let (h_min, h_max) = decoded.clamp.height_range;
+        let nearest_height_filter = matches!(
+            decoded.sampling.height_filter,
+            crate::terrain::render_params::FilterModeNative::Nearest
+        );
         let h_center = (h_min + h_max) * 0.5;
         let skirt = super::core::clipmap_camera_config(&params.camera_mode)
             .map(|config| config.ring_resolution as f32 * 0.001)
@@ -59,7 +63,8 @@ impl CpuVisibilityOracle {
                 // before applying the configured height curve. Building the
                 // BVH from fine samples alone moves triangle edges enough to
                 // change primitive identity at grazing clipmap cameras.
-                let height = sample_clipmap_height(heightmap, height_dims, vertex);
+                let height =
+                    sample_clipmap_height(heightmap, height_dims, vertex, nearest_height_filter);
                 let height = apply_height_curve(height, (h_min, h_max), params);
                 let skirt_offset = if vertex.is_skirt() { skirt } else { 0.0 };
                 [
@@ -250,13 +255,47 @@ fn sample_height_bilinear(data: &[f32], dims: (u32, u32), uv: [f32; 2]) -> f32 {
     top * (1.0 - ty) + bottom * ty
 }
 
+fn sample_height_nearest(data: &[f32], dims: (u32, u32), uv: [f32; 2]) -> f32 {
+    let x = ((uv[0].clamp(0.0, 1.0) * dims.0 as f32).floor() as usize)
+        .min(dims.0.saturating_sub(1) as usize);
+    let y = ((uv[1].clamp(0.0, 1.0) * dims.1 as f32).floor() as usize)
+        .min(dims.1.saturating_sub(1) as usize);
+    data[y * dims.0 as usize + x]
+}
+
+fn sample_height_filtered(data: &[f32], dims: (u32, u32), uv: [f32; 2], nearest: bool) -> f32 {
+    if nearest {
+        sample_height_nearest(data, dims, uv)
+    } else {
+        sample_height_bilinear(data, dims, uv)
+    }
+}
+
+#[cfg(test)]
+mod height_filter_tests {
+    use super::sample_height_filtered;
+
+    #[test]
+    fn nearest_height_filter_matches_normalized_texture_coordinates() {
+        let data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        assert_eq!(sample_height_filtered(&data, (3, 3), [0.2, 0.2], true), 0.0);
+        assert_eq!(sample_height_filtered(&data, (3, 3), [0.5, 0.5], true), 4.0);
+        assert_eq!(sample_height_filtered(&data, (3, 3), [1.0, 1.0], true), 8.0);
+        assert_ne!(
+            sample_height_filtered(&data, (3, 3), [0.2, 0.2], false),
+            sample_height_filtered(&data, (3, 3), [0.2, 0.2], true),
+        );
+    }
+}
+
 fn sample_clipmap_height(
     data: &[f32],
     dims: (u32, u32),
     vertex: &crate::terrain::clipmap::ClipmapVertex,
+    nearest: bool,
 ) -> f32 {
     let uv = [vertex.uv[0].clamp(0.0, 1.0), vertex.uv[1].clamp(0.0, 1.0)];
-    let fine = sample_height_bilinear(data, dims, uv);
+    let fine = sample_height_filtered(data, dims, uv, nearest);
     let coarse_texels = 2.0_f32.powf((vertex.morph_data[1].max(0.0) + 1.0).min(16.0));
     let coarse_step = [
         coarse_texels / dims.0.saturating_sub(1).max(1) as f32,
@@ -268,24 +307,27 @@ fn sample_clipmap_height(
         coarse_cell[1].floor() * coarse_step[1],
     ];
     let coarse_t = [coarse_cell[0].fract(), coarse_cell[1].fract()];
-    let h00 = sample_height_bilinear(data, dims, coarse_base);
-    let h10 = sample_height_bilinear(
+    let h00 = sample_height_filtered(data, dims, coarse_base, nearest);
+    let h10 = sample_height_filtered(
         data,
         dims,
         [coarse_base[0] + coarse_step[0], coarse_base[1]],
+        nearest,
     );
-    let h01 = sample_height_bilinear(
+    let h01 = sample_height_filtered(
         data,
         dims,
         [coarse_base[0], coarse_base[1] + coarse_step[1]],
+        nearest,
     );
-    let h11 = sample_height_bilinear(
+    let h11 = sample_height_filtered(
         data,
         dims,
         [
             coarse_base[0] + coarse_step[0],
             coarse_base[1] + coarse_step[1],
         ],
+        nearest,
     );
     let coarse_top = h00 + (h10 - h00) * coarse_t[0];
     let coarse_bottom = h01 + (h11 - h01) * coarse_t[0];

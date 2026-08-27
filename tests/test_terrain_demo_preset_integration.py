@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 import forge3d as f3d
 from forge3d import presets
@@ -21,6 +22,7 @@ from forge3d.terrain_demo import (
     _apply_preset_dem_defaults,
     _apply_preset_cli_defaults,
 )
+from forge3d.terrain_params import SamplingSettings, make_terrain_params_config
 
 
 def test_acceptance_one_liner_outdoor_sun_presets_merge() -> None:
@@ -81,6 +83,33 @@ def test_terrain_demo_preset_defaults_come_from_preset_payload() -> None:
     assert args.ibl_intensity == 0.3
     assert Path(args.hdr).exists()
     assert args.z_scale == 1.35
+    assert args.height_filter == "Nearest"
+
+
+def test_height_filter_defaults_to_linear_and_validates_choices() -> None:
+    sampling = SamplingSettings("Linear", "Linear", "Linear", 1, "Repeat", "Repeat", "Repeat")
+    assert sampling.height_filter == "Linear"
+    nearest = SamplingSettings(
+        "Linear", "Linear", "Linear", 1, "Repeat", "Repeat", "Repeat", "Nearest"
+    )
+    assert nearest.height_filter == "Nearest"
+    for native_sampling in (sampling, nearest):
+        f3d.TerrainRenderParams(
+            make_terrain_params_config(
+                size_px=(64, 64),
+                render_scale=1.0,
+                terrain_span=10.0,
+                msaa_samples=1,
+                z_scale=1.0,
+                exposure=1.0,
+                domain=(0.0, 1.0),
+                sampling=native_sampling,
+            )
+        )
+    with pytest.raises(ValueError, match="height_filter"):
+        SamplingSettings(
+            "Linear", "Linear", "Linear", 1, "Repeat", "Repeat", "Repeat", "Cubic"
+        )
 
 
 def test_terrain_demo_preserves_explicit_cli_overrides() -> None:
@@ -129,4 +158,6 @@ def test_mapscene_and_terrain_demo_premium_preset_fields_match() -> None:
         assert scene.recipe.lighting.intensity == args.sun_intensity
         assert scene.recipe.lighting.settings["ibl"]["intensity"] == args.ibl_intensity
         assert scene.recipe.lighting.settings["exaggeration"] == args.z_scale
-
+        expected_height_filter = "Nearest" if name == "rainier_showcase" else "Linear"
+        assert scene.recipe.lighting.settings["height_sampling"] == expected_height_filter
+        assert args.height_filter == expected_height_filter
