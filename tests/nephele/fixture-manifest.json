@@ -114,7 +114,7 @@
     "medium": {
       "artifact": "medium.json",
       "path": "tests/nephele/fixture/medium.json",
-      "sha256": "5658c27886e4c459ec436afcb47014dd58d5ace07c5765c8dece2dc0a48d517a"
+      "sha256": "40cb93a104db8217de4dae011d1d19dba4fe54c8942d0171e6767fb7746e9cf9"
     },
     "sun": {
       "artifact": "sun.json",

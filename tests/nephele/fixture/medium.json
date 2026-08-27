@@ -28,6 +28,7 @@
     16384,
     1311
   ],
+  "density_scale": 1.0,
   "density_transport": {
     "decode": "unorm16-div-65535-as-f32-then-ieee-f16-rne",
     "f16_sha256": "b67c3b52d1385022cb2b7e788c1dfd3a9220758a8dc7f793d3b0b4294aeeb1fe",
@@ -35,7 +36,6 @@
     "schema": "forge3d.nephele.density_transport/1",
     "storage": "ieee-f16-bits-little-endian"
   },
-  "density_scale": 1.0,
   "domain": {
     "bounds_max": [
       30.0,
