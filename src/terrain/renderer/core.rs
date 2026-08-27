@@ -7,9 +7,9 @@ use crate::core::resource_tracker::{TrackedBuffer, TrackedTexture};
 /// any PyO3 attributes so it can be reused by the interactive viewer and
 /// other Rust callers.
 pub struct TerrainScene {
-    pub(super) device: Arc<wgpu::Device>,
-    pub(super) queue: Arc<wgpu::Queue>,
-    pub(super) adapter: Arc<wgpu::Adapter>,
+    pub(in crate::terrain) device: Arc<wgpu::Device>,
+    pub(in crate::terrain) queue: Arc<wgpu::Queue>,
+    pub(in crate::terrain) adapter: Arc<wgpu::Adapter>,
     pub(super) allocation_owner: crate::core::resource_tracker::AllocationOwner,
     pub(super) pipeline: Mutex<PipelineCache>,
     pub(super) bind_group_layout: wgpu::BindGroupLayout,
@@ -20,6 +20,13 @@ pub struct TerrainScene {
     pub(super) background_blit_pipeline: wgpu::RenderPipeline,
     pub(super) aether_background_blit_pipeline: wgpu::RenderPipeline,
     pub(super) normal_blit_pipeline: wgpu::RenderPipeline,
+    pub(super) media_tonemap_bind_group_layout: wgpu::BindGroupLayout,
+    pub(super) media_tonemap_pipeline: wgpu::RenderPipeline,
+    pub(super) media_tonemap_sampler: wgpu::Sampler,
+    pub(super) _media_tonemap_identity_lut: TrackedTexture,
+    pub(super) media_tonemap_identity_lut_view: wgpu::TextureView,
+    pub(super) media_tonemap_lut_sampler: wgpu::Sampler,
+    pub(super) media_tonemap_lut: Mutex<Option<MediaTonemapLut>>,
     pub(super) offline_compute: OfflineComputeResources,
     pub(super) sampler_linear: wgpu::Sampler,
     pub(super) sky_bind_group_layout0: wgpu::BindGroupLayout,
@@ -67,7 +74,7 @@ pub struct TerrainScene {
     pub(super) light_buffer: Arc<Mutex<LightBuffer>>,
     pub(super) light_override: Mutex<Option<Vec<Light>>>,
     pub(super) noop_shadow: NoopShadow,
-    pub(super) csm_renderer: crate::shadows::CsmRenderer,
+    pub(in crate::terrain) csm_renderer: crate::shadows::CsmRenderer,
     pub(super) shadow_depth_pipeline: wgpu::RenderPipeline,
     pub(super) shadow_depth_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) shadow_bind_group_layout: wgpu::BindGroupLayout,
@@ -77,6 +84,8 @@ pub struct TerrainScene {
     pub(super) moment_blur_pass: Option<crate::shadows::ShadowBlurPass>,
     pub(super) fog_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) fog_uniform_buffer: TrackedBuffer,
+    pub(super) _media_light_transmittance_fallback_texture: TrackedTexture,
+    pub(super) media_light_transmittance_fallback_view: wgpu::TextureView,
     pub(super) water_reflection_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) water_reflection_uniform_buffer: TrackedBuffer,
     pub(super) water_reflection_texture: Mutex<TrackedTexture>,
@@ -127,6 +136,7 @@ pub struct TerrainScene {
     pub(super) reflection_probe_mip_levels: u32,
     pub(super) aov_pipeline: Mutex<Option<wgpu::RenderPipeline>>,
     pub(super) aov_pipeline_sample_count: Mutex<u32>,
+    pub(super) aov_pipeline_color_format: Mutex<wgpu::TextureFormat>,
     /// Bitmask of the albedo/normal/depth color targets carried by the cached
     /// one-shot AOV pipeline. Depth-only evidence must not pay for two unused
     /// RGBA16F attachments on every frame.
@@ -159,12 +169,21 @@ pub struct TerrainScene {
         Option<crate::path_tracing::hybrid_compute::terrain_heightfield::TerrainMinMaxPyramid>,
     pub(super) culling_stats: crate::terrain::culling::two_phase::CullingStats,
     pub(super) height_streaming: Option<super::streaming::HeightVtFamilyRuntime>,
+    pub(in crate::terrain) media_resources: Mutex<Option<super::media::TerrainMediaResources>>,
+    pub(in crate::terrain) media_terrain_occlusion_enabled: Mutex<bool>,
     /// CENSOR Task 9: owned per-render GPU timing manager, lazily constructed on
     /// the first render when the device granted `TIMESTAMP_QUERY`. Stored behind
     /// a `Mutex<Option<..>>` because the draw methods borrow `&self`; a render
     /// takes it out, scopes each pass, then puts it back.
     pub(super) gpu_timing: Mutex<Option<crate::core::gpu_timing::GpuTimingManager>>,
     pub(super) _tracked_scene_textures: Vec<crate::core::resource_tracker::ResourceHandle>,
+}
+
+pub(super) struct MediaTonemapLut {
+    pub(super) key: String,
+    pub(super) _texture: TrackedTexture,
+    pub(super) view: wgpu::TextureView,
+    pub(super) size: u32,
 }
 
 pub struct ViewerTerrainData {
@@ -198,6 +217,7 @@ pub(super) struct OfflineAccumulationState {
     pub(super) height_inputs: super::draw::UploadedHeightInputs,
     pub(super) materials: super::draw::PreparedMaterials,
     pub(super) ibl_bind_group: wgpu::BindGroup,
+    pub(super) media_environment_radiance: [f32; 3],
     pub(super) height_curve_lut_uploaded: Option<(TrackedTexture, wgpu::TextureView)>,
     pub(super) hdr_aov_pipeline: wgpu::RenderPipeline,
     pub(super) hdr_background_blit_pipeline: wgpu::RenderPipeline,
@@ -257,6 +277,7 @@ pub(super) struct OverlayBinding {
 
 pub(super) struct PipelineCache {
     pub(super) sample_count: u32,
+    pub(super) color_format: wgpu::TextureFormat,
     pub(super) pipeline: wgpu::RenderPipeline,
     pub(super) clipmap_pipeline: Option<wgpu::RenderPipeline>,
     pub(super) visibility_write_pipeline: Option<wgpu::RenderPipeline>,
@@ -294,6 +315,8 @@ pub(super) fn is_zup_camera_mode(camera_mode: &str) -> bool {
         .skip(1)
         .any(|part| part.trim().eq_ignore_ascii_case("zup"))
 }
+
+pub(crate) use crate::terrain::is_yup_camera_mode;
 
 pub(super) fn clipmap_camera_config(
     camera_mode: &str,
@@ -521,7 +544,9 @@ impl Drop for TerrainScene {
 
 #[cfg(test)]
 mod camera_mode_tests {
-    use super::{is_clipmap_camera_mode, is_mesh_camera_mode, is_zup_camera_mode};
+    use super::{
+        is_clipmap_camera_mode, is_mesh_camera_mode, is_yup_camera_mode, is_zup_camera_mode,
+    };
 
     #[test]
     fn zup_suffix_is_detected_and_tag_helpers_still_match() {
@@ -534,5 +559,15 @@ mod camera_mode_tests {
         assert!(is_clipmap_camera_mode("clipmap:4:64"));
         assert!(!is_zup_camera_mode("clipmap:4:64"));
         assert!(is_zup_camera_mode("clipmap:4:64:zup"));
+    }
+
+    #[test]
+    fn yup_suffix_is_mesh_only_and_never_selects_the_fullscreen_triangle() {
+        assert!(is_yup_camera_mode("mesh:yup"));
+        assert!(is_yup_camera_mode("mesh:YUP"));
+        assert!(is_mesh_camera_mode("mesh:yup"));
+        assert!(!is_yup_camera_mode("screen"));
+        assert!(!is_yup_camera_mode("screen:yup"));
+        assert!(!is_yup_camera_mode("clipmap:4:64:yup"));
     }
 }

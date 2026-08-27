@@ -52,9 +52,7 @@ struct FinishedCapture {
     passes: Vec<PassRecord>,
     /// Signed model declarations are properties, not GPU pass claims.
     models: BTreeMap<String, String>,
-    peak_host_visible_bytes: u64,
-    peak_device_local_bytes: u64,
-    by_label: BTreeMap<String, u64>,
+    ledger: crate::core::resource_tracker::LedgerReport,
     /// (kind, name, consequence), sorted by (kind, name).
     degradations: Vec<(String, String, String)>,
     codec: Option<CodecSnapshot>,
@@ -409,9 +407,7 @@ fn finish_render_capture() {
         limits,
         passes,
         models,
-        peak_host_visible_bytes: ledger.peak_host_visible_bytes,
-        peak_device_local_bytes: ledger.peak_device_local_bytes,
-        by_label: ledger.by_label,
+        ledger,
         degradations,
         codec,
         precision: CURRENT_PRECISION.with(|slot| slot.borrow_mut().take()),
@@ -577,9 +573,9 @@ pub fn execution_report_json() -> Result<String, RenderError> {
             .collect(),
         models: &cap.models,
         allocations: AllocationsJson {
-            peak_host_visible_bytes: cap.peak_host_visible_bytes,
-            peak_device_local_bytes: cap.peak_device_local_bytes,
-            by_label: &cap.by_label,
+            peak_host_visible_bytes: cap.ledger.peak_host_visible_bytes,
+            peak_device_local_bytes: cap.ledger.peak_device_local_bytes,
+            by_label: &cap.ledger.by_label,
         },
         degradations: cap
             .degradations
@@ -601,6 +597,14 @@ pub fn execution_report_json() -> Result<String, RenderError> {
 
     serde_json::to_string(&report)
         .map_err(|e| RenderError::render(format!("certificate serialization failed: {e}")))
+}
+
+pub(crate) fn completed_ledger_report(
+) -> Result<crate::core::resource_tracker::LedgerReport, RenderError> {
+    lock_last()
+        .as_ref()
+        .map(|capture| capture.ledger.clone())
+        .ok_or_else(|| RenderError::render("no completed render allocation capture is available"))
 }
 
 /// Sign the canonical RenderCertificate payload digest with Ed25519.

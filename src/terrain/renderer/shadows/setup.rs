@@ -146,11 +146,8 @@ impl TerrainScene {
             params.clip.1,
         );
 
-        let sun_direction = glam::Vec3::new(
-            -decoded.light.direction[0],
-            -decoded.light.direction[1],
-            -decoded.light.direction[2],
-        );
+        let sun_direction =
+            -media::terrain_light_direction(&params.camera_mode, decoded.light.direction);
         let terrain_spacing = params.terrain_span.max(1e-3);
         let height_exag = params.z_scale;
         let height_min = decoded.clamp.height_range.0;
@@ -294,6 +291,7 @@ impl TerrainScene {
                 params.clip.0,
                 shadow_far,
                 height_curve,
+                is_yup_camera_mode(&params.camera_mode),
             )?;
 
             self.generate_shadow_moments(encoder)?;

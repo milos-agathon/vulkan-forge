@@ -67,6 +67,22 @@ pub(super) fn parse_aov_settings(params: &Bound<'_, PyAny>) -> AovSettingsNative
                 .getattr("depth")
                 .and_then(|v| v.extract())
                 .unwrap_or(true);
+            let transmittance: bool = aov
+                .getattr("transmittance")
+                .and_then(|v| v.extract())
+                .unwrap_or(false);
+            let in_scatter: bool = aov
+                .getattr("in_scatter")
+                .and_then(|v| v.extract())
+                .unwrap_or(false);
+            let cloud_shadow: bool = aov
+                .getattr("cloud_shadow")
+                .and_then(|v| v.extract())
+                .unwrap_or(false);
+            let optical_depth: bool = aov
+                .getattr("optical_depth")
+                .and_then(|v| v.extract())
+                .unwrap_or(false);
             // VERITAS: off unless the AovSettings dataclass carries the flag.
             let source_id: bool = aov
                 .getattr("source_id")
@@ -91,6 +107,10 @@ pub(super) fn parse_aov_settings(params: &Bound<'_, PyAny>) -> AovSettingsNative
                 albedo,
                 normal,
                 depth,
+                transmittance,
+                in_scatter,
+                cloud_shadow,
+                optical_depth,
                 source_id,
                 output_dir,
                 format,

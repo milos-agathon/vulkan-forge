@@ -70,6 +70,58 @@ mod tests {
     }
 
     #[test]
+    fn canonical_media_attachment_and_removal_translate_without_clamping() {
+        let attach = parse_ipc_request(
+            r#"{"cmd":"set_media","media":{"sigma_a":[0.1,0.2,0.3],"sigma_s":[0.4,0.5,0.6],"phase":"Isotropic","density":{"Homogeneous":{"authored_density":0.75,"mapping":{"physical_density_per_authored_unit":2.0}}},"version":9}}"#,
+        )
+        .unwrap();
+        match ipc_request_to_viewer_cmd(&attach).unwrap().unwrap() {
+            crate::viewer::viewer_enums::ViewerCmd::SetMedia {
+                medium: Some(medium),
+                version,
+            } => {
+                assert_eq!(version, 9);
+                assert!(medium
+                    .sigma_t()
+                    .components()
+                    .into_iter()
+                    .zip([0.5, 0.7, 0.9])
+                    .all(|(actual, expected)| (actual - expected).abs() < 1.0e-6));
+            }
+            _ => panic!("expected canonical media attachment"),
+        }
+
+        let remove = parse_ipc_request(r#"{"cmd":"set_media","media":null}"#).unwrap();
+        assert!(matches!(
+            ipc_request_to_viewer_cmd(&remove).unwrap(),
+            Some(crate::viewer::viewer_enums::ViewerCmd::SetMedia {
+                medium: None,
+                version: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn canonical_media_rejects_a_present_malformed_version_but_defaults_absent() {
+        let malformed: IpcRequest = serde_json::from_str(
+            r#"{"cmd":"set_media","media":{"sigma_a":[0.1,0.1,0.1],"sigma_s":[0.2,0.2,0.2],"phase":"Isotropic","density":{"Homogeneous":{"authored_density":1.0,"mapping":{"physical_density_per_authored_unit":1.0}}},"version":"bad"}}"#,
+        )
+        .unwrap();
+        assert!(ipc_request_to_viewer_cmd(&malformed)
+            .unwrap_err()
+            .contains("version must be a non-negative integer"));
+
+        let absent: IpcRequest = serde_json::from_str(
+            r#"{"cmd":"set_media","media":{"sigma_a":[0.1,0.1,0.1],"sigma_s":[0.2,0.2,0.2],"phase":"Isotropic","density":{"Homogeneous":{"authored_density":1.0,"mapping":{"physical_density_per_authored_unit":1.0}}}}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            ipc_request_to_viewer_cmd(&absent).unwrap(),
+            Some(crate::viewer::viewer_enums::ViewerCmd::SetMedia { version: 0, .. })
+        ));
+    }
+
+    #[test]
     fn pick_and_manual_label_update_translate_to_execution_commands() {
         let pick = parse_ipc_request(r#"{"cmd":"pick_at","x":320,"y":200,"shift":true}"#).unwrap();
         assert!(matches!(

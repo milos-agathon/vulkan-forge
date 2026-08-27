@@ -901,6 +901,148 @@ mod tests {
         std::mem::forget(queue);
     }
 
+    /// Physical regression for the macOS 26 Metal deferred-resolve path.
+    ///
+    /// Each round has two nonzero query ranges with nonzero destination
+    /// offsets. Commands are recorded after both resolve boundaries, inside
+    /// an enclosing debug group, and the final readback copy is in the final
+    /// continuation. There are no warmups or retries: every written query and
+    /// every untouched sentinel is checked on the first submitted round.
+    #[test]
+    fn gpu_timing_deferred_resolve_ranges_offsets_and_continuations() {
+        let Some((device, queue)) = crate::core::gpu::create_device_and_queue_for_test() else {
+            eprintln!("[gpu_timing test] no GPU adapter available; skipping");
+            return;
+        };
+        if !device.features().contains(Features::TIMESTAMP_QUERY) {
+            eprintln!("[gpu_timing test] TIMESTAMP_QUERY not granted; skipping");
+            return;
+        }
+
+        let query_set = device.create_query_set(&QuerySetDescriptor {
+            label: Some("gpu_timing_deferred_ranges"),
+            ty: QueryType::Timestamp,
+            count: 8,
+        });
+        let src = tracked_create_buffer(
+            &device,
+            &BufferDescriptor {
+                label: Some("gpu_timing_deferred_src"),
+                size: 4096,
+                usage: BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        )
+        .expect("alloc");
+        let dst = tracked_create_buffer(
+            &device,
+            &BufferDescriptor {
+                label: Some("gpu_timing_deferred_dst"),
+                size: 4096,
+                usage: BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        )
+        .expect("alloc");
+
+        for round in 0..2 {
+            let resolve = tracked_create_buffer(
+                &device,
+                &BufferDescriptor {
+                    label: Some("gpu_timing_deferred_resolve"),
+                    size: 1024,
+                    usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
+                    mapped_at_creation: true,
+                },
+            )
+            .expect("alloc");
+            for byte in &mut *resolve.slice(..).get_mapped_range_mut() {
+                *byte = 0xA5;
+            }
+            resolve.unmap();
+            let readback = tracked_create_buffer(
+                &device,
+                &BufferDescriptor {
+                    label: Some("gpu_timing_deferred_readback"),
+                    size: 1024,
+                    usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            )
+            .expect("alloc");
+
+            let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("gpu_timing_deferred_ranges_encoder"),
+            });
+            encoder.push_debug_group("deferred timestamp outer scope");
+            encoder.push_debug_group("deferred timestamp inner scope");
+            encoder.write_timestamp(&query_set, 1);
+            encoder.copy_buffer_to_buffer(&src, 0, &dst, 0, 4096);
+            encoder.write_timestamp(&query_set, 2);
+            encoder.resolve_query_set(&query_set, 1..3, &resolve, 256);
+
+            // This command is deliberately after the first deferred resolve.
+            encoder.copy_buffer_to_buffer(&dst, 0, &src, 0, 4096);
+            encoder.write_timestamp(&query_set, 4);
+            encoder.copy_buffer_to_buffer(&src, 0, &dst, 0, 4096);
+            encoder.write_timestamp(&query_set, 5);
+            encoder.resolve_query_set(&query_set, 4..6, &resolve, 512);
+
+            // These commands must execute in the final continuation, after
+            // the second resolve has completed.
+            encoder.copy_buffer_to_buffer(&dst, 0, &src, 0, 4096);
+            encoder.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 1024);
+            encoder.pop_debug_group();
+            encoder.pop_debug_group();
+            queue.submit(Some(encoder.finish()));
+
+            // The wait is the acceptance fence: no warmup or retry is used.
+            device.poll(Maintain::Wait);
+            let slice = readback.slice(..);
+            let (sender, receiver) = std::sync::mpsc::channel();
+            slice.map_async(MapMode::Read, move |result| {
+                sender.send(result).ok();
+            });
+            device.poll(Maintain::Wait);
+            receiver
+                .recv()
+                .expect("timestamp readback callback")
+                .expect("timestamp readback map");
+            let data = slice.get_mapped_range();
+            let timestamp =
+                |offset: usize| u64::from_ne_bytes(data[offset..offset + 8].try_into().unwrap());
+            let first = timestamp(256);
+            let second = timestamp(264);
+            let third = timestamp(512);
+            let fourth = timestamp(520);
+            eprintln!(
+                "[gpu_timing physical] round={round} timestamps=[{first},{second},{third},{fourth}]"
+            );
+            assert!(
+                first != 0 && second != 0,
+                "round {round}: first range was zero"
+            );
+            assert!(
+                third != 0 && fourth != 0,
+                "round {round}: second range was zero"
+            );
+            assert!(second >= first, "round {round}: first range unordered");
+            assert!(fourth >= third, "round {round}: second range unordered");
+            for offset in (0..1024).step_by(8) {
+                if [256, 264, 512, 520].contains(&offset) {
+                    continue;
+                }
+                assert_eq!(
+                    &data[offset..offset + 8],
+                    &[0xA5; 8],
+                    "round {round}: sentinel at offset {offset} was modified"
+                );
+            }
+            drop(data);
+            readback.unmap();
+        }
+    }
+
     #[test]
     fn certificate_gpu_ms_zeros_invalid_timestamps() {
         assert_eq!(

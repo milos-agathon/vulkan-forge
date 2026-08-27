@@ -132,10 +132,9 @@ fn fog_select_cascade(view_depth: f32) -> u32 {
 }
 
 fn sample_shadow(world_pos: vec3<f32>) -> f32 {
-    // TODO P6: textureSampleCompare requires derivatives and is forbidden in compute shaders.
-    // Implement compute-compatible shadow sampling using textureLoad with manual depth comparison,
-    // or render volumetric shadows in a fragment shader pass.
-    // For now, disable shadows to unblock viewer launch.
+    // Compute-compatible manual CSM/PCF: textureLoad plus explicit comparison.
+    // This function is reachable from compute entries and intentionally never
+    // calls textureSampleCompare.
 
     // If shadows are disabled via params, treat all samples as fully lit.
     if (params.use_shadows == 0u) {

@@ -7,6 +7,7 @@ import numpy as np
 
 import forge3d as f3d
 from forge3d import determinism, geometry, path_tracing, terrain_demo
+from forge3d import media
 from forge3d.helpers.offscreen import render_offscreen_rgba
 from forge3d import sdf
 from forge3d.legend import Legend
@@ -85,6 +86,7 @@ RENDER_ENTRYPOINTS = {
     "path_tracing.render_aovs": path_tracing.render_aovs,
     "path_tracing.render_rgba": path_tracing.render_rgba,
     "path_tracing.hybrid_render_terrain_reference": path_tracing.hybrid_render_terrain_reference,
+    "media.render_volumetric_reference": media.render_volumetric_reference,
     "HybridRenderer.render_sdf_scene": HybridRenderer.render_sdf_scene,
     "sdf.render_simple_scene": sdf.render_simple_scene,
     "Legend.render": Legend.render,
@@ -185,7 +187,7 @@ def test_render_surface_sweep_has_no_uncertified_entrypoints() -> None:
     callable named `render_*` on `forge3d` and `forge3d._forge3d`: each must
     either accept `certificate=` or carry a documented exclusion."""
     candidates: dict[str, object] = {}
-    for module in (f3d, _native):
+    for module in (f3d, _native, media):
         for name in dir(module):
             if name.startswith("render_"):
                 obj = getattr(module, name)
@@ -211,7 +213,7 @@ def test_render_surface_sweep_has_no_uncertified_entrypoints() -> None:
 
 def _discover_public_render_surface() -> dict[str, object]:
     """Discover module functions and class methods instead of trusting a list."""
-    modules = (f3d, _native, determinism, geometry, path_tracing, terrain_demo, sdf)
+    modules = (f3d, _native, determinism, geometry, path_tracing, terrain_demo, sdf, media)
     candidates: dict[str, object] = {}
     for module in modules:
         for name in dir(module):

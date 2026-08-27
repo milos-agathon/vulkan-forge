@@ -1,0 +1,7 @@
+{
+  "encoding": "IEC 61966-2-1 sRGB",
+  "formula": "clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0,1)",
+  "operator": "aces-fitted",
+  "quantization": "round-to-nearest uint8",
+  "schema": "forge3d.nephele.tonemap/1"
+}

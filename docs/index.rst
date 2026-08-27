@@ -46,6 +46,7 @@ data loading, cartography, export, and the runnable examples in ``examples/``.
    :maxdepth: 1
    :caption: Reference
 
+   api/media
    api/api_reference
 
 Where To Start

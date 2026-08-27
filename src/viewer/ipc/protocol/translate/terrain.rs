@@ -88,6 +88,31 @@ pub(super) fn to_viewer_cmd(req: &IpcRequest) -> Result<Option<ViewerCmd>, Strin
             target: *target,
         })),
         IpcRequest::GetTerrainParams => Ok(Some(ViewerCmd::GetTerrainParams)),
+        IpcRequest::SetMedia { media } => {
+            let Some(value) = media else {
+                return Ok(Some(ViewerCmd::SetMedia {
+                    medium: None,
+                    version: 0,
+                }));
+            };
+            let mut value = value.clone();
+            let version = match value
+                .as_object_mut()
+                .and_then(|object| object.remove("version"))
+            {
+                None => 0,
+                Some(value) => value.as_u64().ok_or_else(|| {
+                    "invalid participating medium: version must be a non-negative integer"
+                        .to_string()
+                })?,
+            };
+            let medium = serde_json::from_value::<crate::media::Medium>(value)
+                .map_err(|error| format!("invalid participating medium: {error}"))?;
+            Ok(Some(ViewerCmd::SetMedia {
+                medium: Some(medium),
+                version,
+            }))
+        }
         IpcRequest::SetTerrainScatter { batches } => Ok(Some(ViewerCmd::SetTerrainScatter {
             batches: batches
                 .iter()

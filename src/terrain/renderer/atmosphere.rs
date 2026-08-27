@@ -22,13 +22,14 @@ pub(super) struct AtmosphereInitResources {
     pub(super) scattering_fallback_view: wgpu::TextureView,
 }
 
-pub(super) struct RenderedSky {
-    pub(super) texture: TrackedTexture,
-    pub(super) view: wgpu::TextureView,
-    pub(super) scattering_view: Option<wgpu::TextureView>,
+pub(crate) struct RenderedSky {
+    pub(crate) texture: TrackedTexture,
+    pub(crate) view: wgpu::TextureView,
+    pub(crate) directional_texture: TrackedTexture,
+    pub(crate) scattering_view: Option<wgpu::TextureView>,
     /// True only for AETHER. Legacy analytic skies retain their historical
     /// display-referred resolve even though they share the rgba16float target.
-    pub(super) linear_hdr: bool,
+    pub(crate) linear_hdr: bool,
 }
 
 #[repr(C, align(16))]
@@ -341,6 +342,16 @@ impl TerrainScene {
                 usage: wgpu::BufferUsages::UNIFORM,
             },
         )?;
+        let mut directional_uniforms = sky_uniforms;
+        directional_uniforms.model_pad[1] = 1;
+        let directional_params = tracked_create_buffer_init(
+            &self.device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("terrain.sky.directional.params"),
+                contents: bytemuck::bytes_of(&directional_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        )?;
 
         let sky_camera_uniforms = TerrainSkyCameraUniforms {
             view: view_matrix.to_cols_array_2d(),
@@ -379,6 +390,25 @@ impl TerrainScene {
             },
         )?;
         let sky_view = sky_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let directional_texture = tracked_create_texture(
+            &self.device,
+            &wgpu::TextureDescriptor {
+                label: Some("terrain.sky.directional.output"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            },
+        )?;
+        let directional_view =
+            directional_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let sky_bg0 = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("terrain.sky.bg0"),
@@ -401,6 +431,20 @@ impl TerrainScene {
                 binding: 0,
                 resource: sky_camera.as_entire_binding(),
             }],
+        });
+        let directional_bg0 = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("terrain.sky.directional.bg0"),
+            layout: &self.sky_bind_group_layout0,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: directional_params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&directional_view),
+                },
+            ],
         });
 
         let gx = (width + 7) / 8;
@@ -531,6 +575,8 @@ impl TerrainScene {
             cpass.set_bind_group(1, &sky_bg1, &[]);
             cpass.set_bind_group(2, &aether_bg2, &[]);
             cpass.dispatch_workgroups(gx, gy, 1);
+            cpass.set_bind_group(0, &directional_bg0, &[]);
+            cpass.dispatch_workgroups(gx, gy, 1);
         } else {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("terrain.sky.compute"),
@@ -541,11 +587,14 @@ impl TerrainScene {
             cpass.set_bind_group(0, &sky_bg0, &[]);
             cpass.set_bind_group(1, &sky_bg1, &[]);
             cpass.dispatch_workgroups(gx, gy, 1);
+            cpass.set_bind_group(0, &directional_bg0, &[]);
+            cpass.dispatch_workgroups(gx, gy, 1);
         }
 
         Ok(Some(RenderedSky {
             texture: sky_texture,
             view: sky_view,
+            directional_texture,
             scattering_view: material_scattering_view,
             linear_hdr: decoded.sky.model == 3,
         }))

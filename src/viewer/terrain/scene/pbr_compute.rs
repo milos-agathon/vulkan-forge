@@ -168,6 +168,18 @@ impl ViewerTerrainScene {
                             },
                             count: None,
                         },
+                        // Canonical RGB surface-to-sun transmittance. The
+                        // non-media path binds a one-texel unity 3D texture.
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 16,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                                view_dimension: wgpu::TextureViewDimension::D3,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
                     ],
                 });
 

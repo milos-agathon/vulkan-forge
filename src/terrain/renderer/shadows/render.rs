@@ -19,20 +19,28 @@ impl TerrainScene {
         near_plane: f32,
         far_plane: f32,
         height_curve: [f32; 4],
+        y_up: bool,
     ) -> Result<wgpu::BindGroup> {
         let light_dir = sun_direction.normalize();
-        let light_up = if light_dir.z.abs() > 0.99 {
-            glam::Vec3::Y
+        let vertical = if y_up { glam::Vec3::Y } else { glam::Vec3::Z };
+        let light_up = if light_dir.dot(vertical).abs() > 0.99 {
+            glam::Vec3::X
         } else {
-            glam::Vec3::Z
+            vertical
         };
 
         let half_spacing = terrain_spacing * 0.5;
-        let shadow_z_min = 0.0;
-        let shadow_z_max = height_exag;
-
-        let terrain_min = glam::Vec3::new(-half_spacing, -half_spacing, shadow_z_min);
-        let terrain_max = glam::Vec3::new(half_spacing, half_spacing, shadow_z_max);
+        let (terrain_min, terrain_max) = if y_up {
+            (
+                glam::Vec3::new(-half_spacing, height_min * height_exag, -half_spacing),
+                glam::Vec3::new(half_spacing, height_max * height_exag, half_spacing),
+            )
+        } else {
+            (
+                glam::Vec3::new(-half_spacing, -half_spacing, 0.0),
+                glam::Vec3::new(half_spacing, half_spacing, height_exag),
+            )
+        };
         let terrain_center = (terrain_min + terrain_max) * 0.5;
 
         let terrain_diagonal = (terrain_max - terrain_min).length();
@@ -182,7 +190,12 @@ impl TerrainScene {
             let shadow_uniforms = ShadowPassUniforms {
                 light_view_proj: stored_light_view_proj,
                 terrain_params: [terrain_spacing, height_exag, height_min, height_max],
-                grid_params: [SHADOW_GRID_RES as f32, 0.0, 0.0, 0.0],
+                grid_params: [
+                    SHADOW_GRID_RES as f32,
+                    if y_up { 1.0 } else { 0.0 },
+                    0.0,
+                    0.0,
+                ],
                 height_curve,
             };
 

@@ -361,6 +361,24 @@ owner = "render-quality"
 expiry = "2027-01-17"
 
 [[unproven]]
+path = "src/shaders/nephele_froxel.wgsl"
+reason = "nephele_froxel.wgsl: multi-pass 3D storage-texture, temporal reprojection, and transmittance accumulation relations are not yet modeled; static assembled-source validation and physical Metal media acceptance cover the shipped pass graph"
+owner = "media"
+expiry = "2027-08-06"
+
+[[unproven]]
+path = "src/shaders/nephele_realtime_terrain_trace.wgsl"
+reason = "nephele_realtime_terrain_trace.wgsl: production terrain-trace buffers and assembled heightfield traversal relations are not yet modeled; exact assembly validation and physical Metal terrain-occlusion acceptance cover the shipped path"
+owner = "media"
+expiry = "2027-08-06"
+
+[[unproven]]
+path = "src/shaders/nephele_terrain_trace_adapter.wgsl"
+reason = "nephele_terrain_trace_adapter.wgsl: viewer trace buffers and assembled PBR terrain-traversal relations are not yet modeled; exact assembly validation and physical Metal PBR-geometry trace acceptance cover the shipped adapter"
+owner = "media"
+expiry = "2027-08-06"
+
+[[unproven]]
 path = "src/shaders/offline_accumulate.wgsl"
 reason = "offline_accumulate.wgsl: texture/resource dimension and sampling relations are not yet modeled"
 owner = "render-quality"

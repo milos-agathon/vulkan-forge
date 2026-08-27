@@ -16,7 +16,7 @@ struct Uniforms {
     // Lens effects: vignette_strength, vignette_radius, vignette_softness, _
     lens_params: vec4<f32>,
     // Screen dimensions for UV calculation
-    screen_dims: vec4<f32>,     // width, height, _, _
+    screen_dims: vec4<f32>,     // width, height, media near, media far
     // Overlay params: enabled (>0.5), opacity, blend_mode (0=normal, 1=multiply, 2=overlay), solid (>0.5)
     overlay_params: vec4<f32>,
     render_origin_xz: vec2<f32>, // append-only ABI offset 240
@@ -42,6 +42,40 @@ struct Uniforms {
 @group(0) @binding(13) var envIrradiance: texture_cube<f32>;
 @group(0) @binding(14) var envSampler: sampler;
 @group(0) @binding(15) var brdfLUT: texture_2d<f32>;
+@group(0) @binding(16) var canonical_light_transmittance: texture_3d<f32>;
+
+fn same_medium_direct_transmittance(world: vec3<f32>) -> vec3<f32> {
+    if u.lens_params.w <= 0.5 {
+        return vec3<f32>(1.0);
+    }
+    let dims = textureDimensions(canonical_light_transmittance);
+    let visible = max(dims.xy - vec2<u32>(2u), vec2<u32>(1u));
+    let clip = u.view_proj * vec4<f32>(world, 1.0);
+    if abs(clip.w) < 1e-6 {
+        return vec3<f32>(1.0);
+    }
+    let ndc = clip.xyz / clip.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    let xy = uv * vec2<f32>(visible) + vec2<f32>(1.0);
+    let near = max(u.screen_dims.z, 1e-6);
+    let log_range = max(log(max(u.screen_dims.w, near + 1e-6) / near), 1e-6);
+    let unit_depth = clamp(
+        log(max(length(world - u.camera_pos.xyz), near) / near) / log_range,
+        0.0,
+        1.0,
+    );
+    let z = unit_depth * f32(dims.z);
+    let coord = vec3<i32>(vec3<u32>(clamp(
+        vec3<f32>(xy, z),
+        vec3<f32>(0.0),
+        vec3<f32>(dims) - 1.0,
+    )));
+    return clamp(
+        textureLoad(canonical_light_transmittance, coord, 0).rgb,
+        vec3<f32>(0.0),
+        vec3<f32>(1.0),
+    );
+}
 
 // Shadow cascade data (matches Rust CsmCascadeData: 144 bytes)
 struct ShadowCascade {
@@ -208,8 +242,8 @@ fn aces_tonemap(color: vec3<f32>) -> vec3<f32> {
 }
 
 // Preserve categorical overlay hue while carrying stronger terrain structure
-// through a scalar derived from the lit terrain field plus signed ridge relief.
-fn preserve_overlay_scalar(
+// and the RGB ratio of the lit field, including spectral media attenuation.
+fn preserve_overlay_lighting(
     lit_linear: vec3<f32>,
     normal: vec3<f32>,
     sun_dir: vec3<f32>,
@@ -217,9 +251,8 @@ fn preserve_overlay_scalar(
     shadow_term: f32,
     height_ao: f32,
     view_dir: vec3<f32>,
-    exposure: f32,
     normal_strength: f32,
-) -> f32 {
+) -> vec3<f32> {
     let base_intensity = max(dot(lit_linear, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0);
 
     // Macro terrain form: focus the added contrast on mountain slopes, not flats.
@@ -260,7 +293,8 @@ fn preserve_overlay_scalar(
     var preserve_intensity = base_intensity * macro_scale * local_scale * occlusion_scale;
     preserve_intensity += base_intensity * rim;
     preserve_intensity = max(preserve_intensity, 0.0);
-    return pow(aces_tonemap(vec3<f32>(preserve_intensity * exposure)), vec3<f32>(1.0 / 2.2)).x;
+    let preserve_scale = preserve_intensity / max(base_intensity, 1e-6);
+    return lit_linear * preserve_scale;
 }
 
 // Hemisphere sky ambient with warm ground bounce
@@ -615,6 +649,12 @@ fn calculate_csm_shadow(world_pos: vec3<f32>, normal: vec3<f32>, view_depth: f32
     return sample_csm_shadow(world_pos, normal, cascade_idx);
 }
 
+// FrameCamera always uses a right-handed perspective projection, whose clip
+// W is exactly -view-space Z. Cascade splits are expressed in that same depth.
+fn terrain_view_depth(world_pos: vec3<f32>) -> f32 {
+    return max((u.view_proj * vec4<f32>(world_pos, 1.0)).w, 0.1);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sun_intensity = u.lighting.x;
@@ -656,7 +696,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Debug mode 35 - Visualize raw shadow value (grayscale: black=shadow, white=lit)
     if csm_uniforms.debug_mode == 35u {
         let normal = compute_normal(in.uv);
-        let view_depth = max(length(u.camera_pos.xyz - in.world_pos), 0.1);
+        let view_depth = terrain_view_depth(in.world_pos);
         let shadow_val = calculate_csm_shadow(in.world_pos, normal, view_depth);
         return vec4<f32>(shadow_val, shadow_val, shadow_val, 1.0);
     }
@@ -673,7 +713,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Debug mode 37 - Visualize light-space coordinates
     // R=shadow_uv.x, G=shadow_uv.y, B=receiver_depth
     if csm_uniforms.debug_mode == 37u {
-        let view_depth = max(length(u.camera_pos.xyz - in.world_pos), 0.1);
+        let view_depth = terrain_view_depth(in.world_pos);
         let cascade_idx = select_cascade(view_depth);
         let cascade = csm_uniforms.cascades[cascade_idx];
         
@@ -690,7 +730,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Debug mode 38 - Sample shadow map and show result with depth info
     // R=shadow_result (0=shadow, 1=lit), G=receiver_depth, B=cascade_idx/4
     if csm_uniforms.debug_mode == 38u {
-        let view_depth = max(length(u.camera_pos.xyz - in.world_pos), 0.1);
+        let view_depth = terrain_view_depth(in.world_pos);
         let cascade_idx = select_cascade(view_depth);
         let cascade = csm_uniforms.cascades[cascade_idx];
         
@@ -799,8 +839,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // P6.2: CSM shadow sampling with technique dispatch
     // Calculate view depth for cascade selection (approximate from world position)
-    let view_pos = u.view_proj * vec4<f32>(in.world_pos, 1.0);
-    let view_depth = max(length(u.camera_pos.xyz - in.world_pos), 0.1);
+    let view_depth = terrain_view_depth(in.world_pos);
 
     // Sample CSM shadow using technique-specific sampling (HARD, PCF, PCSS, VSM, EVSM, MSM)
     let csm_shadow = calculate_csm_shadow(in.world_pos, normal, view_depth);
@@ -866,16 +905,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let rim_light = fresnel * sun_color * 0.06 * shadow_term * sun_intensity;
 
     // === COMBINE ALL LIGHTING ===
-    var color = diffuse * effective_shadow_tint
-              + specular_color
-              + water_spec
+    let same_medium_direct_t = same_medium_direct_transmittance(in.world_pos);
+    var color = diffuse * effective_shadow_tint * same_medium_direct_t
+              + specular_color * same_medium_direct_t
+              + water_spec * same_medium_direct_t
               + fill_light * height_ao
               + ground_bounce
               + indirect_light
-              + rim_light;
+              + rim_light * same_medium_direct_t;
 
+    let linear_hdr_output = u.lens_params.w > 0.5;
     if preserve_overlay_active {
-        let preserve_display = preserve_overlay_scalar(
+        let preserve_linear = preserve_overlay_lighting(
             color,
             normal,
             sun_dir,
@@ -883,43 +924,52 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             shadow_term,
             height_ao,
             view_dir,
-            exposure,
             u.pbr_params.y,
         );
-        let overlay_display_rgb = pow(
-            max(overlay.rgb, vec3<f32>(0.0)),
-            vec3<f32>(1.0 / 2.2),
-        );
-        let preserve_display_rgb = overlay_display_rgb * preserve_display;
-        color = pow(
-            clamp(preserve_display_rgb, vec3<f32>(0.0), vec3<f32>(1.0)),
-            vec3<f32>(2.2),
-        );
+        if linear_hdr_output {
+            color = max(overlay.rgb, vec3<f32>(0.0)) * preserve_linear * exposure;
+        } else {
+            let preserve_display = pow(
+                aces_tonemap(preserve_linear * exposure),
+                vec3<f32>(1.0 / 2.2),
+            );
+            let overlay_display_rgb = pow(
+                max(overlay.rgb, vec3<f32>(0.0)),
+                vec3<f32>(1.0 / 2.2),
+            );
+            let preserve_display_rgb = overlay_display_rgb * preserve_display;
+            color = pow(
+                clamp(preserve_display_rgb, vec3<f32>(0.0), vec3<f32>(1.0)),
+                vec3<f32>(2.2),
+            );
+        }
     } else {
-        // Apply exposure and tonemapping
+        // Canonical media consumes exposed linear HDR. Legacy rendering keeps
+        // the established in-shader display transform.
         color = color * exposure;
-        color = aces_tonemap(color);
-
-        // Gamma correction (linear to sRGB)
-        color = pow(color, vec3<f32>(1.0 / 2.2));
+        if !linear_hdr_output {
+            color = aces_tonemap(color);
+            color = pow(color, vec3<f32>(1.0 / 2.2));
+        }
     }
 
-    // === ATMOSPHERIC PERSPECTIVE (depth-based haze) ===
-    let atmo_scale = 0.045 / max(terrain_span, 1.0);
-    let view_dist = length(u.camera_pos.xyz - in.world_pos);
-    let atmo_factor = pow(clamp(1.0 - exp(-view_dist * atmo_scale), 0.0, 1.0), 1.35);
-    let atmo_color = mix(
-        vec3<f32>(0.55, 0.62, 0.72),  // Haze near color
-        vec3<f32>(0.64, 0.70, 0.79),  // Haze far color
-        clamp(atmo_factor, 0.0, 1.0)
-    );
-
-    // Apply atmospheric haze AFTER tonemapping (in display space)
-    var haze_mix = clamp(atmo_factor * 0.055, 0.0, 0.08);
-    if overlay_enabled && overlay_preserve_colors && overlay_alpha > 0.01 {
-        haze_mix = 0.0;
+    // Legacy haze is display-space. Canonical media consumes genuinely linear
+    // HDR and supplies its own physical in-scatter before the sole tonemap.
+    if !linear_hdr_output {
+        let atmo_scale = 0.045 / max(terrain_span, 1.0);
+        let view_dist = length(u.camera_pos.xyz - in.world_pos);
+        let atmo_factor = pow(clamp(1.0 - exp(-view_dist * atmo_scale), 0.0, 1.0), 1.35);
+        let atmo_color = mix(
+            vec3<f32>(0.55, 0.62, 0.72),
+            vec3<f32>(0.64, 0.70, 0.79),
+            clamp(atmo_factor, 0.0, 1.0)
+        );
+        var haze_mix = clamp(atmo_factor * 0.055, 0.0, 0.08);
+        if overlay_enabled && overlay_preserve_colors && overlay_alpha > 0.01 {
+            haze_mix = 0.0;
+        }
+        color = mix(color, atmo_color, haze_mix);
     }
-    color = mix(color, atmo_color, haze_mix);
 
     // Apply vignette (lens effect)
     let vignette_strength = u.lens_params.x;

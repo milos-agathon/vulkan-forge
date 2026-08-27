@@ -67,6 +67,7 @@ class TestNativeModuleSymbols:
         "OverlayLayer",
         "TerrainRenderParams",
         "TerrainRenderer",
+        "Medium",
         "AovFrame",
         "HdrFrame",
         "OfflineBatchResult",
@@ -118,6 +119,8 @@ class TestNativeModuleSymbols:
     # ---- Registered free functions (wrap_pyfunction in lib.rs) ----
 
     EXPECTED_FUNCTIONS = [
+        "_render_volumetric_reference",
+        "_nephele_physical_samples",
         "open_viewer",
         "open_terrain_viewer",
         "enumerate_adapters",

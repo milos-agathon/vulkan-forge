@@ -68,6 +68,8 @@ pub use bloom_processor::{TerrainBloomConfig, TerrainBloomProcessor};
 
 // Terrain camera helpers (orbit camera, view-proj)
 pub mod camera;
+#[cfg(feature = "extension-module")]
+pub(crate) use camera::build_orbit_view_proj;
 pub use camera::{build_view_proj, orbit_camera};
 
 // DEM elevation statistics (min/max, percentile)
@@ -83,6 +85,24 @@ pub use render_params::{AddressModeNative, FilterModeNative, TerrainRenderParams
 // TerrainRenderer - GPU pipeline for PBR+POM terrain rendering
 mod hosek_rgb_data;
 pub(crate) mod hosek_sky;
+
+// Canonical NEPHELE GPU execution is shared by the standalone interactive
+// viewer and the PyO3 terrain renderer. Keep it outside the extension-only
+// renderer module so default viewer builds execute the same implementation.
+#[path = "renderer/media.rs"]
+pub(crate) mod realtime_media;
+
+/// Authoritative parser for the perspective terrain/reference Y-up suffix.
+pub(crate) fn is_yup_camera_mode(camera_mode: &str) -> bool {
+    camera_mode
+        .split(':')
+        .next()
+        .is_some_and(|mode| mode.trim().eq_ignore_ascii_case("mesh"))
+        && camera_mode
+            .split(':')
+            .skip(1)
+            .any(|part| part.trim().eq_ignore_ascii_case("yup"))
+}
 
 #[cfg(feature = "extension-module")]
 pub mod renderer;

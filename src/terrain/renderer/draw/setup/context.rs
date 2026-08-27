@@ -36,6 +36,7 @@ pub(in crate::terrain::renderer) struct PreparedMaterials {
     pub(in crate::terrain::renderer) overlay_binding: OverlayBinding,
     pub(in crate::terrain::renderer) fallback_colormap_view: Option<wgpu::TextureView>,
     pub(in crate::terrain::renderer) material_maps: MaterialMapResources,
+    pub(in crate::terrain::renderer) terrain_trace_albedo: [f32; 3],
 }
 
 impl PreparedMaterials {
@@ -173,15 +174,6 @@ impl TerrainScene {
         })
     }
 
-    pub(in crate::terrain::renderer) fn prepare_material_context(
-        &self,
-        material_set: &crate::render::material_set::MaterialSet,
-        params: &crate::terrain::render_params::TerrainRenderParams,
-        decoded: &crate::terrain::render_params::DecodedTerrainSettings,
-    ) -> Result<PreparedMaterials> {
-        self.prepare_material_context_with_mode(material_set, params, decoded, false)
-    }
-
     pub(in crate::terrain::renderer) fn prepare_material_context_with_mode(
         &self,
         material_set: &crate::render::material_set::MaterialSet,
@@ -246,6 +238,16 @@ impl TerrainScene {
             overlay_binding,
             fallback_colormap_view,
             material_maps,
+            terrain_trace_albedo: material_set
+                .materials()
+                .first()
+                .map_or([1.0; 3], |material| {
+                    [
+                        material.base_color[0],
+                        material.base_color[1],
+                        material.base_color[2],
+                    ]
+                }),
         })
     }
 

@@ -249,6 +249,7 @@ impl ViewerTerrainScene {
 pub struct ViewerTerrainScene {
     pub(super) device: Arc<wgpu::Device>,
     pub(super) queue: Arc<wgpu::Queue>,
+    pub(super) adapter: Arc<wgpu::Adapter>,
     pub(super) pipeline: wgpu::RenderPipeline,
     pub(super) bind_group_layout: wgpu::BindGroupLayout,
     pub(super) depth_texture: Option<TrackedTexture>,
@@ -260,6 +261,15 @@ pub struct ViewerTerrainScene {
     pub terrain: Option<ViewerTerrainData>,
     /// PBR+POM rendering configuration (opt-in, default off)
     pub pbr_config: super::pbr_renderer::ViewerTerrainPbrConfig,
+    /// Canonical NEPHELE attachment; legacy viewer fog is bypassed while set.
+    pub(super) canonical_media: Option<crate::media::Medium>,
+    pub(super) canonical_media_version: u64,
+    pub(super) canonical_media_pass: Option<crate::terrain::realtime_media::ViewerMediaPass>,
+    pub(super) canonical_media_diagnostics:
+        Option<crate::terrain::realtime_media::MediaExecutionDiagnostics>,
+    pub(super) canonical_media_render_error: Option<String>,
+    pub(super) media_light_transmittance_fallback: Option<TrackedTexture>,
+    pub(super) media_light_transmittance_fallback_view: Option<wgpu::TextureView>,
     /// PBR pipeline (created lazily when PBR mode enabled)
     pub pbr_pipeline: Option<wgpu::RenderPipeline>,
     pub(super) pbr_bind_group_layout: Option<wgpu::BindGroupLayout>,

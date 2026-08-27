@@ -1,0 +1,17 @@
+{
+  "rules": {
+    "cloud_shadow_mask": "terrain_hit and min(reference cloud shadow) < 1",
+    "godray_roi_mask": "bounding rectangle of reference midpoint terrain_blocked lighting",
+    "shaft_mask": "terrain_hit and reference midpoint sun visibility is terrain_blocked",
+    "sky_cloud_mask": "not terrain_hit and min(reference transmittance) < 1",
+    "terrain_mask": "terrain_hit"
+  },
+  "schema": "forge3d.nephele.mask_rules/3",
+  "technical_contracts": {
+    "godray_roi_minimum_shape": {
+      "parameter": "ssim.win_size",
+      "source": "tests/_ssim.py",
+      "value": 11
+    }
+  }
+}

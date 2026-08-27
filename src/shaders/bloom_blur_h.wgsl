@@ -18,12 +18,12 @@ struct BloomBlurUniforms {
 
 // Gaussian weights for 9-tap blur kernel
 // Pre-calculated weights for sigma = 2.0
-const WEIGHTS = array<f32, 9>(
+var<private> WEIGHTS: array<f32, 9> = array<f32, 9>(
     0.0077847, 0.0231017, 0.0539909, 0.0995906, 0.1420118,
     0.1599471, 0.1420118, 0.0995906, 0.0539909
 );
 
-const OFFSETS = array<i32, 9>(-4, -3, -2, -1, 0, 1, 2, 3, 4);
+var<private> OFFSETS: array<i32, 9> = array<i32, 9>(-4, -3, -2, -1, 0, 1, 2, 3, 4);
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -39,7 +39,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Apply horizontal blur
     for (var i = 0; i < 9; i++) {
-        let offset_x = i32(coord.x) + i32(OFFSETS[i] * uniforms.radius);
+        let offset_x = i32(coord.x) + i32(f32(OFFSETS[i]) * uniforms.radius);
         let sample_coord = vec2<i32>(offset_x, i32(coord.y));
         
         // Clamp coordinates to texture bounds

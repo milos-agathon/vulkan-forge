@@ -72,7 +72,7 @@ pub(super) struct TerrainPbrUniforms {
     pub ibl_params: [f32; 4], // use_hdri (>0.5), specular_max_mip, sin_theta, cos_theta
     pub camera_pos: [f32; 4], // camera world position
     pub lens_params: [f32; 4], // vignette_strength, vignette_radius, vignette_softness, _
-    pub screen_dims: [f32; 4], // width, height, _, _
+    pub screen_dims: [f32; 4], // width, height, media near, media far
     pub overlay_params: [f32; 4], // enabled (>0.5), opacity, blend_mode (0=normal, 1=multiply, 2=overlay), solid (>0.5)
     pub render_origin_xz: [f32; 2],
     pub render_span_xz: [f32; 2],
@@ -127,6 +127,27 @@ mod terrain_uniform_abi_tests {
 }
 
 impl ViewerTerrainScene {
+    /// Canonical media always consumes and produces linear HDR. Legacy viewer
+    /// paths keep their established output format.
+    pub(super) fn scene_color_format(&self) -> wgpu::TextureFormat {
+        if self.canonical_media.is_some() {
+            wgpu::TextureFormat::Rgba16Float
+        } else {
+            self.surface_format
+        }
+    }
+
+    pub(super) fn scene_color_format_for(
+        &self,
+        output_format: wgpu::TextureFormat,
+    ) -> wgpu::TextureFormat {
+        if self.canonical_media.is_some() {
+            wgpu::TextureFormat::Rgba16Float
+        } else {
+            output_format
+        }
+    }
+
     pub(super) fn ensure_depth(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
         if self.depth_size != (width, height) {
             let tex = crate::core::resource_tracker::tracked_create_texture(
@@ -143,7 +164,8 @@ impl ViewerTerrainScene {
                     dimension: wgpu::TextureDimension::D2,
                     format: wgpu::TextureFormat::Depth32Float,
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC,
                     view_formats: &[],
                 },
             )?;

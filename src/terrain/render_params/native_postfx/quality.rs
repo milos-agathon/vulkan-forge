@@ -5,6 +5,10 @@ pub struct AovSettingsNative {
     pub albedo: bool,
     pub normal: bool,
     pub depth: bool,
+    pub transmittance: bool,
+    pub in_scatter: bool,
+    pub cloud_shadow: bool,
+    pub optical_depth: bool,
     /// VERITAS: capture the per-pixel VT source-id map (R32Uint attachment).
     pub source_id: bool,
     pub output_dir: Option<String>,
@@ -19,6 +23,10 @@ impl Default for AovSettingsNative {
             albedo: true,
             normal: true,
             depth: true,
+            transmittance: false,
+            in_scatter: false,
+            cloud_shadow: false,
+            optical_depth: false,
             source_id: false,
             output_dir: None,
             format: "png".to_string(),
@@ -29,7 +37,15 @@ impl Default for AovSettingsNative {
 #[cfg(feature = "extension-module")]
 impl AovSettingsNative {
     pub fn any_enabled(&self) -> bool {
-        self.enabled && (self.albedo || self.normal || self.depth)
+        self.enabled
+            && (self.albedo
+                || self.normal
+                || self.depth
+                || self.transmittance
+                || self.in_scatter
+                || self.cloud_shadow
+                || self.optical_depth
+                || self.source_id)
     }
 }
 

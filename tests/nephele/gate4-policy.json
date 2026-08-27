@@ -1,0 +1,11 @@
+{
+  "aggregation": {
+    "kind": "maximum"
+  },
+  "approved_by": "repository owner via NEPHELE implementation contract",
+  "approved_revision": "92cf80d20d7d5c6e9a564b853e79d596f3f5088f",
+  "definition": "The maximum per-pixel DeltaE2000 across terrain pixels classified as cloud-shadowed by the reference cloud_shadow AOV must be strictly less than 2.0.",
+  "policy_id": "nephele-gate4-owner-maximum-v1",
+  "schema": "forge3d.nephele.gate4_policy/1",
+  "status": "APPROVED"
+}

@@ -21,6 +21,16 @@ impl TerrainRenderParams {
         let lod = params.getattr("lod")?;
         let sampling = params.getattr("sampling")?;
         let clamp = params.getattr("clamp")?;
+        let media_value = params.getattr("media")?;
+        let media = if media_value.is_none() {
+            None
+        } else {
+            Some(
+                media_value
+                    .getattr("_native")?
+                    .extract::<Py<crate::media_py::PyMedium>>()?,
+            )
+        };
 
         let decoded = DecodedTerrainSettings {
             light: parse_light_settings(&light)?,
@@ -100,6 +110,7 @@ impl TerrainRenderParams {
             sampling: sampling.unbind(),
             clamp: clamp.unbind(),
             python_object: params.into_py(py),
+            media,
             decoded,
         })
     }

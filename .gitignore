@@ -339,6 +339,7 @@ Cargo.lock  # Keep for applications, ignore for libraries - this is an app so ke
 
 # maturin build artifacts
 *.whl
+!tests/nephele/acceptance-runtime/reference-wheel/*.whl
 *.tar.gz
 .maturin/
 

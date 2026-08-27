@@ -148,8 +148,14 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32) -> VertexOutput {
     let world_xy = (uv - vec2<f32>(0.5)) * terrain_span;
     let height_range = max(height_max - height_min, 1e-6);
     let height_normalized = clamp((h_raw - height_min) / height_range, 0.0, 1.0);
-    let world_z = apply_height_curve(height_normalized) * z_scale;
-    let world_pos = vec3<f32>(world_xy, world_z);
+    let height_curved = apply_height_curve(height_normalized);
+    let world_z = height_curved * z_scale;
+    let world_height = mix(height_min, height_max, height_curved) * z_scale;
+    let world_pos = select(
+        vec3<f32>(world_xy, world_z),
+        vec3<f32>(world_xy.x, world_height, world_xy.y),
+        u_shadow.grid_params.y != 0.0,
+    );
     
     // Transform to light clip space
     out.clip_position = det_mat4_mul_vec4(

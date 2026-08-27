@@ -239,6 +239,20 @@ impl TerrainRenderParams {
     }
 
     #[getter]
+    pub fn media<'py>(&self, py: Python<'py>) -> PyResult<Option<Py<PyAny>>> {
+        self.media
+            .as_ref()
+            .map(|medium| {
+                let wrapper = py
+                    .import_bound("forge3d.media")?
+                    .getattr("Medium")?
+                    .call_method1("_from_native", (medium.clone_ref(py),))?;
+                Ok(wrapper.unbind())
+            })
+            .transpose()
+    }
+
+    #[getter]
     pub fn material_map_paths(&self) -> std::collections::BTreeMap<String, String> {
         let mut paths = std::collections::BTreeMap::new();
         if let Some(path) = self.decoded.materials.normal_path.as_ref() {

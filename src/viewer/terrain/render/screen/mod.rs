@@ -11,6 +11,7 @@ pub(super) struct ScreenRenderFlags {
     pub(super) needs_dof: bool,
     pub(super) needs_post_process: bool,
     pub(super) needs_volumetrics: bool,
+    pub(super) needs_canonical_media: bool,
     pub(super) needs_denoise: bool,
 }
 
@@ -46,11 +47,22 @@ impl ViewerTerrainScene {
         let flags = match self.prepare_screen_resources(width, height) {
             Ok(flags) => flags,
             Err(err) => {
+                if self.canonical_media.is_some() {
+                    self.canonical_media_render_error =
+                        Some(format!("media_prepare_failed: {err:#}"));
+                }
                 eprintln!("[terrain] screen resource preparation failed: {err:#}");
                 return false;
             }
         };
-        let state = self.build_screen_render_state(encoder, width, height, &flags, frame);
+        let state = match self.build_screen_render_state(encoder, width, height, &flags, frame) {
+            Ok(state) => state,
+            Err(error) => {
+                self.canonical_media_render_error =
+                    Some(format!("media_prepare_failed: {error:#}"));
+                return false;
+            }
+        };
 
         let has_vector_overlays = self.prepare_screen_overlays();
         self.render_screen_scene_path(
@@ -61,7 +73,12 @@ impl ViewerTerrainScene {
             &state,
             has_vector_overlays,
         );
-        self.apply_screen_effects(encoder, view, width, height, &flags, &state);
+        if let Err(error) = self.apply_screen_effects(encoder, view, width, height, &flags, &state)
+        {
+            self.canonical_media_render_error = Some(format!("media_render_failed: {error:#}"));
+            return false;
+        }
+        self.canonical_media_render_error = None;
 
         true
     }

@@ -1,0 +1,11 @@
+{
+  "azimuth_deg": 315.0,
+  "color": [
+    1.0,
+    0.97,
+    0.92
+  ],
+  "elevation_deg": 18.0,
+  "intensity": 3.0,
+  "schema": "forge3d.nephele.sun/1"
+}

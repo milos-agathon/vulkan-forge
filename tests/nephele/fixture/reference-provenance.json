@@ -1,0 +1,71 @@
+{
+  "acceptance_eligible": false,
+  "algorithm": "integrated-hybrid-terrain-ratio-delta-tracking-reference",
+  "assembled_sources": {
+    "terrain_media_reference_module_sha256": "97340ca936edad5a815e1665e818415f52e3c0497c5e25c12f384964cf1f4f45"
+  },
+  "camera_contract": null,
+  "crop": [
+    0,
+    0,
+    64,
+    64
+  ],
+  "diagnostics": {
+    "adapter": "Apple M4",
+    "backend": "Metal",
+    "density_device_local_bytes": 0,
+    "driver": "",
+    "energy_accounting_residual": null,
+    "executed_multi_scatter": true,
+    "froxel_device_local_bytes": 0,
+    "host_visible_bytes": 253952,
+    "majorant_device_local_bytes": 0,
+    "majorant_proof": "TrilinearConvexHull",
+    "majorant_valid": true,
+    "sample_count": 40960,
+    "single_scatter_luminance": null,
+    "source_revision": "92cf80d20d7d5c6e9a564b853e79d596f3f5088f",
+    "staging_readback_bytes": 0,
+    "step_count": 446109,
+    "multiple_scatter_luminance": null,
+    "temporal_history_decision": "not_applicable",
+    "temporal_history_reason": "independent reference samples do not reuse temporal history"
+  },
+  "full_viewport": [
+    64,
+    64
+  ],
+  "diagnostic_reason": "superseded pre-review sample topology, density representation, and unbound native wheel; cannot seed convergence",
+  "native_runtime": null,
+  "runtime_partition": {
+    "kind": "superseded-logical-cpu-sample-partition",
+    "value": 10
+  },
+  "sample_identity": null,
+  "samples_per_pixel": 10,
+  "scene_inputs": null,
+  "schema": "forge3d.nephele.reference_provenance/2",
+  "seed": 1313165384,
+  "spatial_tiles": null,
+  "source_inputs": {
+    "python/forge3d/media.py": "eb08936a912d5bbd37a46bfbce45d72ed82b05f7dc1b249035e1f97bb074c15a",
+    "scripts/generate_media_fixture.py": "e41764afa06901b5a93333bc31b47629d55bedff4d59b93c91e0bab0422fd922",
+    "src/media/density.rs": "c4a5e1fbe4efaf04bf0414e807f414296bfb4083dd26be90bef6ee43b91e5b68",
+    "src/media/diagnostics.rs": "be44dc05191f0c9aa26a0a26fa67c729bbed3ef7bc42ad5b2517cf5bafff0208",
+    "src/media/lighting.rs": "9ba7ea1555e9c2eb8e65434f6bb06c2d8fd30dc7b5c84cd76eee102310218934",
+    "src/media/mod.rs": "15a122de970ee088087ddc59875f11b0fcbcff9da2c61e0a5ce5563eb45a4579",
+    "src/media/model.rs": "f0c22c976aee8691a404bcbbfbed5d71884222eb4bbc396b13c5b18a14bbd996",
+    "src/media/reference.rs": "9b9bde45dfbefde0e5685fda52c65b03861e1bd82f05b3febc768bc9096ace5d",
+    "src/media/tests.rs": "3dfbd58aa91768a5923570700d5e1a9e6d1cda2f6f4e8747cd53449d2c4d7ce1",
+    "src/media/tracking.rs": "8d24ee475147a878418edfa221ea9f4aab36a3e7f131818282fa10d54551b50f",
+    "src/media_py.rs": "23ca17b714fa86ac7107eb3e3e709c2d50b30e81cfde69146d8af450e862aa8a",
+    "src/path_tracing/hybrid_compute/media_reference.rs": "d69dbc4a5bb7c264b9a768e81c5d650615cc962645a85c4debd52a41066c80b6",
+    "src/path_tracing/hybrid_compute/render_terrain.rs": "312aa2cfd1d2b69812677a26d179cd78e6c09d6e3afef5a080ac79a4a685c702",
+    "src/path_tracing/hybrid_compute/terrain_heightfield.rs": "8d41b32bd09176ce413efb11ae8ce7de230fe6002b160ad70a8e76f2a1befa06",
+    "src/shader_sources.rs": "1910f97a113241676db05ecad7e57d15fcd19a40b2a0af34998431a1c8bcf20c",
+    "src/shaders/hybrid_terrain_traversal.wgsl": "85682471806fb2d31fd3a7e2017d23a40e6b72477ca9bdb423734968c59d4872",
+    "src/shaders/nephele_terrain_trace_adapter.wgsl": "25e7e14a796ec9dd9de12c265a1cfc3d97a961e8dda538caadb6f25b9761ac8b"
+  },
+  "source_revision": "92cf80d20d7d5c6e9a564b853e79d596f3f5088f"
+}

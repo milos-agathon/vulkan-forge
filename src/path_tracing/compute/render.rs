@@ -36,7 +36,7 @@ impl PathTracerGPU {
             AovKind::Emission,
             AovKind::Visibility,
         ] {
-            if (aov_mask & (1u32 << kind.flag_bit())) == 0 {
+            if (aov_mask & (1u32 << kind.binding_index())) == 0 {
                 continue;
             }
             let texture = resources

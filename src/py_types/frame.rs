@@ -40,6 +40,28 @@ impl Frame {
         )
     }
 
+    pub(crate) fn read_rgb_u8(&self) -> anyhow::Result<ndarray::Array3<u8>> {
+        let rgba = self.read_tight_bytes()?;
+        let mut rgb = Vec::with_capacity((self.width * self.height * 3) as usize);
+        for pixel in rgba.chunks_exact(4) {
+            match self.format {
+                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => {
+                    rgb.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
+                }
+                wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => {
+                    rgb.extend_from_slice(&pixel[..3]);
+                }
+                other => {
+                    return Err(anyhow::anyhow!(
+                        "acceptance beauty readback requires an 8-bit RGBA target, got {other:?}"
+                    ));
+                }
+            }
+        }
+        ndarray::Array3::from_shape_vec((self.height as usize, self.width as usize, 3), rgb)
+            .map_err(|_| anyhow::anyhow!("failed to reshape beauty readback"))
+    }
+
     #[cfg(feature = "images")]
     pub(crate) fn read_rgba_f32(&self) -> anyhow::Result<Vec<f32>> {
         match self.format {

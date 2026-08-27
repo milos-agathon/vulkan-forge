@@ -5,7 +5,6 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-#[cfg(feature = "extension-module")]
 use wgpu::Adapter;
 use wgpu::{
     BindGroup, BindGroupLayout, ComputePipeline, Device, Queue, RenderPipeline, Sampler, Surface,
@@ -51,7 +50,6 @@ pub struct Viewer {
     pub(crate) surface: Surface<'static>,
     pub(crate) device: Arc<Device>,
     pub(crate) queue: Arc<Queue>,
-    #[cfg(feature = "extension-module")]
     pub(crate) adapter: Arc<Adapter>,
     pub(crate) config: SurfaceConfiguration,
     pub(crate) camera: CameraController,

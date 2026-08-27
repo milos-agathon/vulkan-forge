@@ -1,0 +1,15 @@
+{
+  "albedo": [
+    0.6,
+    0.6,
+    0.6
+  ],
+  "albedo_mode": "material",
+  "blend_sharpness": 1.0,
+  "colormap_strength": 0.0,
+  "metallic": 0.0,
+  "normal_strength": 0.0,
+  "roughness": 1.0,
+  "schema": "forge3d.nephele.material/1",
+  "triplanar_scale": 1.0
+}

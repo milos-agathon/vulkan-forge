@@ -358,8 +358,35 @@ impl TerrainMinMaxPyramid {
     ) -> TerrainPtUniforms {
         let origin_x = -0.5 * (self.width as f32 - 1.0) * spacing_x;
         let origin_z = -0.5 * (self.height as f32 - 1.0) * spacing_z;
+        self.uniforms_at_origin(
+            [origin_x, origin_z],
+            [spacing_x, spacing_z],
+            exaggeration,
+            albedo,
+            env_intensity,
+            env_dims,
+            spp,
+            welford_window,
+        )
+    }
+
+    /// Uniform block for terrain whose texel (0,0) has an explicit world-xz
+    /// origin. This is used when the source raster already defines its world
+    /// placement; [`Self::uniforms`] remains the centered-terrain wrapper.
+    #[allow(clippy::too_many_arguments)]
+    pub fn uniforms_at_origin(
+        &self,
+        origin_xz: [f32; 2],
+        spacing_xz: [f32; 2],
+        exaggeration: f32,
+        albedo: [f32; 3],
+        env_intensity: f32,
+        env_dims: (u32, u32),
+        spp: u32,
+        welford_window: u32,
+    ) -> TerrainPtUniforms {
         TerrainPtUniforms {
-            origin_spacing: [origin_x, origin_z, spacing_x, spacing_z],
+            origin_spacing: [origin_xz[0], origin_xz[1], spacing_xz[0], spacing_xz[1]],
             h_params: [self.h_min, self.h_max, exaggeration, env_intensity],
             albedo_pad: [albedo[0], albedo[1], albedo[2], 0.0],
             dims: [self.width, self.height, self.cell_w, self.cell_h],
@@ -1827,17 +1854,25 @@ fn main_helios_production_terrain_trace_proof(@builtin(global_invocation_id) gid
         let minmax_view = pyramid
             .minmax_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        // wgpu 0.19's Metal auto-layout assigns these adjacent sampled-texture
+        // slots in reverse for this assembled proof entry. Keep canonical WGSL
+        // bindings elsewhere and compensate only for that measured backend.
+        let (height_binding, minmax_binding) = if adapter_info.backend == wgpu::Backend::Metal {
+            (&minmax_view, &height_view)
+        } else {
+            (&height_view, &minmax_view)
+        };
         let terrain_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("helios-production-proof-terrain"),
             layout: &pipeline.get_bind_group_layout(2),
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&height_view),
+                    resource: wgpu::BindingResource::TextureView(height_binding),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&minmax_view),
+                    resource: wgpu::BindingResource::TextureView(minmax_binding),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,

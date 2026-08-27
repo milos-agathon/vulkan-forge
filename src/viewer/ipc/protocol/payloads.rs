@@ -472,6 +472,8 @@ pub struct ViewerStats {
     pub peak_host_visible_bytes: u64,
     pub host_visible_limit_bytes: u64,
     pub within_host_visible_budget: bool,
+    pub media_diagnostics: Option<serde_json::Value>,
+    pub media_render_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

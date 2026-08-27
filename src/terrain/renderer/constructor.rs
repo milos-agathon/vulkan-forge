@@ -73,6 +73,44 @@ impl TerrainScene {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             },
         )?;
+        let media_light_transmittance_fallback_texture = tracked_create_texture(
+            &device,
+            &wgpu::TextureDescriptor {
+                label: Some("nephele.media.light_transmittance.fallback"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D3,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+        )?;
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &media_light_transmittance_fallback_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&[half::f16::ONE.to_bits(); 4]),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(8),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let media_light_transmittance_fallback_view = media_light_transmittance_fallback_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         let water_reflection_bind_group_layout =
             Self::create_water_reflection_bind_group_layout(device.as_ref());
@@ -445,6 +483,54 @@ impl TerrainScene {
             wgpu::TextureFormat::Rgba16Float,
             1,
         );
+        let (
+            media_tonemap_bind_group_layout,
+            media_tonemap_pipeline,
+            media_tonemap_sampler,
+            media_tonemap_lut_sampler,
+        ) = Self::create_media_tonemap_pipeline(device.as_ref(), color_format);
+        let media_tonemap_identity_lut = tracked_create_texture(
+            device.as_ref(),
+            &wgpu::TextureDescriptor {
+                label: Some("nephele.media.tonemap.identity_lut"),
+                size: wgpu::Extent3d {
+                    width: 2,
+                    height: 2,
+                    depth_or_array_layers: 2,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D3,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+        )?;
+        let identity_lut: [u8; 32] = [
+            0, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 255, 255, 0, 255, 0, 0, 255, 255, 255, 0,
+            255, 255, 0, 255, 255, 255, 255, 255, 255, 255,
+        ];
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &media_tonemap_identity_lut,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &identity_lut,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(8),
+                rows_per_image: Some(2),
+            },
+            wgpu::Extent3d {
+                width: 2,
+                height: 2,
+                depth_or_array_layers: 2,
+            },
+        );
+        let media_tonemap_identity_lut_view =
+            media_tonemap_identity_lut.create_view(&wgpu::TextureViewDescriptor::default());
         let offline_compute = Self::create_offline_compute_resources(device.as_ref());
 
         #[cfg(feature = "enable-gpu-instancing")]
@@ -519,6 +605,7 @@ impl TerrainScene {
 
         let pipeline_cache = PipelineCache {
             sample_count: 1,
+            color_format,
             pipeline,
             clipmap_pipeline,
             visibility_write_pipeline: None,
@@ -539,6 +626,13 @@ impl TerrainScene {
             background_blit_pipeline,
             aether_background_blit_pipeline,
             normal_blit_pipeline,
+            media_tonemap_bind_group_layout,
+            media_tonemap_pipeline,
+            media_tonemap_sampler,
+            _media_tonemap_identity_lut: media_tonemap_identity_lut,
+            media_tonemap_identity_lut_view,
+            media_tonemap_lut_sampler,
+            media_tonemap_lut: Mutex::new(None),
             offline_compute,
             sampler_linear,
             sky_bind_group_layout0,
@@ -596,6 +690,8 @@ impl TerrainScene {
             moment_blur_pass: None,
             fog_bind_group_layout,
             fog_uniform_buffer,
+            _media_light_transmittance_fallback_texture: media_light_transmittance_fallback_texture,
+            media_light_transmittance_fallback_view,
             water_reflection_bind_group_layout,
             water_reflection_uniform_buffer,
             water_reflection_texture: Mutex::new(water_reflection_texture),
@@ -646,6 +742,7 @@ impl TerrainScene {
             config: Arc::new(Mutex::new(crate::render::params::RendererConfig::default())),
             aov_pipeline: Mutex::new(None),
             aov_pipeline_sample_count: Mutex::new(1),
+            aov_pipeline_color_format: Mutex::new(color_format),
             aov_pipeline_output_mask: Mutex::new(0),
             aov_pipeline_source_id: Mutex::new(false),
             aov_pipeline_clipmap: Mutex::new(false),
@@ -668,6 +765,8 @@ impl TerrainScene {
             terrain_minmax_pyramid: None,
             culling_stats: crate::terrain::culling::two_phase::CullingStats::default(),
             height_streaming: None,
+            media_resources: Mutex::new(None),
+            media_terrain_occlusion_enabled: Mutex::new(true),
             gpu_timing: Mutex::new(None),
             _tracked_scene_textures: tracked_scene_textures,
         })
