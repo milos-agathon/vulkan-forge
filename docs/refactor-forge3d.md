@@ -184,7 +184,7 @@ commit SHA or remote identity.
 | F04 | `FORGE3D_NO_BOOTSTRAP=1 python scripts/ci_pytest_lane.py --profile fast -v --tb=short` | current source candidate before this ledger-only edit | 642 passed, 28 skipped by policy, 0 failed | `LOCALLY_PROVEN` |
 | F05 | focused proof for every Wave 1 accepted claim, recorded per finding | current base-plus-uncommitted I1-I9 candidate | all ten accepted findings locally proven and per-change reviewer-approved; exact evidence below | `LOCALLY_PROVEN` |
 | F06 | exact `cargo check`, Rust test, doctest, and `cargo forge3d-clippy-acceptance` commands from `.github/workflows/ci.yml` | current source candidate before this ledger-only edit | current `cargo forge3d-clippy-acceptance` passed; affected complete-file suite passed 29 with 19 policy GPU skips and 0 failures | `LOCALLY_PROVEN` |
-| F07 | independent per-change and whole-diff review; ponytail review; Standards and Spec review | current uncommitted 50-entry candidate | final combined `gpt-5.6-sol:xhigh`, Ponytail, Standards, and Spec review closed after the sentinel, AETHER, and ledger changes: combined `APPROVED` with zero defects; Ponytail returned `Lean already. Ship.` with net zero necessary lines; Standards and Spec each `APPROVED` with zero findings, and Spec verified the complete 275-path union while recognizing the pre-commit inventory failures | `APPROVED / REVIEW_CLOSED`; execution and publication gates remain separate |
+| F07 | independent per-change and whole-diff review; ponytail review; Standards and Spec review | commit `57f4b43e...` plus the two-path parity/ledger continuation | combined `APPROVED` the final checked-extent CPU/GPU parity remediation; current-candidate Standards and Spec each `APPROVED` with zero findings. Ponytail proposed consolidating the two axis-specific cap checks for net `-6` lines; MSW adjudication `REJECTED` that optional simplification because deleting it leaves no contract or proof gap and the current axis-specific fail-closed diagnostics are clear. | `APPROVED / CURRENT_REVIEW_CLOSED`; Ponytail finding disposition recorded; execution and publication gates remain separate |
 | F08 | required remote `PR Core Success` plus PR-head and mergeability readback | exact PR head | no PR yet | `NOT_PROVEN` |
 | F09 | full/slow/wheel/platform/NVIDIA/Vulkan/Metal/signing acceptance | exact SHA and authoritative environment | fresh release-LTO wheel's exact Apple M4 Metal adjudication gate passed 1/1, 0 skipped in 352.45 s, with zero-skip JUnit; broad full Python ran but failed as recorded below; the slow and other listed acceptance lanes are not green or remain unavailable | `LOCALLY_PROVEN` for this exact Metal gate; otherwise `NOT_PROVEN` |
 
@@ -3730,36 +3730,36 @@ acceptance.
 
 | Fact | Exact observation | Status |
 |---|---|---|
-| Local committed HEAD | `7db2414d816fd02b4fce776fe0ed37d4d4506802`; tree `b738a245de8ea9b76bad453b54a4c5a96abb33d2` | `VALIDATED_COMMITTED_PREDECESSOR` |
+| Local committed HEAD | `57f4b43efa5ce8fd5425fdabe6c96b39f03716d6`; tree `cedc79736eba8b5d8ddb30f1fbea3d2cfdc34e48` | `VALIDATED_COMMITTED_PREDECESSOR`; exact matrix ran before the current source/ledger remediation |
 | Comparison base | `92cf80d20d7d5c6e9a564b853e79d596f3f5088f` | `VALIDATED` |
 | Hosted audit | [CI run 32994300065](https://github.com/milos-agathon/forge3d/actions/runs/32994300065), `workflow_dispatch`, `scope=full`, exact head `7db2414d...`, terminal `completed/failure` | `VALIDATED_RED_PREDECESSOR` |
-| Current worktree including this ledger | 47 tracked modified files plus three untracked files; 50 entries from `git status --porcelain=v1 -uall`; that exact newline-terminated byte stream has SHA-256 `bc6aba2eecf2b97b19b36f96d95ee514a118df9dc4f790b8bb7576b38442b655` via `git status --porcelain=v1 -uall \| shasum -a 256` | `VALIDATED_UNCOMMITTED` |
-| Current tracked diff path set | 47 paths; the exact newline-terminated output of `git diff --name-only` has SHA-256 `44241ddef7f2a229bd05eb976c9fc1c32d0fb2e34b4cecec22474caf429723bd` | `VALIDATED_UNCOMMITTED` |
-| Final candidate commit/tree | no commit contains the current implementation delta | `PENDING / NOT_PROVEN` |
+| Current worktree including this ledger | two tracked modified files and no untracked files: `docs/refactor-forge3d.md` and `src/terrain/renderer/visibility_buffer.rs`; exact newline-terminated `git status --porcelain=v1 -uall` SHA-256 `4e5771c8d2e9be1ab395b4ee022255d990ba65cbc81f562f81d558596284067d` via `git status --porcelain=v1 -uall \| shasum -a 256` | `VALIDATED_UNCOMMITTED` |
+| Current tracked diff path set | two paths; exact newline-terminated `git diff --name-only` SHA-256 `dabe6e2d31f5675297abd2cdee7ce025b2f9457a5ab8d99ce64c1d0db75db452` | `VALIDATED_UNCOMMITTED` |
+| Final candidate commit/tree | commit `57f4b43e...` contains the reviewed 50-path predecessor, but no commit contains the later checked `<= 32,768` `u32 -> u16 -> f32` CPU/GPU nearest-sampling parity remediation and ledger reconciliation | `PENDING / NOT_PROVEN` |
 | Live PR state | last supplied state was open, draft, and `MERGEABLE/BLOCKED`; no post-change live readback exists | `STALE_SNAPSHOT / NOT_PROVEN` |
 
-The 50-entry snapshot includes this uncommitted, review-reconciled ledger. It is a
-worktree identity, not a final commit identity. The three untracked paths are
-`.github/actions/bind-artifact-head/action.yml` and
-`tests/engine_info_api_compat.rs` and `tests/test_ci_artifact_binding.py`.
+Commit `57f4b43e...` contains the previously reviewed 50-path set. The live
+worktree identity is now the two-path uncommitted continuation above, not the
+old 50-entry porcelain snapshot; there are no untracked paths.
 
 ### Current implementation map
 
-Every row below describes bytes present in the uncommitted worktree. Except for
-the explicitly supplied Rust-lint component approval, `IMPLEMENTED_UNCOMMITTED`
-is not a review verdict and is not test or hosted acceptance.
+Every row below describes bytes committed at `57f4b43e...`, except that
+`src/terrain/renderer/visibility_buffer.rs` and this ledger have later live
+modifications. A commit or implementation status is not test, physical, hosted,
+publication, or merge acceptance.
 
 | Claim mapped from the terminal audit | Current implementation paths | Current status | Proof boundary |
 |---|---|---|---|
-| Rust 1.98 lint drift | `Cargo.toml`; `src/geometry/mod.rs`; `src/py_types/aov.rs` | `APPROVED_COMPONENT / IMPLEMENTED_UNCOMMITTED` | component proof and current combined/Standards/Spec review are approved; run 32994300065 predates the correction and hosted Rust proof remains `NOT_PROVEN` |
-| HELIOS conservative proof portability | `src/path_tracing/hybrid_compute/terrain_heightfield.rs` | `IMPLEMENTED_UNCOMMITTED` | fixed 75,025-element proof arrays, explicit layouts, checked pipeline creation, sentinels, and count guards are present; Windows and Apple-hosted causality remain `NOT_PROVEN` |
-| Linux generic collection boundary | `tests/test_astro_night_golden.py`; `tests/test_no_silent_degradation.py` | `IMPLEMENTED_UNCOMMITTED` | the unused eager `Session` is removed and import/selection locks are added; exact hosted Linux full/slow proof is pending |
-| Windows CRLF source-test portability | `src/path_tracing/adjudication.rs`; `src/terrain/analysis/viewshed.rs` | `IMPLEMENTED_UNCOMMITTED` | inspected source is normalized and the FXC mutant must change; Windows proof is pending |
-| Windows certificate helper, Windows sdist decoding, and Python 3.10 TOML compatibility | `tests/test_certificate_verifier.py`; `tests/test_sdist_manifest.py`; `tests/test_api_contracts.py` | `IMPLEMENTED_UNCOMMITTED` | Git-for-Windows Bash selection, strict UTF-8 decoding, and `_toml_compat` use are present; the exact cross-platform matrix is pending |
-| M-06 fixture/selection and ANAMNESIS deterministic production route | `.github/workflows/ci.yml`; `tests/test_ci_lfs_fanout.py`; `tests/test_no_silent_degradation.py` | `IMPLEMENTED_UNCOMMITTED` | Rainier DEM fanout, interactive-viewer selection, and deterministic ANAMNESIS configuration are present; required NVIDIA reruns remain `NOT_PROVEN` |
-| Artifact self-identification | `.github/actions/bind-artifact-head/action.yml`; `.github/workflows/{build-wheel,ci,determinism-matrix,test-python-wheel}.yml`; `tests/test_ci_artifact_binding.py` | `IMPLEMENTED_UNCOMMITTED` | uploads are wired to add a full checked-out-head marker and fail closed on a wrong head; no hosted artifact from this uncommitted implementation exists |
-| NVIDIA Rainier visual-parity candidate | `python/forge3d/{map_scene,presets,terrain_demo,terrain_params}.py`; `src/shader_sources.rs`; `src/shaders/{terrain_pbr_pom,terrain_shadow_depth}.wgsl`; `src/terrain/render_params/{decode_lighting,native_lighting}.rs`; `src/terrain/renderer/{draw/execute,shadows/setup,upload,visibility_buffer}.rs`; `tests/{test_lighting_alignment,test_mapscene_presets,test_terrain_demo_preset_integration,test_visibility_buffer}.py` | `IMPLEMENTED_UNCOMMITTED` | explicit nearest-height sampling and Rainier preset/render-path contracts are present; equivalence to the NVIDIA golden and causal closure of SSIM `0.944961606814359 < 0.995` remain `NOT_PROVEN` until the exact physical lane reruns |
-| Current evidence ledger | `docs/refactor-forge3d.md` | `IMPLEMENTED_UNCOMMITTED / SPEC_APPROVED` | records the verified current 50-entry worktree and evidence boundaries; combined/Standards/Spec review is approved, without becoming final-head proof |
+| Rust 1.98 lint drift | `Cargo.toml`; `src/geometry/mod.rs`; `src/py_types/aov.rs` | `APPROVED_COMPONENT / COMMITTED_AT_57F4B43E` | component proof and current combined/Standards/Spec review are approved; run 32994300065 predates the correction and hosted Rust proof remains `NOT_PROVEN` |
+| HELIOS conservative proof portability | `src/path_tracing/hybrid_compute/terrain_heightfield.rs` | `COMMITTED_AT_57F4B43E` | fixed 75,025-element proof arrays, explicit layouts, checked pipeline creation, sentinels, and count guards are present; Windows and Apple-hosted causality remain `NOT_PROVEN` |
+| Linux generic collection boundary | `tests/test_astro_night_golden.py`; `tests/test_no_silent_degradation.py` | `COMMITTED_AT_57F4B43E` | the unused eager `Session` is removed and import/selection locks are added; exact hosted Linux full/slow proof is pending |
+| Windows CRLF source-test portability | `src/path_tracing/adjudication.rs`; `src/terrain/analysis/viewshed.rs` | `COMMITTED_AT_57F4B43E` | inspected source is normalized and the FXC mutant must change; Windows proof is pending |
+| Windows certificate helper, Windows sdist decoding, and Python 3.10 TOML compatibility | `tests/test_certificate_verifier.py`; `tests/test_sdist_manifest.py`; `tests/test_api_contracts.py` | `COMMITTED_AT_57F4B43E` | Git-for-Windows Bash selection, strict UTF-8 decoding, and `_toml_compat` use are present; the exact cross-platform matrix is pending |
+| M-06 fixture/selection and ANAMNESIS deterministic production route | `.github/workflows/ci.yml`; `tests/test_ci_lfs_fanout.py`; `tests/test_no_silent_degradation.py` | `COMMITTED_AT_57F4B43E` | Rainier DEM fanout, interactive-viewer selection, and deterministic ANAMNESIS configuration are present; required NVIDIA reruns remain `NOT_PROVEN` |
+| Artifact self-identification | `.github/actions/bind-artifact-head/action.yml`; `.github/workflows/{build-wheel,ci,determinism-matrix,test-python-wheel}.yml`; `tests/test_ci_artifact_binding.py` | `COMMITTED_AT_57F4B43E` | uploads are wired to add a full checked-out-head marker and fail closed on a wrong head; no hosted artifact from this implementation exists |
+| NVIDIA Rainier visual-parity candidate | `python/forge3d/{map_scene,presets,terrain_demo,terrain_params}.py`; `src/shader_sources.rs`; `src/shaders/{terrain_pbr_pom,terrain_shadow_depth}.wgsl`; `src/terrain/render_params/{decode_lighting,native_lighting}.rs`; `src/terrain/renderer/{draw/execute,shadows/setup,upload,visibility_buffer}.rs`; `tests/{test_lighting_alignment,test_mapscene_presets,test_terrain_demo_preset_integration,test_visibility_buffer}.py` | `COMMITTED_AT_57F4B43E + PARITY_REMEDIATION_UNCOMMITTED` | nearest-height CPU sampling now uses checked `<= 32,768` extents, exact `u32 -> u16 -> f32`, and the same f32 clamp/multiply/floor/min semantics as both WGSL shaders; boundary, inventory, focused, shader-lock, and clippy proof is green; combined, Standards, and Spec `APPROVED` with zero current findings, and Ponytail's optional consolidation was MSW-`REJECTED`; exact-current wheel/full matrix and NVIDIA golden parity remain `NOT_PROVEN` |
+| Current evidence ledger | `docs/refactor-forge3d.md` | `COMMITTED_AT_57F4B43E + RECONCILIATION_UNCOMMITTED` | records the exact-commit matrix, current two-path continuation, and evidence boundaries without becoming final-head proof |
 
 No current diff directly closes the audited DUPLA subprocess failure, the
 Apple hosted-adapter trust failure, or the TESSELLA `1.7x` performance failure.
@@ -3811,9 +3811,9 @@ acceptable.
 
 The current worktree is not a final candidate. The `7db2414d...` wheel,
 native-library hash, local JUnits, physical results, reviews, and hosted run are
-predecessor evidence only. Current per-family, combined, Ponytail, Standards,
-and Spec review is satisfied for the production bytes, but does not prove the
-remaining execution or publication gates. Before PR #170 can leave draft, the
+predecessor evidence only. Current component, combined, Ponytail-disposition,
+Standards, and Spec review is closed for the production bytes. None of those
+reviews proves the remaining execution or publication gates. Before PR #170 can leave draft, the
 continuation contract still requires:
 
 - a committed exact candidate and an entirely fresh locked release-LTO wheel,
@@ -3854,10 +3854,10 @@ and native hashes are superseded component-predecessor evidence only.
 
 | Review surface | Exact current state | Status |
 |---|---|---|
-| Combined `gpt-5.6-sol:xhigh` audit | final rerun after the sentinel, AETHER positive-probe, and ledger changes against the stable 50-entry candidate | `APPROVED`, zero defects |
-| Final Ponytail review | final exact-candidate result: `Lean already. Ship.` | net `-0` necessary lines; `APPROVED` |
-| Code review — Standards | final review of the stable candidate | `APPROVED`, zero findings |
-| Code review — Spec | final review verified the lossless 50-row map and complete 275-path originating-spec/current-diff union; the generic full/slow inventory failures are expected before the three untracked candidate files are committed | `APPROVED`, zero findings; expected pre-commit failures remain execution evidence, not passes |
+| Combined `gpt-5.6-sol:xhigh` audit | reran against the final checked-extent CPU/GPU f32 parity remediation after rejecting the superseded f64 attempt | exact-current scoped production bytes `APPROVED`; parity P1 closed |
+| Final Ponytail review | current-candidate finding proposed consolidating the width/height cap checks for net `-6` lines | finding `REJECTED` under MSW: no contract or proof gap exists, and the axis-specific fail-closed diagnostics are clear; current Ponytail disposition closed |
+| Code review — Standards | final current-candidate review after the parity remediation | `APPROVED`, zero findings |
+| Code review — Spec | final current-candidate review of the checked `<= 32,768` `u32 -> u16 -> f32` route, its two f32 boundary regressions, restored inventory, and fail-closed invariant | `APPROVED`, zero findings; parity P1 closed; execution gates remain separate |
 
 The combined, Ponytail, Standards, and Spec axes were scheduled serially only
 because the platform agent-thread limit prevented parallel dispatch. Each ran
@@ -3894,23 +3894,24 @@ checks, final commit and push, tested-head/PR-head equality, readiness, and live
 ### Authoritative current changed-file claim map (2026-08-27)
 
 This map supersedes the abbreviated current implementation map above only for
-lossless changed-file ownership. Every live porcelain path appears once. A
-component or focused proof status does not imply physical acceptance, hosted
-acceptance, publication, or merge readiness.
+lossless changed-file ownership. Every path in the 50-path commit delta
+from `7db2414d...` to `57f4b43e...` appears once; the two live modified paths are members
+of that same set. A component or focused proof status does not imply physical
+acceptance, hosted acceptance, publication, or merge readiness.
 
 <!-- CURRENT-CHANGED-FILE-MAP-BEGIN -->
 | Explicit path | Claim / lane owner | Proof / status |
 |---|---|---|
-| `.claude/rules/build-and-ci.md` | Code review Standards policy remediation | `IMPLEMENTED_UNCOMMITTED`; focused Standards and final Spec `APPROVED`; hosted/final acceptance `NOT_PROVEN` |
-| `.github/actions/bind-artifact-head/action.yml` | Exact-head artifact self-identification action | `IMPLEMENTED_UNCOMMITTED`; focused contract green; hosted artifact proof `NOT_PROVEN` |
-| `.github/workflows/build-wheel.yml` | Wheel artifact exact-head binding | `IMPLEMENTED_UNCOMMITTED`; focused contract green; hosted wheel proof `NOT_PROVEN` |
+| `.claude/rules/build-and-ci.md` | Code review Standards policy remediation | `COMMITTED_AT_57F4B43E`; focused Standards and final Spec `APPROVED`; hosted/final acceptance `NOT_PROVEN` |
+| `.github/actions/bind-artifact-head/action.yml` | Exact-head artifact self-identification action | `COMMITTED_AT_57F4B43E`; focused contract green; hosted artifact proof `NOT_PROVEN` |
+| `.github/workflows/build-wheel.yml` | Wheel artifact exact-head binding | `COMMITTED_AT_57F4B43E`; focused contract green; hosted wheel proof `NOT_PROVEN` |
 | `.github/workflows/ci.yml` | Acceptance orchestration: dedicated Apple runner, artifact binding, platform and physical-family selection | AETHER exact-`always()`, positive-probe, and exact-head-bound upload remediation independently `APPROVED`; exact-current hosted execution and final summary `NOT_PROVEN` |
-| `.github/workflows/determinism-matrix.yml` | Hosted determinism diagnostics and artifact binding | `IMPLEMENTED_UNCOMMITTED`; focused contract green; hosted execution `NOT_PROVEN` |
-| `.github/workflows/test-python-wheel.yml` | Python-wheel JUnit and artifact binding | `IMPLEMENTED_UNCOMMITTED`; focused contract green; hosted matrix `NOT_PROVEN` |
+| `.github/workflows/determinism-matrix.yml` | Hosted determinism diagnostics and artifact binding | `COMMITTED_AT_57F4B43E`; focused contract green; hosted execution `NOT_PROVEN` |
+| `.github/workflows/test-python-wheel.yml` | Python-wheel JUnit and artifact binding | `COMMITTED_AT_57F4B43E`; focused contract green; hosted matrix `NOT_PROVEN` |
 | `Cargo.lock` | Apple native Metal identity dependency lock | locked release-LTO build green; current combined/Standards/Spec `APPROVED`; final acceptance `NOT_PROVEN` |
 | `Cargo.toml` | Apple native Metal identity dependency plus Rust 1.98 lint contract | focused build/check green; current combined/Standards/Spec `APPROVED`; final acceptance `NOT_PROVEN` |
 | `docs/ci-validation.md` | Dedicated Apple runner selection and lifecycle documentation | focused route contract green; runner registration/execution and hosted acceptance `NOT_PROVEN` |
-| `docs/refactor-forge3d.md` | Current evidence ledger and Spec changed-file-map remediation | lossless current map and final-local/r2 evidence boundaries verified; final committed-head proof `NOT_PROVEN` |
+| `docs/refactor-forge3d.md` | Current evidence ledger and Spec changed-file-map remediation | committed at `57f4b43e...`, then modified only for exact-matrix and final CPU/GPU parity reconciliation; new exact-current committed proof `NOT_PROVEN` |
 | `python/forge3d/map_scene.py` | Rainier premium MapScene sampling and lighting route | independent component `APPROVED`; focused contract `LOCALLY_PROVEN`; NVIDIA/Vulkan SSIM `NOT_PROVEN` |
 | `python/forge3d/presets.py` | Rainier premium PCSS, IBL, and nearest-height preset | independent component `APPROVED`; focused contract `LOCALLY_PROVEN`; NVIDIA/Vulkan SSIM `NOT_PROVEN` |
 | `python/forge3d/terrain_demo.py` | Rainier terrain-demo sampling parity | independent component `APPROVED`; focused contract `LOCALLY_PROVEN`; NVIDIA/Vulkan SSIM `NOT_PROVEN` |
@@ -3931,14 +3932,14 @@ acceptance, publication, or merge readiness.
 | `src/terrain/renderer/draw/execute.rs` | Rainier/visibility-buffer execution route | independent Rainier component `APPROVED`; focused contract `LOCALLY_PROVEN`; NVIDIA/Vulkan parity `NOT_PROVEN` |
 | `src/terrain/renderer/shadows/setup.rs` | Rainier nearest-height shadow setup | independent Rainier component `APPROVED`; focused contract `LOCALLY_PROVEN`; NVIDIA/Vulkan SSIM `NOT_PROVEN` |
 | `src/terrain/renderer/upload.rs` | Rainier height-filter upload | independent Rainier component `APPROVED`; focused contract `LOCALLY_PROVEN`; physical parity `NOT_PROVEN` |
-| `src/terrain/renderer/visibility_buffer.rs` | Rainier height reconstruction and visibility-buffer parity | independent Rainier component `APPROVED`; focused contract `LOCALLY_PROVEN`; NVIDIA/Vulkan SSIM `NOT_PROVEN` |
+| `src/terrain/renderer/visibility_buffer.rs` | Rainier height reconstruction and visibility-buffer parity | committed at `57f4b43e...`; final uncommitted parity remediation checks each extent at `<= 32,768`, converts `u32 -> u16 -> f32` exactly, and preserves WGSL f32 clamp/multiply/floor/min semantics. Rust boundaries 2/2, world inventory 11/11, focused visibility/Rainier 12/12, both shader locks, and both clippy gates are green; combined, Standards, and Spec `APPROVED` with zero current findings. Ponytail's net-`-6` cap-check consolidation was MSW-`REJECTED` because the axis-specific diagnostics are clear and no contract/proof gap exists. New exact-current wheel/full lane and NVIDIA/Vulkan SSIM remain `NOT_PROVEN` |
 | `src/verify/ir/engine.rs` | Owner-authorized exact terrain source pin | source-lock 4/4 `LOCALLY_PROVEN`; current combined audit `APPROVED` |
 | `tests/apple_metal_acceptance.toml` | Apple 229 semantic / 266 total execution manifest | selection/count component `APPROVED / LOCALLY_PROVEN`; complete physical 266 matrix `NOT_PROVEN` |
-| `tests/engine_info_api_compat.rs` | Public Rust `EngineInfo` layout compatibility | focused Rust/API check green; untracked implementation file; combined/Standards/Spec `APPROVED`; physical acceptance `NOT_PROVEN` |
+| `tests/engine_info_api_compat.rs` | Public Rust `EngineInfo` layout compatibility | committed at `57f4b43e...`; focused Rust/API check green; combined/Standards/Spec `APPROVED`; physical acceptance `NOT_PROVEN` |
 | `tests/test_api_contracts.py` | Python 3.10 TOML and API compatibility contracts | current combined/Standards/Spec `APPROVED`; exact hosted Python matrix `NOT_PROVEN` |
 | `tests/test_astro_night_golden.py` | Generic collection boundary plus strict Apple identity consumer | focused collection/identity checks green; hosted Linux and physical Apple execution `NOT_PROVEN` |
 | `tests/test_certificate_verifier.py` | Windows certificate-helper portability | pre-identity-change combined audit passed; exact Windows attack-suite proof `NOT_PROVEN` |
-| `tests/test_ci_artifact_binding.py` | Exact-head artifact-binding negative and topology contracts | untracked implementation file; focused contract and final Spec `APPROVED`; hosted artifact proof `NOT_PROVEN` |
+| `tests/test_ci_artifact_binding.py` | Exact-head artifact-binding negative and topology contracts | committed at `57f4b43e...`; focused contract and final Spec `APPROVED`; hosted artifact proof `NOT_PROVEN` |
 | `tests/test_ci_lfs_fanout.py` | M-06 Rainier fixture fanout contract | focused static contract green; physical M-06 execution and zero-skip proof `NOT_PROVEN` |
 | `tests/test_determinism_hash.py` | DUPLA Apple physical-family ownership | component `APPROVED`; targeted selection `LOCALLY_PROVEN`; complete 266 matrix `NOT_PROVEN` |
 | `tests/test_flythrough_popping.py` | TESSELLA zero-warm-up 600-frame acceptance semantics | component `APPROVED`; cold structure `LOCALLY_PROVEN`; physical NVIDIA/Vulkan timing `NOT_PROVEN` |
@@ -3954,13 +3955,13 @@ acceptance, publication, or merge readiness.
 <!-- CURRENT-CHANGED-FILE-MAP-END -->
 
 Verification uses the newline-terminated, locale-sorted path column only. The
-canonical live set is
-`git status --porcelain=v1 -uall | cut -c4- | LC_ALL=C sort`; the map set is the
+canonical 50-path set is
+`git diff --name-only 7db2414d816fd02b4fce776fe0ed37d4d4506802 57f4b43efa5ce8fd5425fdabe6c96b39f03716d6 | LC_ALL=C sort`; the map set is the
 first backtick-delimited field from each data row between the two markers above,
 also sorted under `LC_ALL=C`. Both contain 50 rows, have no duplicate path, and
 have SHA-256 `ebfe7893bb3066d6fa77f9909e9e4378cc3f14e84eab7a2d66bb24269a6dc3f0`.
 The full ordered 50-row map SHA-256 is
-`2589ca360281d0b0573046df129c8e5733f216be467c1bf9c645273ebb75a7ec` and covers each
+`ab87033ae9033fb5cb5f77cc74e3b17df7d16526443dbe180c96ce5eefa54605` and covers each
 complete Markdown data-row byte sequence, including owner and proof/status.
 
 ### Final local validation and AETHER remediation checkpoint (2026-08-27)
@@ -4011,7 +4012,61 @@ uncommitted content.
 
 This self-describing reconciliation changes only the ledger after those review
 verdicts; it does not change reviewed source or workflow bytes. Review closure
-is therefore satisfied for the current production candidate, while a final
+was therefore satisfied for the 50-path candidate later committed as
+`57f4b43e...`. The subsequent final nearest-sampling parity remediation received
+new combined, Standards, and Spec approval with zero findings after closing the
+f64-semantics P1. Current Ponytail review proposed consolidating the two
+axis-specific cap checks for net `-6` lines; the finding was MSW-`REJECTED`
+because it closes no contract or proof gap and the current diagnostics are clear. A final
 commit, fresh exact-committed wheel and complete matrix, physical Apple and
 NVIDIA/Vulkan proof, hosted green checks, publication, tested-head/PR-head
 equality, readiness, and live `MERGEABLE/CLEAN` remain `NOT_PROVEN`.
+
+### Exact commit matrix and nearest-sampling remediation checkpoint (2026-08-27)
+
+The fresh evidence root `/private/tmp/pr170-final-commit.I7YD15` binds the sole
+matrix attempt to clean commit
+`57f4b43efa5ce8fd5425fdabe6c96b39f03716d6` and tree
+`cedc79736eba8b5d8ddb30f1fbea3d2cfdc34e48`. Its newline-terminated artifact
+manifest, `/private/tmp/pr170-final-commit.I7YD15/artifact-sha256.txt`, has
+SHA-256 `dbda50e0a806636fc0d5727a85b696a8767df7bf6e8195e67a324c4605c48b5b`.
+
+| Exact-commit evidence | Exact result | Status and boundary |
+|---|---|---|
+| Rust matrix | Formatting, full-feature check, routine clippy, and acceptance clippy passed. The serialized workspace invocation executed 1,436 non-doc tests passed, zero failed, three ignored, and four workflow-filtered, followed by its embedded Cargo doctest block with 12 passed, zero failed, and six ignored. The separate explicit `cargo test --doc` lane independently executed 12 passed, zero failed, and six ignored. | exact `57f4b43e...` Rust bytes `LOCALLY_PROVEN` |
+| Fresh locked release-LTO wheel | A new empty external Cargo target and explicit `maturin 1.15.0 build --profile release-lto --locked` produced exactly one wheel. Wheel SHA-256: `7f5192556a04f6d1fd80d5af304f0fea10f5fbb202c98be0721bd524ab6f6fc7`; isolated installed native SHA-256: `1de61254d792e9997223a1f754ae792f74f7bfb2b9f63a435963440eb45bf903`. Import provenance resolved to that isolated installation. | exact `57f4b43e...` artifact `LOCALLY_PROVEN`; after the later source remediation it is `PREDECESSOR_EVIDENCE`, not an exact-current wheel |
+| Python fast | 744 passed, zero failed, zero skipped/xfail, with 28 deselected; zero-skip assertion passed. | exact `57f4b43e...` fast lane `LOCALLY_PROVEN` |
+| Python slow | two passed, zero failed, zero skipped/xfail, with 4,526 deselected; zero-skip assertion passed. | exact `57f4b43e...` slow lane `LOCALLY_PROVEN` |
+| Python full | 4,038 passed, four failed, 39 skipped, and 447 deselected. All 39 skips were runtime loopback tests blocked by host `EPERM`. The four failures were the complete `tests/test_world_coord_f32_gate.py` inventory family: actual 1,557 conversions and digest `ef3c73cee53740ae544c5d707877bb7854b4a6d163201f68e543bb2595cca54e`, versus the frozen 1,555 inventory, caused exactly by `dims.0 as f32` and `dims.1 as f32` in `sample_height_nearest`. | exact `57f4b43e...` full lane `RED`; zero-skip acceptance not met |
+| Apple physical acceptance | The single no-warm-up/no-retry attempt ended with one `no_adapter` infrastructure error, zero skips, and no attributable adapter identity; none of the 266 manifest executions ran. | physical identity and complete 266-case matrix `NOT_PROVEN` |
+
+The first subsequent source attempt changed only
+`src/terrain/renderer/visibility_buffer.rs::sample_height_nearest` to widen the
+clamped `f32` coordinate and `u32` extent to `f64`. It removed the two inventory
+sites and passed its scoped checks, but combined and Spec review correctly
+rejected it because f64 multiplication can select a different texel than WGSL's
+f32 multiplication. That attempt is superseded diagnostic predecessor history,
+not the current implementation or current proof.
+
+The final implementation keeps the same source scope and no frozen inventory,
+threshold, golden, or Python test changes. It fail-closes when either texture
+extent exceeds Forge3D's accepted WebGPU limit of 32,768 texels, performs checked
+`u32 -> u16`, converts exactly with `f32::from(u16)`, and then uses the same f32
+clamp/multiply/floor/min sequence as `terrain_pbr_pom.wgsl` and
+`terrain_shadow_depth.wgsl`. The existing normalized-coordinate test plus new
+boundaries prove texel 7 for `uv=0.7, dims=10` and texel 1 for
+`uv=1.0_f32/257.0_f32, dims=257`. Formatting and both Rust tests passed 2/2;
+the complete world-coordinate gate passed 11/11; focused visibility/Rainier
+contracts passed 12/12; both shader parity source locks and both clippy gates
+passed. Combined, Standards, and Spec review `APPROVED` the current candidate
+with zero findings and closed the parity P1. Ponytail's optional net-`-6` cap
+check consolidation was MSW-`REJECTED` because the current axis-specific
+fail-closed diagnostics are clear and no contract/proof gap exists.
+
+Because production source changed after the exact-commit build, the `57f4b43e...`
+wheel, native library, and matrix remain lossless predecessor evidence only. A
+new commit containing the checked f32-parity remediation, a fresh empty-target locked
+release-LTO build, and a complete exact-commit full lane are required. Physical
+Apple and NVIDIA/Vulkan acceptance, green exact-head hosted checks and bound
+artifacts, commit/push, tested-head/PR-head equality, readiness, and live
+`MERGEABLE/CLEAN` all remain `NOT_PROVEN`.

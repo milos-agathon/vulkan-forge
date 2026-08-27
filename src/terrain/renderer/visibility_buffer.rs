@@ -256,10 +256,23 @@ fn sample_height_bilinear(data: &[f32], dims: (u32, u32), uv: [f32; 2]) -> f32 {
 }
 
 fn sample_height_nearest(data: &[f32], dims: (u32, u32), uv: [f32; 2]) -> f32 {
-    let x = ((uv[0].clamp(0.0, 1.0) * dims.0 as f32).floor() as usize)
-        .min(dims.0.saturating_sub(1) as usize);
-    let y = ((uv[1].clamp(0.0, 1.0) * dims.1 as f32).floor() as usize)
-        .min(dims.1.saturating_sub(1) as usize);
+    const MAX_TEXTURE_DIMENSION_2D: u32 = 32_768;
+    assert!(
+        dims.0 <= MAX_TEXTURE_DIMENSION_2D,
+        "terrain height texture width exceeds Forge3D's 32,768-texel WebGPU limit"
+    );
+    assert!(
+        dims.1 <= MAX_TEXTURE_DIMENSION_2D,
+        "terrain height texture height exceeds Forge3D's 32,768-texel WebGPU limit"
+    );
+    let width =
+        u16::try_from(dims.0).expect("Forge3D's 2D texture-width limit must fit exactly in u16");
+    let height =
+        u16::try_from(dims.1).expect("Forge3D's 2D texture-height limit must fit exactly in u16");
+    let x = (uv[0].clamp(0.0, 1.0) * f32::from(width)).floor() as usize;
+    let x = x.min(dims.0.saturating_sub(1) as usize);
+    let y = (uv[1].clamp(0.0, 1.0) * f32::from(height)).floor() as usize;
+    let y = y.min(dims.1.saturating_sub(1) as usize);
     data[y * dims.0 as usize + x]
 }
 
@@ -284,6 +297,27 @@ mod height_filter_tests {
         assert_ne!(
             sample_height_filtered(&data, (3, 3), [0.2, 0.2], false),
             sample_height_filtered(&data, (3, 3), [0.2, 0.2], true),
+        );
+    }
+
+    #[test]
+    fn nearest_height_filter_matches_wgsl_f32_boundaries() {
+        let ten_texels = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        assert_eq!(
+            sample_height_filtered(&ten_texels, (10, 1), [0.7, 0.0], true),
+            7.0
+        );
+
+        let two_hundred_fifty_seven_texels = (0_u16..257).map(f32::from).collect::<Vec<_>>();
+        let one_over_257 = 1.0_f32 / 257.0_f32;
+        assert_eq!(
+            sample_height_filtered(
+                &two_hundred_fifty_seven_texels,
+                (257, 1),
+                [one_over_257, 0.0],
+                true,
+            ),
+            1.0
         );
     }
 }
