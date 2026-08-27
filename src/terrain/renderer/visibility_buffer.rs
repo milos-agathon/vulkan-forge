@@ -265,10 +265,8 @@ fn sample_height_nearest(data: &[f32], dims: (u32, u32), uv: [f32; 2]) -> f32 {
         dims.1 <= MAX_TEXTURE_DIMENSION_2D,
         "terrain height texture height exceeds Forge3D's 32,768-texel WebGPU limit"
     );
-    let width =
-        u16::try_from(dims.0).expect("Forge3D's 2D texture-width limit must fit exactly in u16");
-    let height =
-        u16::try_from(dims.1).expect("Forge3D's 2D texture-height limit must fit exactly in u16");
+    let width = dims.0 as u16;
+    let height = dims.1 as u16;
     let x = (uv[0].clamp(0.0, 1.0) * f32::from(width)).floor() as usize;
     let x = x.min(dims.0.saturating_sub(1) as usize);
     let y = (uv[1].clamp(0.0, 1.0) * f32::from(height)).floor() as usize;
