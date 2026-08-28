@@ -3730,23 +3730,22 @@ acceptance.
 
 | Fact | Exact observation | Status |
 |---|---|---|
-| Local committed HEAD | `a3260432341585eea1e486bccff4fa898c824f4a`; tree `97eb7a74612f2c12b645e124dff37c5c13524997` | `VALIDATED_COMMITTED_PREDECESSOR`; exact phase-A and full lanes ran before the current source/ledger remediation |
+| Local committed HEAD | `2f215c57c9b4dcd23533635f144e20e2e3132f74`; tree `942c4fed5c3233b743d7d360021ca9a0a79f994f` | `VALIDATED`; exact local Rust, wheel, fast, slow, and root-owned full lanes are proven; this ledger is the sole live docs-only modification |
 | Comparison base | `92cf80d20d7d5c6e9a564b853e79d596f3f5088f` | `VALIDATED` |
 | Hosted audit | [CI run 32994300065](https://github.com/milos-agathon/forge3d/actions/runs/32994300065), `workflow_dispatch`, `scope=full`, exact head `7db2414d...`, terminal `completed/failure` | `VALIDATED_RED_PREDECESSOR` |
-| Current worktree including this ledger | two tracked modified files and no untracked files: `docs/refactor-forge3d.md` and `src/terrain/renderer/visibility_buffer.rs`; exact newline-terminated `git status --porcelain=v1 -uall` SHA-256 `4e5771c8d2e9be1ab395b4ee022255d990ba65cbc81f562f81d558596284067d` via `git status --porcelain=v1 -uall \| shasum -a 256` | `VALIDATED_UNCOMMITTED` |
-| Current tracked diff path set | two paths; exact newline-terminated `git diff --name-only` SHA-256 `dabe6e2d31f5675297abd2cdee7ce025b2f9457a5ab8d99ce64c1d0db75db452` | `VALIDATED_UNCOMMITTED` |
-| Final candidate commit/tree | commit `a3260432...` contains the reviewed checked-extent parity predecessor, but no commit contains the later TERMINUS `.expect` removal and ledger reconciliation | `PENDING / NOT_PROVEN` |
+| Current worktree including this ledger | one tracked modified file, `docs/refactor-forge3d.md`, and no untracked files; the committed source/test tree remains exact `2f215c57...` | `VALIDATED_DOCS_ONLY_LIVE` |
+| Current tracked diff path set | docs ledger only; source/test path set unchanged | `VALIDATED_DOCS_ONLY_LIVE` |
+| Final candidate commit/tree | committed exact head is `2f215c57...`; this documentation reconciliation is intentionally uncommitted | `VALIDATED_COMMITTED / DOCS_ONLY_LIVE` |
 | Live PR state | last supplied state was open, draft, and `MERGEABLE/BLOCKED`; no post-change live readback exists | `STALE_SNAPSHOT / NOT_PROVEN` |
 
-Commit `a3260432...` contains the previously reviewed 50-path set. The live
-worktree identity is now the two-path uncommitted continuation above, not the
-old 50-entry porcelain snapshot; there are no untracked paths.
+Commit `2f215c57...` contains the reviewed 50-path source set and the live
+worktree differs only by this documentation ledger; there are no untracked
+paths.
 
 ### Current implementation map
 
-Every row below describes bytes committed no later than `a3260432...`, except that
-`src/terrain/renderer/visibility_buffer.rs` and this ledger have later live
-modifications. A commit or implementation status is not test, physical, hosted,
+Every row below describes bytes committed at `2f215c57...`, except that this
+ledger has a later docs-only live modification. A commit or implementation status is not test, physical, hosted,
 publication, or merge acceptance.
 
 | Claim mapped from the terminal audit | Current implementation paths | Current status | Proof boundary |
@@ -3758,8 +3757,8 @@ publication, or merge acceptance.
 | Windows certificate helper, Windows sdist decoding, and Python 3.10 TOML compatibility | `tests/test_certificate_verifier.py`; `tests/test_sdist_manifest.py`; `tests/test_api_contracts.py` | `COMMITTED_AT_57F4B43E` | Git-for-Windows Bash selection, strict UTF-8 decoding, and `_toml_compat` use are present; the exact cross-platform matrix is pending |
 | M-06 fixture/selection and ANAMNESIS deterministic production route | `.github/workflows/ci.yml`; `tests/test_ci_lfs_fanout.py`; `tests/test_no_silent_degradation.py` | `COMMITTED_AT_57F4B43E` | Rainier DEM fanout, interactive-viewer selection, and deterministic ANAMNESIS configuration are present; required NVIDIA reruns remain `NOT_PROVEN` |
 | Artifact self-identification | `.github/actions/bind-artifact-head/action.yml`; `.github/workflows/{build-wheel,ci,determinism-matrix,test-python-wheel}.yml`; `tests/test_ci_artifact_binding.py` | `COMMITTED_AT_57F4B43E` | uploads are wired to add a full checked-out-head marker and fail closed on a wrong head; no hosted artifact from this implementation exists |
-| NVIDIA Rainier visual-parity candidate | `python/forge3d/{map_scene,presets,terrain_demo,terrain_params}.py`; `src/shader_sources.rs`; `src/shaders/{terrain_pbr_pom,terrain_shadow_depth}.wgsl`; `src/terrain/render_params/{decode_lighting,native_lighting}.rs`; `src/terrain/renderer/{draw/execute,shadows/setup,upload,visibility_buffer}.rs`; `tests/{test_lighting_alignment,test_mapscene_presets,test_terrain_demo_preset_integration,test_visibility_buffer}.py` | `COMMITTED_AT_A3260432 + TERMINUS_REMEDIATION_UNCOMMITTED` | committed parity keeps the `<= 32,768` invariant and exact `u16 -> f32` WGSL arithmetic; the live source removes its two ratchet-breaking `.expect` calls using guarded, mathematically lossless `as u16` conversions with no fallback. Focused remediation proof and independent review are `APPROVED / LOCALLY_PROVEN`; a fresh exact-current wheel/full matrix and NVIDIA golden parity remain `NOT_PROVEN` |
-| Current evidence ledger | `docs/refactor-forge3d.md` | `COMMITTED_AT_A3260432 + RECONCILIATION_UNCOMMITTED` | records the exact-commit matrix, current two-path continuation, and evidence boundaries without becoming final-head proof |
+| NVIDIA Rainier visual-parity candidate | `python/forge3d/{map_scene,presets,terrain_demo,terrain_params}.py`; `src/shader_sources.rs`; `src/shaders/{terrain_pbr_pom,terrain_shadow_depth}.wgsl`; `src/terrain/render_params/{decode_lighting,native_lighting}.rs`; `src/terrain/renderer/{draw/execute,shadows/setup,upload,visibility_buffer}.rs`; `tests/{test_lighting_alignment,test_mapscene_presets,test_terrain_demo_preset_integration,test_visibility_buffer}.py` | `COMMITTED_AT_2F215C57` | exact local wheel, fast, slow, and full lanes are proven; focused remediation and independent review are `APPROVED / LOCALLY_PROVEN`; physical NVIDIA/Vulkan golden parity remains `NOT_PROVEN` |
+| Current evidence ledger | `docs/refactor-forge3d.md` | `COMMITTED_AT_2F215C57 + DOCS_ONLY_LIVE_MODIFICATION` | records the exact-head local matrix and evidence boundaries; physical, hosted, publication, and merge readiness remain `NOT_PROVEN` |
 
 No current diff directly closes the audited DUPLA subprocess failure, the
 Apple hosted-adapter trust failure, or the TESSELLA `1.7x` performance failure.
@@ -3809,21 +3808,16 @@ acceptable.
 
 ### Final acceptance boundary
 
-The current worktree is not a final candidate. The `7db2414d...` wheel,
-native-library hash, local JUnits, physical results, reviews, and hosted run are
-predecessor evidence only. Combined, Ponytail-disposition, Standards, and Spec
-review is closed for the exact current two-path candidate, and the TERMINUS
-source remediation also has focused independent approval. Those reviews do not
-prove exact-current execution or publication gates. Before PR #170 can leave draft, the
+The committed exact candidate is `2f215c57...`; this live change is docs-only.
+Its fresh wheel, native-library hash, local Rust/Python JUnits, and local review
+are exact-head proof. Physical results, hosted checks, publication, and merge
+readiness remain outside that proof. Before PR #170 can leave draft, the
 continuation contract still requires:
 
-- a committed exact candidate and an entirely fresh locked release-LTO wheel,
-  isolated venv, local matrix, JUnit/accounting bundle, and physical evidence;
+- physical Apple and required NVIDIA/Vulkan proof without fallback, skips,
+  retries, warm-ups, stale results, or unresolved `NOT_PROVEN` claims;
 - exact-head hosted reruns that close every failure family, bind every required
   artifact to the full SHA, and produce a green `Full Acceptance Summary`;
-- physical Apple and required NVIDIA/Vulkan proof without fallback, skips,
-  retries, warm-ups, stale results, or unresolved
-  `NOT_PROVEN` claims; and
 - live readback proving the tested SHA equals the PR head, the PR is no longer
   draft, and GitHub reports `MERGEABLE/CLEAN`.
 
@@ -3868,10 +3862,11 @@ review judgments.
 
 The audited hosted evidence remains red: run `32994300065` completed with
 failure at predecessor head `7db2414d...`, and its `Fast Contract` job failed.
-A frozen committed-candidate release-LTO wheel, the complete 266-execution matrix,
-NVIDIA/Vulkan acceptance, green exact-head hosted checks, a final commit and
-push, tested-head/PR-head equality, readiness, and live `MERGEABLE/CLEAN`
-readback all remain `NOT_PROVEN`.
+That hosted run is superseded for local execution by the exact `2f215c57...`
+wheel and complete fast/slow/full local proof recorded below. The complete
+266-execution physical Apple matrix, NVIDIA/Vulkan acceptance, green exact-head
+hosted checks, push, tested-head/PR-head equality, readiness, and live
+`MERGEABLE/CLEAN` readback remain `NOT_PROVEN`.
 
 ### Post-combined-audit remediation checkpoint (2026-08-27)
 
@@ -3887,18 +3882,18 @@ bytes.
 | TESSELLA cold acceptance semantics | `tests/test_hzb_culling.py` removes repeated seven-sample timing and median selection, takes one baseline and one culled sample, and locks the cold single-sample shape; `tests/test_flythrough_popping.py` removes canonical residency warm-up and records zero warm-up steps. The existing required speedup remains unchanged at `>= 1.7`. | independent component review `APPROVED`; source/contract remediation `LOCALLY_PROVEN`; physical NVIDIA/Vulkan cold timing remains `NOT_PROVEN` |
 | Rainier premium rendering contract | `python/forge3d/presets.py` restores and retains premium PCSS shadows and IBL; the Rainier route and exact terrain pin are locked by `tests/test_lighting_alignment.py`, `tests/test_mapscene_presets.py`, `tests/test_terrain_demo_preset_integration.py`, and `src/verify/ir/engine.rs`. Focused Rainier/pin proof passed 11 tests. | independent Rainier review `APPROVED`; focused source/preset contract `LOCALLY_PROVEN`; exact NVIDIA/Vulkan Rainier SSIM remains `NOT_PROVEN` |
 
-Run `32994300065` and its `Fast Contract` remain red predecessor evidence. A
-frozen committed-candidate release-LTO wheel, complete 266-execution Apple
-matrix, physical Apple and NVIDIA/Vulkan acceptance, green exact-head hosted
-checks, final commit and push, tested-head/PR-head equality, readiness, and live
-`MERGEABLE/CLEAN` readback all remain `NOT_PROVEN`.
+Run `32994300065` and its `Fast Contract` remain red predecessor evidence. The
+exact `2f215c57...` local wheel and fast/slow/full matrix are proven; the
+complete 266-execution physical Apple matrix, physical Apple and NVIDIA/Vulkan
+acceptance, green exact-head hosted checks, push, tested-head/PR-head equality,
+readiness, and live `MERGEABLE/CLEAN` readback remain `NOT_PROVEN`.
 
 ### Authoritative current changed-file claim map (2026-08-27)
 
 This map supersedes the abbreviated current implementation map above only for
-lossless changed-file ownership. Every path in the 50-path commit delta
-from `7db2414d...` to `a3260432...` appears once; the two live modified paths are members
-of that same set. A component or focused proof status does not imply physical
+lossless changed-file ownership. Every path in the 50-path committed source set
+from `7db2414d...` through exact head `2f215c57...` appears once; this ledger is
+the sole live docs-only modification. A component or focused proof status does not imply physical
 acceptance, hosted acceptance, publication, or merge readiness.
 
 <!-- CURRENT-CHANGED-FILE-MAP-BEGIN -->
@@ -3913,7 +3908,7 @@ acceptance, hosted acceptance, publication, or merge readiness.
 | `Cargo.lock` | Apple native Metal identity dependency lock | locked release-LTO build green; current combined/Standards/Spec `APPROVED`; final acceptance `NOT_PROVEN` |
 | `Cargo.toml` | Apple native Metal identity dependency plus Rust 1.98 lint contract | focused build/check green; current combined/Standards/Spec `APPROVED`; final acceptance `NOT_PROVEN` |
 | `docs/ci-validation.md` | Dedicated Apple runner selection and lifecycle documentation | focused route contract green; runner registration/execution and hosted acceptance `NOT_PROVEN` |
-| `docs/refactor-forge3d.md` | Current evidence ledger and Spec changed-file-map remediation | committed through `a3260432...`, then modified only for exact-matrix, TERMINUS-remediation, and evidence-boundary reconciliation; new exact-current committed proof `NOT_PROVEN` |
+| `docs/refactor-forge3d.md` | Current evidence ledger and Spec changed-file-map remediation | committed at `2f215c57...`, then modified only as this docs-only reconciliation; exact local wheel/fast/slow/full proof is recorded below, while hosted/publication/readiness remain `NOT_PROVEN` |
 | `python/forge3d/map_scene.py` | Rainier premium MapScene sampling and lighting route | independent component `APPROVED`; focused contract `LOCALLY_PROVEN`; NVIDIA/Vulkan SSIM `NOT_PROVEN` |
 | `python/forge3d/presets.py` | Rainier premium PCSS, IBL, and nearest-height preset | independent component `APPROVED`; focused contract `LOCALLY_PROVEN`; NVIDIA/Vulkan SSIM `NOT_PROVEN` |
 | `python/forge3d/terrain_demo.py` | Rainier terrain-demo sampling parity | independent component `APPROVED`; focused contract `LOCALLY_PROVEN`; NVIDIA/Vulkan SSIM `NOT_PROVEN` |
@@ -3934,7 +3929,7 @@ acceptance, hosted acceptance, publication, or merge readiness.
 | `src/terrain/renderer/draw/execute.rs` | Rainier/visibility-buffer execution route | independent Rainier component `APPROVED`; focused contract `LOCALLY_PROVEN`; NVIDIA/Vulkan parity `NOT_PROVEN` |
 | `src/terrain/renderer/shadows/setup.rs` | Rainier nearest-height shadow setup | independent Rainier component `APPROVED`; focused contract `LOCALLY_PROVEN`; NVIDIA/Vulkan SSIM `NOT_PROVEN` |
 | `src/terrain/renderer/upload.rs` | Rainier height-filter upload | independent Rainier component `APPROVED`; focused contract `LOCALLY_PROVEN`; physical parity `NOT_PROVEN` |
-| `src/terrain/renderer/visibility_buffer.rs` | Rainier height reconstruction and visibility-buffer parity | committed `a3260432...` checks each extent at `<= 32,768`, converts through exact `u16 -> f32`, and preserves WGSL f32 clamp/multiply/floor/min semantics, but its two checked-conversion `.expect` calls made the exact full lane red. The sole live remediation retains those assertions, uses guarded lossless `as u16` conversions with no fallback, restores TERMINUS `panic=1` / `unwrap=31` / `expect=15`, and removes this path from the source allowlist inventory. Ratchet 5/5 including ablation, world inventory 11/11, Rust boundaries 2/2, shader locks 2/2, focused visibility/Rainier 9/9, formatting, and both clippy gates are green; scoped independent, combined, Ponytail, Standards, and Spec reviews are all `APPROVED` for the exact current candidate. The fresh exact-current wheel/full lane and NVIDIA/Vulkan SSIM remain `NOT_PROVEN` |
+| `src/terrain/renderer/visibility_buffer.rs` | Rainier height reconstruction and visibility-buffer parity | committed at `2f215c57...`; each extent is `<= 32,768`, conversion is exact `u16 -> f32`, and WGSL f32 clamp/multiply/floor/min semantics are preserved. Ratchet 5/5 including ablation, world inventory 11/11, Rust boundaries 2/2, shader locks 2/2, focused visibility/Rainier 9/9, formatting, and both clippy gates are green; scoped independent, combined, Ponytail, Standards, and Spec reviews are `APPROVED`. Exact local wheel/fast/slow/full proof is recorded below; NVIDIA/Vulkan SSIM remains `NOT_PROVEN` |
 | `src/verify/ir/engine.rs` | Owner-authorized exact terrain source pin | source-lock 4/4 `LOCALLY_PROVEN`; current combined audit `APPROVED` |
 | `tests/apple_metal_acceptance.toml` | Apple 229 semantic / 266 total execution manifest | selection/count component `APPROVED / LOCALLY_PROVEN`; complete physical 266 matrix `NOT_PROVEN` |
 | `tests/engine_info_api_compat.rs` | Public Rust `EngineInfo` layout compatibility | committed at `57f4b43e...`; focused Rust/API check green; combined/Standards/Spec `APPROVED`; physical acceptance `NOT_PROVEN` |
@@ -3963,7 +3958,7 @@ first backtick-delimited field from each data row between the two markers above,
 also sorted under `LC_ALL=C`. Both contain 50 rows, have no duplicate path, and
 have SHA-256 `ebfe7893bb3066d6fa77f9909e9e4378cc3f14e84eab7a2d66bb24269a6dc3f0`.
 The full ordered 50-row map SHA-256 is
-`7e1553ab027d4daad333d5ccbef1855571865ab56164441bcefe6167f756130f` and covers each
+`f6b00fa2cb7694ff5512706e2f8c4f585b4fa2c5dec7e7cd79c49f493fdb2201` and covers each
 complete Markdown data-row byte sequence, including owner and proof/status.
 
 ### Final local validation and AETHER remediation checkpoint (2026-08-27)
@@ -4067,14 +4062,12 @@ The later exact full lane exposed that its two checked conversions added two
 `.expect` sites, so those reviews do not by themselves approve the current
 post-TERMINUS bytes.
 
-Because production source changed after both the `57f4b43e...` and
-`a3260432...` exact-commit builds, their wheel, native-library, and matrix
-artifacts remain lossless predecessor evidence only. A new commit containing
-the scoped TERMINUS remediation, a fresh empty-target locked release-LTO build,
-and a complete exact-commit full lane are required. Physical
-Apple and NVIDIA/Vulkan acceptance, green exact-head hosted checks and bound
-artifacts, commit/push, tested-head/PR-head equality, readiness, and live
-`MERGEABLE/CLEAN` all remain `NOT_PROVEN`.
+This historical `57f4b43e...` checkpoint is superseded by the exact
+`2f215c57...` local matrix checkpoint below; its wheel, native library, and
+matrix remain lossless predecessor evidence. Physical Apple and NVIDIA/Vulkan
+acceptance, green exact-head hosted checks and bound artifacts, commit/push,
+tested-head/PR-head equality, readiness, and live `MERGEABLE/CLEAN` remain
+`NOT_PROVEN`.
 
 ### Exact `a3260432...` local matrix and TERMINUS remediation checkpoint (2026-08-27)
 
@@ -4114,10 +4107,42 @@ passed 2/2; shader locks passed 2/2; focused nonphysical visibility/Rainier
 contracts passed 9/9; formatting and both clippy gates passed. Independent
 scoped review `APPROVED` this remediation with zero findings.
 
-Because source changed after every `a3260432...` artifact and matrix lane, its
-wheel, native library, JUnits, and selection ledgers are now exact committed
-predecessor evidence, not exact-current proof. A new commit, empty-target locked
-release-LTO build, and complete exact-current matrix including one clean full
-lane remain required. Physical Apple and NVIDIA/Vulkan acceptance, green
-exact-head hosted checks and bound artifacts, push, tested-head/PR-head
-equality, readiness, and live `MERGEABLE/CLEAN` remain `NOT_PROVEN`.
+This historical `a3260432...` checkpoint is superseded by the exact
+`2f215c57...` local matrix checkpoint below; its wheel, native library, JUnits,
+and selection ledgers remain lossless predecessor evidence. Physical Apple and
+NVIDIA/Vulkan acceptance, green exact-head hosted checks and bound artifacts,
+push, tested-head/PR-head equality, readiness, and live `MERGEABLE/CLEAN`
+remain `NOT_PROVEN`.
+
+### Exact `2f215c57...` local matrix checkpoint (2026-08-27)
+
+The phase-A evidence root
+`/var/folders/81/dq771hbd54z5yq6rj5cdh_3r0000gn/T/forge3d-pr170-phaseA-evidence.HHz7rh53bF`
+binds this local proof to clean full SHA
+`2f215c57c9b4dcd23533635f144e20e2e3132f74` and its exact tree. The fresh
+empty external Cargo target was
+`/var/folders/81/dq771hbd54z5yq6rj5cdh_3r0000gn/T/forge3d-pr170-phaseA-cargo-target.zAjFCJ52ZY`.
+No source, test, threshold, or workflow bytes were changed. The locked
+release-LTO build used maturin `1.15.0` and produced exactly one wheel.
+
+| Exact-head local evidence | Result | Boundary |
+|---|---|---|
+| Rust workflow gates | `cargo fmt --check`, locked full-feature check, locked routine and acceptance Clippy all passed; serialized workspace tests: 1,436 non-doc tests passed, 0 failed, 3 ignored, 4 explicitly workflow-filtered; embedded doctests: 12 passed, 0 failed, 6 ignored; AETHER acceptance: 23 passed, 0 failed, 2 ignored; standalone doctests: 12 passed, 0 failed, 6 ignored | `LOCALLY_PROVEN`; the four filters are the workflow-authorized `gpu_extrusion`/`brdf_tile` skips and the ignored cases are repository-authorized, not silent skips |
+| Fresh installed wheel/native | Wheel `forge3d-1.35.0-cp310-abi3-macosx_11_0_arm64.whl`, SHA-256 `42f38235b6a1f9493d66e89370572301f63dc67263f9140800dd60ead2df0c6d`; installed `_forge3d.abi3.so`, SHA-256 `92fcabbf475a0000ad80c3b3ea76b0cf44624e5e0b3b39752bd8e47df3d1d31c` | fresh isolated venv import provenance `LOCALLY_PROVEN` |
+| Python fast | 744 passed, 0 failed/error/skipped; 28 deselected, all `apple_metal_physical`; zero-skip verifier passed | `LOCALLY_PROVEN` |
+| Python slow | 2 passed, 0 failed/error/skipped; 4,526 deselected; zero-skip verifier passed | `LOCALLY_PROVEN` |
+| Python full | 4,081 passed, 0 failure/error/skip, 447 deselected; full log SHA-256 `bab1d790...`, verifier `940000ca...`, JUnit `cfca9b97...`, selection ledger `5755126e...` | exact-head loopback proof `LOCALLY_PROVEN`; this was the root-owned lane, not the sandbox lane |
+| Apple local acceptance | Exactly one authoritative invocation: truthful `no_adapter` infrastructure error, zero skips, 0/266 manifest executions; merged JUnit records `tests=1, failures=0, errors=1, skipped=0` | physical Apple identity and 266-case execution `NOT_PROVEN` |
+
+The complete evidence paths and full hashes are preserved under the evidence
+root, including `logs/`, `junit/`, `selection/`, `apple/`,
+`native-provenance.json`, and the exact-head artifact manifest
+`exact-head-artifact-sha256.txt` (sealed by `logs/24-final-exact-seal.log`,
+manifest SHA-256
+`b450ac9bd019bfbc19e9f7a2484f507f67491f46c3468c23da38b7730140c5d6`). The
+initial pip DNS
+transport failure and subsequent approved retry were setup-only transport
+events; they are not acceptance results or policy exceptions. Independent
+execution review is `APPROVED`. Physical Apple/NVIDIA/Vulkan proof, hosted
+checks, publication, push, tested-head/PR-head equality, readiness, and live
+`MERGEABLE/CLEAN` remain `NOT_PROVEN`.
