@@ -107,9 +107,16 @@ def _public_verifier_script(*, through_pytest_install: bool = False) -> str:
         for index, line in enumerate(lines)
         if "python -m pip install pytest" in line
     )
-    end = install_index + int(through_pytest_install)
-    if through_pytest_install and end < len(lines) and lines[end].strip() == ")":
-        end += 1
+    if through_pytest_install:
+        end = install_index + 1
+        if end < len(lines) and lines[end].strip() == ")":
+            end += 1
+    else:
+        end = next(
+            index
+            for index in range(install_index, -1, -1)
+            if lines[index].strip() == "("
+        )
     script = "\n".join(lines[:end])
     return "\n".join(
         line for line in script.splitlines() if "exec > >(tee " not in line
@@ -245,6 +252,7 @@ def test_public_verifier_accepts_authentic_catalog_without_signing_secret(tmp_pa
     candidate = _prepare_public_verifier_candidate(tmp_path)
     result = _run_public_verifier(candidate)
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "syntax error" not in result.stderr
 
 
 def test_public_verifier_rejects_candidate_key_replacement_and_resigning(tmp_path):
