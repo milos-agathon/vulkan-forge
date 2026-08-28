@@ -164,7 +164,7 @@ jobs:
           sudo apt-get install -y libvulkan-dev pkg-config
           python -m venv .venv
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
-          .venv/bin/python -m pip install -U pip maturin pytest numpy pillow
+          .venv/bin/python -m pip install -U pip maturin pytest numpy pillow pyyaml
       - name: Check formatting and routine Rust contracts
         run: |
           cargo fmt --check
