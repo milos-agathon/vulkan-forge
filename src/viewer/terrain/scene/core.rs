@@ -6,6 +6,7 @@ impl ViewerTerrainScene {
     pub fn new(
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
+        adapter: Arc<wgpu::Adapter>,
         target_format: wgpu::TextureFormat,
     ) -> Result<Self> {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -132,6 +133,7 @@ impl ViewerTerrainScene {
         Ok(Self {
             device,
             queue,
+            adapter,
             pipeline,
             bind_group_layout,
             depth_texture: None,
@@ -140,6 +142,13 @@ impl ViewerTerrainScene {
             snapshot_depth_texture: None,
             terrain: None,
             pbr_config: crate::viewer::terrain::pbr_renderer::ViewerTerrainPbrConfig::default(),
+            canonical_media: None,
+            canonical_media_version: 0,
+            canonical_media_pass: None,
+            canonical_media_diagnostics: None,
+            canonical_media_render_error: None,
+            media_light_transmittance_fallback: None,
+            media_light_transmittance_fallback_view: None,
             pbr_pipeline: None,
             pbr_bind_group_layout: None,
             pbr_uniform_buffer: None,
@@ -213,6 +222,57 @@ impl ViewerTerrainScene {
             scatter_last_frame_stats: crate::terrain::scatter::TerrainScatterFrameStats::default(),
             scatter_elapsed_time: 0.0,
         })
+    }
+
+    pub(crate) fn set_media(
+        &mut self,
+        medium: Option<crate::media::Medium>,
+        version: u64,
+    ) -> Result<()> {
+        let format_changes = self.canonical_media.is_some() != medium.is_some();
+        if let Some(value) = &medium {
+            let majorant = crate::media::MajorantGrid::construct(value, version)
+                .map_err(|error| anyhow::anyhow!("media majorant validation failed: {error}"))?;
+            crate::media::TrackingContext::new(value.clone(), majorant)
+                .map_err(|error| anyhow::anyhow!("media tracking validation failed: {error}"))?;
+        }
+        self.canonical_media = medium;
+        self.canonical_media_version = version;
+        self.canonical_media_pass = None;
+        self.canonical_media_diagnostics = None;
+        self.canonical_media_render_error = None;
+        if format_changes {
+            self.pbr_pipeline = None;
+            self.pbr_bind_group_layout = None;
+            self.pbr_uniform_buffer = None;
+            self.pbr_bind_group = None;
+            self.dof_pass = None;
+            self.wboit_compose_pipeline = None;
+            self.wboit_compose_bind_group = None;
+            self.wboit_size = (0, 0);
+            if let Some(stack) = self.vector_overlay_stack.as_mut() {
+                stack.pipeline_triangles = None;
+                stack.pipeline_lines = None;
+                stack.pipeline_points = None;
+                stack.oit_pipeline_triangles = None;
+                stack.oit_pipeline_lines = None;
+                stack.oit_pipeline_points = None;
+                stack.bind_group_layout = None;
+                stack.uniform_buffer = None;
+                stack.bind_group = None;
+                stack.sampler = None;
+            }
+        }
+        self.invalidate_temporal_history();
+        Ok(())
+    }
+
+    pub(crate) fn media_render_status(&self) -> (Option<serde_json::Value>, Option<String>) {
+        let diagnostics = self
+            .canonical_media_diagnostics
+            .as_ref()
+            .and_then(|diagnostics| serde_json::to_value(diagnostics).ok());
+        (diagnostics, self.canonical_media_render_error.clone())
     }
 
     /// P0.1/M1: Set OIT mode for transparent overlay rendering

@@ -29,19 +29,20 @@ use crate::lighting::LightBuffer;
 
 mod anamnesis;
 mod aov;
-mod atmosphere;
+pub(crate) mod atmosphere;
 mod bind_groups;
 mod constructor;
 mod core;
 mod draw;
 mod geometry;
 mod height_ao;
+pub(crate) use super::realtime_media as media;
 mod msaa;
 mod offline;
 mod pipeline_cache;
 mod probes;
 mod py_api;
-mod render_graph;
+pub(crate) mod render_graph;
 mod resources;
 mod runtime_contract;
 #[cfg(feature = "enable-gpu-instancing")]
@@ -55,6 +56,7 @@ pub(crate) mod virtual_texture;
 pub(crate) mod visibility_buffer;
 mod water_reflection;
 
+pub(crate) use self::core::is_yup_camera_mode;
 pub use self::core::{TerrainRenderer, TerrainScene, ViewerTerrainData};
 
 use self::atmosphere::create_atmosphere_init_resources;

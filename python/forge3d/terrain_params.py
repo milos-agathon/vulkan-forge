@@ -14,6 +14,7 @@ from pathlib import Path
 
 if TYPE_CHECKING:
     from . import AtmosphereLutHandle
+    from .media import Medium
 
 
 _UNSET = object()
@@ -775,6 +776,10 @@ class AovSettings:
     albedo: bool = True    # Export albedo AOV when enabled
     normal: bool = True    # Export world-space normal AOV when enabled
     depth: bool = True     # Export linear depth AOV when enabled
+    transmittance: bool = False  # Canonical medium camera-segment transmittance
+    in_scatter: bool = False     # Canonical medium in-scattered radiance
+    cloud_shadow: bool = False   # Canonical medium terrain-light attenuation
+    optical_depth: bool = False  # Canonical medium optical depth
     # VERITAS: per-pixel VT source-id map (uint32; 0 == SOURCE_ID_NONE).
     # Requires msaa_samples=1 and render_scale=1.0. Off by default.
     source_id: bool = False
@@ -789,7 +794,16 @@ class AovSettings:
     @property
     def any_enabled(self) -> bool:
         """Returns True if AOV export is enabled and at least one AOV is selected."""
-        return self.enabled and (self.albedo or self.normal or self.depth)
+        return self.enabled and (
+            self.albedo
+            or self.normal
+            or self.depth
+            or self.transmittance
+            or self.in_scatter
+            or self.cloud_shadow
+            or self.optical_depth
+            or self.source_id
+        )
 
 
 @dataclass
@@ -2085,6 +2099,8 @@ class TerrainRenderParams:
     terrain_data_revision: Optional[int] = None
     # Slope/elevation hue rotation. 0.0 preserves the pre-lighting albedo palette.
     hue_variation_strength: float = 0.08
+    # Canonical NEPHELE participating medium. None preserves the legacy path.
+    media: Optional[Medium] = None
 
     def __post_init__(self) -> None:
         # Default fog to disabled if not provided
@@ -2350,6 +2366,7 @@ def make_terrain_params_config(
     overlay: Optional[OverlaySettings] = None,  # Overlay settings (lit texture overlays)
     terrain_crs: Optional[str] = None,  # P3-reproject: Terrain CRS for auto-reprojection
     terrain_data_revision: Optional[int] = None,
+    media: Optional[Medium] = None,
 ) -> TerrainRenderParams:
     light_color = [1.0, 1.0, 1.0]
     if sun_color is not None:
@@ -2509,6 +2526,7 @@ def make_terrain_params_config(
         overlay=overlay,
         terrain_crs=terrain_crs,
         terrain_data_revision=terrain_data_revision,
+        media=media,
     )
 
 

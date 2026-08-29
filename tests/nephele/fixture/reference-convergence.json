@@ -1,0 +1,16 @@
+{
+  "criterion": "actual downstream Gate 3 and approved Gate 4 metrics over exact identical reference-derived masks",
+  "final": {
+    "provenance_path": "tests/nephele/fixture/reference-provenance.json",
+    "provenance_sha256": "3f2403713af656cd25fc34f0918aefa68306cf8dcb736c68ccba3dec6af9bfbb",
+    "rgb_path": "tests/nephele/fixture/reference-rgb.npy",
+    "rgb_sha256": "b01e0727bbdbd36c26ebaa706227938ed534454ac1acbfafdff6fc41f0b9574b",
+    "samples_per_pixel": 10
+  },
+  "generator": "scripts/record_media_reference_convergence.py",
+  "generator_sha256": "9f229edc69ed72f7b19736f84bfba194e8aecc6e064b82e08c65cc3b6c9fa34d",
+  "nested_prefix": false,
+  "next_samples_per_pixel_if_unresolved": null,
+  "schema": "forge3d.nephele.reference_convergence/2",
+  "status": "UNRESOLVED"
+}

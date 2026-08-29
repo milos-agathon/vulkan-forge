@@ -64,7 +64,8 @@ impl ViewerTerrainScene {
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Depth32Float,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             },
         )?;
@@ -79,9 +80,14 @@ impl ViewerTerrainScene {
         width: u32,
         height: u32,
         frame: crate::viewer::viewer_types::FrameCamera,
-    ) -> SnapshotRenderState {
-        if self.pbr_config.enabled && self.pbr_pipeline.is_none() {
+    ) -> anyhow::Result<SnapshotRenderState> {
+        let needs_canonical_media = self.canonical_media.is_some();
+        let needs_pbr = self.pbr_config.enabled || needs_canonical_media;
+        if needs_pbr && self.pbr_pipeline.is_none() {
             if let Err(e) = self.init_pbr_pipeline(target_format) {
+                if needs_canonical_media {
+                    return Err(e);
+                }
                 eprintln!("[snapshot] Failed to initialize PBR pipeline: {}", e);
             }
         }
@@ -97,7 +103,7 @@ impl ViewerTerrainScene {
             }
         }
 
-        let use_pbr = self.pbr_config.enabled && self.pbr_pipeline.is_some();
+        let use_pbr = needs_pbr && self.pbr_pipeline.is_some();
         let (terrain_z_scale, h_range, domain, sun_azimuth_deg, sun_elevation_deg) = {
             let terrain = self.terrain.as_ref().unwrap();
             (
@@ -148,15 +154,16 @@ impl ViewerTerrainScene {
         )
         .normalize();
 
-        if use_pbr && self.shadow_pipeline.is_none() {
+        let needs_shadows = use_pbr || self.canonical_media.is_some();
+        if needs_shadows && self.shadow_pipeline.is_none() {
             match self.init_shadow_depth_pipeline() {
                 Ok(()) => self.update_shadow_bind_groups(),
                 Err(error) => eprintln!("[snapshot] Failed to initialize shadow pipeline: {error}"),
             }
         }
-        if use_pbr && self.shadow_pipeline.is_some() {
+        if needs_shadows && self.shadow_pipeline.is_some() {
             self.render_shadow_passes(encoder, view_mat, proj, -sun_dir, render_origin_span);
-        } else if use_pbr {
+        } else if needs_shadows {
             eprintln!(
                 "[snapshot] Skipping shadow passes: pipeline={}",
                 self.shadow_pipeline.is_some()
@@ -200,6 +207,7 @@ impl ViewerTerrainScene {
             terrain.shadow_intensity,
             terrain_width,
         ];
+        let cam_radius = terrain.cam_radius;
 
         let pbr_uniforms_data = if use_pbr {
             Some((
@@ -216,6 +224,17 @@ impl ViewerTerrainScene {
             None
         };
         let _ = terrain;
+
+        self.prepare_canonical_media_frame(
+            (width, height),
+            eye,
+            view_proj,
+            1.0,
+            cam_radius * 10.0,
+            sun_dir,
+            render_origin_span,
+            shader_z_scale,
+        )?;
 
         if let Some((
             domain,
@@ -256,12 +275,20 @@ impl ViewerTerrainScene {
                 ibl_params: self.terrain_ibl_uniform_params(),
                 camera_pos: [eye.x, eye.y, eye.z, 1.0],
                 lens_params: [
-                    self.pbr_config.lens_effects.vignette_strength,
+                    if self.canonical_media.is_some() {
+                        0.0
+                    } else {
+                        self.pbr_config.lens_effects.vignette_strength
+                    },
                     self.pbr_config.lens_effects.vignette_radius,
                     self.pbr_config.lens_effects.vignette_softness,
-                    0.0,
+                    if self.canonical_media.is_some() {
+                        1.0
+                    } else {
+                        0.0
+                    },
                 ],
-                screen_dims: [width as f32, height as f32, 0.0, 0.0],
+                screen_dims: [width as f32, height as f32, 1.0, cam_radius * 10.0],
                 overlay_params: [
                     if self.pbr_config.overlay.enabled {
                         1.0
@@ -287,13 +314,16 @@ impl ViewerTerrainScene {
                 pbr_uniforms.overlay_params[3]
             );
             if let Err(e) = self.prepare_pbr_bind_group_internal(&pbr_uniforms) {
+                if self.canonical_media.is_some() {
+                    return Err(e);
+                }
                 eprintln!("[terrain] PBR bind group preparation failed: {e}");
             }
         }
 
         self.dispatch_heightfield_compute(encoder, [span.x, span.z], sun_dir);
 
-        SnapshotRenderState {
+        Ok(SnapshotRenderState {
             use_pbr,
             view_mat,
             proj,
@@ -306,6 +336,6 @@ impl ViewerTerrainScene {
             vo_view_proj: view_proj.to_cols_array_2d(),
             vo_sun_dir: [sun_dir.x, sun_dir.y, sun_dir.z],
             vo_lighting,
-        }
+        })
     }
 }

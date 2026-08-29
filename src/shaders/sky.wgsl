@@ -416,6 +416,20 @@ struct CameraUniforms {
 
 @group(1) @binding(0) var<uniform> camera: CameraUniforms;
 
+fn sky_output_direction(pixel: vec2<u32>, dims: vec2<u32>) -> vec3<f32> {
+    let uv = (vec2<f32>(pixel) + 0.5) / vec2<f32>(dims);
+    if (sky_params.model_pad.y != 0u) {
+        let phi = (uv.x - 0.5) * 2.0 * PI;
+        let theta = uv.y * PI;
+        return normalize(vec3<f32>(cos(phi) * sin(theta), cos(theta), sin(phi) * sin(theta)));
+    }
+    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let clip_pos = vec4<f32>(ndc, 1.0, 1.0);
+    let view_pos = camera.inv_proj * clip_pos;
+    let view_dir_vs = normalize(view_pos.xyz / view_pos.w);
+    return normalize((camera.inv_view * vec4<f32>(view_dir_vs, 0.0)).xyz);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn cs_render_sky(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let pixel = global_id.xy;
@@ -425,17 +439,7 @@ fn cs_render_sky(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    // Compute view ray direction
-    let uv = (vec2<f32>(pixel) + 0.5) / vec2<f32>(dims);
-    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-
-    // Reconstruct view direction
-    let clip_pos = vec4<f32>(ndc, 1.0, 1.0);
-    let view_pos = camera.inv_proj * clip_pos;
-    let view_dir_vs = normalize(view_pos.xyz / view_pos.w);
-
-    // Transform to world space
-    let view_dir_ws = normalize((camera.inv_view * vec4<f32>(view_dir_vs, 0.0)).xyz);
+    let view_dir_ws = sky_output_direction(pixel, dims);
 
     // Evaluate sky
     let sky_color = eval_sky(view_dir_ws, sky_params);

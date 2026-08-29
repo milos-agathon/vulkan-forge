@@ -5,6 +5,7 @@ from typing import Any, Callable, Optional, Sequence, TypeAlias
 from .bundle import LoadedBundle
 from .diagnostics import Diagnostic
 from .geo import SolarTime
+from .media import Medium
 
 WorldPosition: TypeAlias = tuple[float, float, float]
 VectorOverlayVertex: TypeAlias = tuple[float, float, float, float, float, float, float, int]
@@ -35,6 +36,7 @@ class ViewerHandle:
         cleanup_paths: Optional[list[Path]] = ...,
     ) -> None: ...
     def send_ipc(self, cmd: dict[str, Any]) -> dict[str, Any]: ...
+    def set_media(self, media: Medium | None) -> None: ...
     def load_label_atlas(
         self,
         atlas_png_path: str | Path,

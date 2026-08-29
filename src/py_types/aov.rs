@@ -8,6 +8,11 @@ pub struct AovFrame {
     albedo_texture: Option<crate::core::resource_tracker::TrackedTexture>,
     normal_texture: Option<crate::core::resource_tracker::TrackedTexture>,
     depth_texture: Option<crate::core::resource_tracker::TrackedTexture>,
+    transmittance_texture: Option<crate::core::resource_tracker::TrackedTexture>,
+    in_scatter_texture: Option<crate::core::resource_tracker::TrackedTexture>,
+    cloud_shadow_texture: Option<crate::core::resource_tracker::TrackedTexture>,
+    optical_depth_texture: Option<crate::core::resource_tracker::TrackedTexture>,
+    media_diagnostics_json: Option<String>,
     /// VERITAS: per-pixel VT source-id map (R32Uint, 0 == SOURCE_ID_NONE).
     /// Registry/ledger accounting is owned by the `TrackedTexture` wrapper.
     source_id_texture: Option<crate::core::resource_tracker::TrackedTexture>,
@@ -122,6 +127,7 @@ fn build_terrain_exr_channels(
     albedo: Option<&[f32]>,
     normal: Option<&[f32]>,
     depth: Option<&[f32]>,
+    media: [Option<&[f32]>; 4],
 ) -> anyhow::Result<Vec<exr_write::ExrChannelData>> {
     let mut channels = Vec::new();
     extend_rgba_channels(&mut channels, "beauty", beauty)?;
@@ -134,6 +140,19 @@ fn build_terrain_exr_channels(
     }
     if let Some(values) = depth {
         extend_scalar_channel(&mut channels, "depth", values, "Z");
+    }
+    for (name, values) in [
+        "transmittance",
+        "in_scatter",
+        "cloud_shadow",
+        "optical_depth",
+    ]
+    .into_iter()
+    .zip(media)
+    {
+        if let Some(rgba) = values {
+            extend_rgb_channels(&mut channels, name, rgba, ["R", "G", "B"], false)?;
+        }
     }
 
     Ok(channels)
@@ -148,6 +167,11 @@ impl AovFrame {
         albedo_texture: Option<crate::core::resource_tracker::TrackedTexture>,
         normal_texture: Option<crate::core::resource_tracker::TrackedTexture>,
         depth_texture: Option<crate::core::resource_tracker::TrackedTexture>,
+        transmittance_texture: Option<crate::core::resource_tracker::TrackedTexture>,
+        in_scatter_texture: Option<crate::core::resource_tracker::TrackedTexture>,
+        cloud_shadow_texture: Option<crate::core::resource_tracker::TrackedTexture>,
+        optical_depth_texture: Option<crate::core::resource_tracker::TrackedTexture>,
+        media_diagnostics_json: Option<String>,
         source_id_texture: Option<crate::core::resource_tracker::TrackedTexture>,
         width: u32,
         height: u32,
@@ -158,6 +182,11 @@ impl AovFrame {
             albedo_texture,
             normal_texture,
             depth_texture,
+            transmittance_texture,
+            in_scatter_texture,
+            cloud_shadow_texture,
+            optical_depth_texture,
+            media_diagnostics_json,
             source_id_texture,
             width,
             height,
@@ -201,13 +230,45 @@ impl AovFrame {
         Ok(rgba.chunks_exact(4).map(|px| px[0]).collect())
     }
 
-    fn rgba_to_rgb_array(&self, rgba: &[f32]) -> anyhow::Result<ndarray::Array3<f32>> {
+    pub(crate) fn read_media_data(
+        &self,
+        texture: Option<&crate::core::resource_tracker::TrackedTexture>,
+        name: &str,
+    ) -> anyhow::Result<Vec<f32>> {
+        self.read_texture_rgba_f32(
+            texture.ok_or_else(|| anyhow::anyhow!("{name} AOV not available"))?,
+        )
+    }
+
+    pub(crate) fn rgba_to_rgb_array(&self, rgba: &[f32]) -> anyhow::Result<ndarray::Array3<f32>> {
         let mut rgb = Vec::with_capacity((self.width * self.height * 3) as usize);
         for px in rgba.chunks_exact(4) {
             rgb.extend_from_slice(&px[..3]);
         }
         ndarray::Array3::from_shape_vec((self.height as usize, self.width as usize, 3), rgb)
             .map_err(|_| anyhow::anyhow!("failed to reshape RGBA buffer into RGB array"))
+    }
+
+    pub(crate) fn read_all_media_rgb(&self) -> anyhow::Result<[ndarray::Array3<f32>; 4]> {
+        let read = |texture, name| {
+            self.read_media_data(texture, name)
+                .and_then(|rgba| self.rgba_to_rgb_array(&rgba))
+        };
+        Ok([
+            read(self.transmittance_texture.as_ref(), "Transmittance")?,
+            read(self.in_scatter_texture.as_ref(), "In-scatter")?,
+            read(self.cloud_shadow_texture.as_ref(), "Cloud-shadow")?,
+            read(self.optical_depth_texture.as_ref(), "Optical-depth")?,
+        ])
+    }
+
+    pub(crate) fn media_diagnostics_value(&self) -> anyhow::Result<serde_json::Value> {
+        serde_json::from_str(
+            self.media_diagnostics_json
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("media diagnostics are unavailable"))?,
+        )
+        .map_err(anyhow::Error::from)
     }
 
     fn encode_rgb_png(&self, rgb: impl Iterator<Item = [f32; 3]>) -> Vec<u8> {
@@ -224,6 +285,34 @@ impl AovFrame {
     fn write_png_bytes(&self, path: &str, data: &[u8]) -> PyResult<()> {
         image_write::write_png_rgba8(Path::new(path), data, self.width, self.height)
             .map_err(|err| PyRuntimeError::new_err(format!("failed to write PNG: {err:#}")))
+    }
+
+    fn media_array<'py>(
+        &self,
+        py: Python<'py>,
+        texture: Option<&crate::core::resource_tracker::TrackedTexture>,
+        name: &str,
+    ) -> PyResult<&'py numpy::PyArray3<f32>> {
+        let rgba = py
+            .allow_threads(|| self.read_media_data(texture, name))
+            .map_err(|err| PyRuntimeError::new_err(format!("readback failed: {err:#}")))?;
+        let arr = self
+            .rgba_to_rgb_array(&rgba)
+            .map_err(|err| PyRuntimeError::new_err(format!("reshape failed: {err:#}")))?;
+        Ok(arr.into_pyarray_bound(py).into_gil_ref())
+    }
+
+    fn save_media(
+        &self,
+        path: &str,
+        texture: Option<&crate::core::resource_tracker::TrackedTexture>,
+        name: &str,
+    ) -> PyResult<()> {
+        let rgba = self
+            .read_media_data(texture, name)
+            .map_err(|err| PyRuntimeError::new_err(format!("readback failed: {err:#}")))?;
+        let png = self.encode_rgb_png(rgba.chunks_exact(4).map(|px| [px[0], px[1], px[2]]));
+        self.write_png_bytes(path, &png)
     }
 }
 
@@ -255,6 +344,38 @@ impl AovFrame {
     #[getter]
     fn has_depth(&self) -> bool {
         self.depth_texture.is_some()
+    }
+
+    #[getter]
+    fn has_transmittance(&self) -> bool {
+        self.transmittance_texture.is_some()
+    }
+
+    #[getter]
+    fn has_in_scatter(&self) -> bool {
+        self.in_scatter_texture.is_some()
+    }
+
+    #[getter]
+    fn has_cloud_shadow(&self) -> bool {
+        self.cloud_shadow_texture.is_some()
+    }
+
+    #[getter]
+    fn has_optical_depth(&self) -> bool {
+        self.optical_depth_texture.is_some()
+    }
+
+    #[getter]
+    fn media_diagnostics(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+        self.media_diagnostics_json
+            .as_ref()
+            .map(|value| {
+                py.import_bound("json")?
+                    .call_method1("loads", (value,))
+                    .map(Into::into)
+            })
+            .transpose()
     }
 
     #[getter]
@@ -322,6 +443,22 @@ impl AovFrame {
         Ok(arr.into_pyarray_bound(py).into_gil_ref())
     }
 
+    fn transmittance<'py>(&self, py: Python<'py>) -> PyResult<&'py numpy::PyArray3<f32>> {
+        self.media_array(py, self.transmittance_texture.as_ref(), "Transmittance")
+    }
+
+    fn in_scatter<'py>(&self, py: Python<'py>) -> PyResult<&'py numpy::PyArray3<f32>> {
+        self.media_array(py, self.in_scatter_texture.as_ref(), "In-scatter")
+    }
+
+    fn cloud_shadow<'py>(&self, py: Python<'py>) -> PyResult<&'py numpy::PyArray3<f32>> {
+        self.media_array(py, self.cloud_shadow_texture.as_ref(), "Cloud-shadow")
+    }
+
+    fn optical_depth<'py>(&self, py: Python<'py>) -> PyResult<&'py numpy::PyArray3<f32>> {
+        self.media_array(py, self.optical_depth_texture.as_ref(), "Optical-depth")
+    }
+
     fn save_albedo(&self, path: &str) -> PyResult<()> {
         let rgba = self
             .read_albedo_data()
@@ -349,6 +486,22 @@ impl AovFrame {
         self.write_png_bytes(path, &png)
     }
 
+    fn save_transmittance(&self, path: &str) -> PyResult<()> {
+        self.save_media(path, self.transmittance_texture.as_ref(), "Transmittance")
+    }
+
+    fn save_in_scatter(&self, path: &str) -> PyResult<()> {
+        self.save_media(path, self.in_scatter_texture.as_ref(), "In-scatter")
+    }
+
+    fn save_cloud_shadow(&self, path: &str) -> PyResult<()> {
+        self.save_media(path, self.cloud_shadow_texture.as_ref(), "Cloud-shadow")
+    }
+
+    fn save_optical_depth(&self, path: &str) -> PyResult<()> {
+        self.save_media(path, self.optical_depth_texture.as_ref(), "Optical-depth")
+    }
+
     fn save_all(&self, output_dir: &str, base_name: &str) -> PyResult<()> {
         let dir = Path::new(output_dir);
         std::fs::create_dir_all(dir)
@@ -365,6 +518,22 @@ impl AovFrame {
         if self.depth_texture.is_some() {
             let path = dir.join(format!("{}_depth.png", base_name));
             self.save_depth(path.to_str().unwrap())?;
+        }
+        for (name, present) in [
+            ("transmittance", self.transmittance_texture.is_some()),
+            ("in_scatter", self.in_scatter_texture.is_some()),
+            ("cloud_shadow", self.cloud_shadow_texture.is_some()),
+            ("optical_depth", self.optical_depth_texture.is_some()),
+        ] {
+            if present {
+                let path = dir.join(format!("{base_name}_{name}.png"));
+                match name {
+                    "transmittance" => self.save_transmittance(path.to_str().unwrap())?,
+                    "in_scatter" => self.save_in_scatter(path.to_str().unwrap())?,
+                    "cloud_shadow" => self.save_cloud_shadow(path.to_str().unwrap())?,
+                    _ => self.save_optical_depth(path.to_str().unwrap())?,
+                }
+            }
         }
         Ok(())
     }
@@ -410,11 +579,32 @@ impl AovFrame {
                 })
             })
             .transpose()?;
+        let read_media = |texture: Option<&crate::core::resource_tracker::TrackedTexture>,
+                          name: &str|
+         -> PyResult<Option<Vec<f32>>> {
+            texture
+                .map(|texture| {
+                    self.read_texture_rgba_f32(texture).map_err(|err| {
+                        PyRuntimeError::new_err(format!("{name} readback failed: {err:#}"))
+                    })
+                })
+                .transpose()
+        };
+        let transmittance = read_media(self.transmittance_texture.as_ref(), "transmittance")?;
+        let in_scatter = read_media(self.in_scatter_texture.as_ref(), "in_scatter")?;
+        let cloud_shadow = read_media(self.cloud_shadow_texture.as_ref(), "cloud_shadow")?;
+        let optical_depth = read_media(self.optical_depth_texture.as_ref(), "optical_depth")?;
         let channels = build_terrain_exr_channels(
             &beauty,
             albedo.as_deref(),
             normal.as_deref(),
             depth.as_deref(),
+            [
+                transmittance.as_deref(),
+                in_scatter.as_deref(),
+                cloud_shadow.as_deref(),
+                optical_depth.as_deref(),
+            ],
         )
         .map_err(|err| PyRuntimeError::new_err(format!("EXR channel build failed: {err:#}")))?;
 
@@ -432,12 +622,16 @@ impl AovFrame {
 
     fn __repr__(&self) -> String {
         format!(
-            "AovFrame(width={}, height={}, albedo={}, normal={}, depth={}, source_id={})",
+            "AovFrame(width={}, height={}, albedo={}, normal={}, depth={}, transmittance={}, in_scatter={}, cloud_shadow={}, optical_depth={}, source_id={})",
             self.width,
             self.height,
             self.albedo_texture.is_some(),
             self.normal_texture.is_some(),
             self.depth_texture.is_some(),
+            self.transmittance_texture.is_some(),
+            self.in_scatter_texture.is_some(),
+            self.cloud_shadow_texture.is_some(),
+            self.optical_depth_texture.is_some(),
             self.source_id_texture.is_some()
         )
     }
@@ -497,9 +691,14 @@ mod tests {
         ];
         let depth = vec![0.1, 0.3, 0.6, 0.9];
 
-        let channels =
-            build_terrain_exr_channels(&beauty, Some(&albedo), Some(&normal), Some(&depth))
-                .expect("channel assembly should succeed");
+        let channels = build_terrain_exr_channels(
+            &beauty,
+            Some(&albedo),
+            Some(&normal),
+            Some(&depth),
+            [None; 4],
+        )
+        .expect("channel assembly should succeed");
         let expected_channels: BTreeMap<String, Vec<f32>> = channels
             .iter()
             .map(|channel| (channel.name.clone(), channel.data.clone()))

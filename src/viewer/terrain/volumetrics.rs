@@ -10,7 +10,7 @@ use crate::core::resource_tracker::{
 use crate::viewer::event_loop::update_terrain_volumetrics_report;
 use crate::viewer::ipc::TerrainVolumetricsReport;
 use crate::viewer::terrain::volume_density::{
-    self, build_density_volume_atlas_data, DensityVolumeAtlasGpu, TerrainVolumeContext,
+    self, build_density_volume_atlas_data_checked, DensityVolumeAtlasGpu, TerrainVolumeContext,
 };
 
 const MAX_DENSITY_VOLUMES: usize = volume_density::MAX_DENSITY_VOLUMES;
@@ -318,7 +318,9 @@ impl VolumetricsPass {
             terrain_revision,
         };
 
-        let Some(data) = build_density_volume_atlas_data(context, &config.density_volumes) else {
+        let Some(data) = build_density_volume_atlas_data_checked(context, &config.density_volumes)
+            .map_err(|error| anyhow::anyhow!("canonical density atlas rejected: {error}"))?
+        else {
             self.density_volume_atlas = None;
             self.last_report = self.default_report(config);
             return Ok(());

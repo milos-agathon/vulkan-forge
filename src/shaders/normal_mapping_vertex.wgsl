@@ -76,7 +76,7 @@ fn decode_normal_map(normal_sample: vec4<f32>, strength: f32) -> vec3<f32> {
     var tangent_normal = normal_sample.rgb * 2.0 - 1.0;
     
     // Apply strength/intensity scaling
-    tangent_normal.xy *= strength;
+    tangent_normal = vec3<f32>(tangent_normal.xy * strength, tangent_normal.z);
     
     // Ensure Z component maintains unit length constraint
     let xy_len_sq = dot(tangent_normal.xy, tangent_normal.xy);

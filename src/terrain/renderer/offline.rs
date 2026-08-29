@@ -586,6 +586,7 @@ impl TerrainScene {
             height_inputs,
             materials,
             ibl_bind_group,
+            media_environment_radiance: media::ibl_mean_radiance(env_maps),
             height_curve_lut_uploaded,
             hdr_aov_pipeline,
             hdr_background_blit_pipeline,
@@ -690,6 +691,7 @@ impl TerrainScene {
             state.internal_width,
             state.internal_height,
         )?;
+        let media_sample_view;
         {
             let render_targets = &state.render_targets;
             let aov_targets = &state.aov_targets;
@@ -753,6 +755,14 @@ impl TerrainScene {
                 .as_ref()
                 .and_then(|sky| sky.scattering_view.as_ref())
                 .unwrap_or(&self.atmosphere_scattering_fallback_view);
+            self.prepare_realtime_media_radiance_provider(
+                &mut encoder,
+                sky_texture.as_ref(),
+                &state.decoded,
+                None,
+                1.0,
+                state.media_environment_radiance,
+            )?;
 
             let main_height_view = self.main_pass_height_view(&state.height_inputs.heightmap_view);
             let pass_bind_groups = self.create_terrain_pass_bind_groups(
@@ -860,6 +870,34 @@ impl TerrainScene {
                 sky_texture.is_some(),
             )?;
 
+            media_sample_view = if self
+                .encode_attached_realtime_media_inject_with_matrices(
+                    &mut encoder,
+                    &state.params,
+                    &state.decoded,
+                    eye,
+                    view,
+                    jittered_proj,
+                )?
+                .is_some()
+            {
+                self.encode_attached_realtime_media_integrate(
+                    &mut encoder,
+                    &render_targets.depth_view,
+                )?;
+                self.encode_attached_realtime_media_composite(
+                    &mut encoder,
+                    &render_targets.internal_view,
+                )?;
+                self.commit_attached_realtime_media_history(
+                    &mut encoder,
+                    &render_targets._depth_texture,
+                )?;
+                Some(self.realtime_media_composite_view()?)
+            } else {
+                None
+            };
+
             if state.total_samples == 0 {
                 self.dispatch_offline_depth_extract_pass(
                     &mut encoder,
@@ -873,7 +911,9 @@ impl TerrainScene {
 
         self.dispatch_offline_accumulation_pass(
             &mut encoder,
-            &state.render_targets.internal_view,
+            media_sample_view
+                .as_ref()
+                .unwrap_or(&state.render_targets.internal_view),
             &mut state.beauty_accumulation,
             state.total_samples,
         )?;
@@ -1430,7 +1470,7 @@ impl TerrainScene {
         Ok(())
     }
 
-    fn dispatch_offline_tonemap_pass(
+    pub(in crate::terrain::renderer) fn dispatch_offline_tonemap_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         hdr_view: &wgpu::TextureView,
@@ -1488,7 +1528,7 @@ impl TerrainScene {
         Ok(())
     }
 
-    fn resolved_offline_tonemap_operator(
+    pub(in crate::terrain::renderer) fn resolved_offline_tonemap_operator(
         decoded: &crate::terrain::render_params::DecodedTerrainSettings,
     ) -> u32 {
         let tonemap = &decoded.tonemap;
@@ -1904,7 +1944,7 @@ impl TerrainRenderer {
             .scene
             .resolve_aux_output(
                 &mut encoder,
-                &decoded,
+                &decoded.sampling,
                 beauty_internal,
                 beauty_internal_view,
                 out_width,
@@ -1941,7 +1981,7 @@ impl TerrainRenderer {
             .scene
             .resolve_aux_output(
                 &mut encoder,
-                &decoded,
+                &decoded.sampling,
                 albedo_internal,
                 albedo_internal_view,
                 out_width,
@@ -1978,7 +2018,7 @@ impl TerrainRenderer {
             .scene
             .resolve_aux_output(
                 &mut encoder,
-                &decoded,
+                &decoded.sampling,
                 normal_internal,
                 normal_internal_view,
                 out_width,
@@ -2014,7 +2054,7 @@ impl TerrainRenderer {
             .scene
             .resolve_aux_output(
                 &mut encoder,
-                &decoded,
+                &decoded.sampling,
                 depth_internal,
                 depth_internal_view,
                 out_width,
@@ -2041,6 +2081,11 @@ impl TerrainRenderer {
             Some(albedo_texture),
             Some(normal_texture),
             Some(depth_texture),
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             out_width,
             out_height,

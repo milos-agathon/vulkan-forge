@@ -74,6 +74,16 @@ pub fn update_ipc_revision_stats(applied_command_revision: u64, rendered_frame_r
     }
 }
 
+pub fn update_ipc_media_diagnostics(
+    diagnostics: Option<serde_json::Value>,
+    render_error: Option<String>,
+) {
+    if let Ok(mut stats) = get_ipc_stats().lock() {
+        stats.media_diagnostics = diagnostics;
+        stats.media_render_error = render_error;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn update_ipc_frame_stats(
     adapter_name: &str,

@@ -1,0 +1,14 @@
+{
+  "dem": "terrain-dem.npy",
+  "dem_sha256": "04848e967fe6fe9b1677a374f131898b8f9177fe5a6de4b07dec549bc5ea653e",
+  "dimensions": [
+    16,
+    16
+  ],
+  "exaggeration": 1.0,
+  "schema": "forge3d.nephele.terrain/1",
+  "spacing": [
+    4.0,
+    4.0
+  ]
+}

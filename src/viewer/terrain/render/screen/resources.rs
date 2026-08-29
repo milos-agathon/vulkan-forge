@@ -10,8 +10,14 @@ impl ViewerTerrainScene {
     ) -> anyhow::Result<ScreenRenderFlags> {
         self.ensure_depth(width, height)?;
 
-        if self.pbr_config.enabled && self.pbr_pipeline.is_none() {
-            if let Err(e) = self.init_pbr_pipeline(self.surface_format) {
+        let needs_canonical_media = self.canonical_media.is_some();
+        let needs_pbr = self.pbr_config.enabled || needs_canonical_media;
+        let scene_format = self.scene_color_format();
+        if needs_pbr && self.pbr_pipeline.is_none() {
+            if let Err(e) = self.init_pbr_pipeline(scene_format) {
+                if needs_canonical_media {
+                    return Err(e);
+                }
                 eprintln!("[render] Failed to initialize PBR pipeline: {}", e);
             }
         }
@@ -27,7 +33,7 @@ impl ViewerTerrainScene {
             }
         }
 
-        let use_pbr = self.pbr_config.enabled && self.pbr_pipeline.is_some();
+        let use_pbr = needs_pbr && self.pbr_pipeline.is_some();
         let needs_taa = self
             .taa_renderer
             .as_ref()
@@ -37,7 +43,8 @@ impl ViewerTerrainScene {
             && (self.pbr_config.lens_effects.distortion.abs() > 0.001
                 || self.pbr_config.lens_effects.chromatic_aberration > 0.001
                 || self.pbr_config.lens_effects.vignette_strength > 0.001);
-        let needs_volumetrics = self.pbr_config.volumetrics.is_effectively_enabled();
+        let needs_volumetrics =
+            self.canonical_media.is_none() && self.pbr_config.volumetrics.is_effectively_enabled();
         let denoise_requested = self.pbr_config.denoise.enabled;
         let needs_denoise = false;
         let needs_dof_scratch = needs_volumetrics && needs_post_process && !needs_dof;
@@ -58,7 +65,9 @@ impl ViewerTerrainScene {
             self.ensure_taa_velocity_texture(width, height)?;
         }
 
-        if (needs_taa || needs_post_process || needs_volumetrics) && self.post_process.is_none() {
+        if (needs_taa || needs_post_process || needs_volumetrics || needs_canonical_media)
+            && self.post_process.is_none()
+        {
             self.init_post_process();
         }
         if (needs_dof || needs_dof_scratch) && self.dof_pass.is_none() {
@@ -78,7 +87,7 @@ impl ViewerTerrainScene {
         }
         if needs_dof || needs_dof_scratch {
             if let Some(ref mut dof) = self.dof_pass {
-                let _ = dof.get_input_view(width, height, self.surface_format);
+                let _ = dof.get_input_view(width, height, scene_format);
             }
         }
 
@@ -93,9 +102,9 @@ impl ViewerTerrainScene {
             }
         }
 
-        if needs_taa || needs_post_process || needs_volumetrics {
+        if needs_taa || needs_post_process || needs_volumetrics || needs_canonical_media {
             if let Some(ref mut pp) = self.post_process {
-                let _ = pp.get_intermediate_view(width, height, self.surface_format);
+                let _ = pp.get_intermediate_view(width, height, scene_format);
             }
         }
 
@@ -105,6 +114,7 @@ impl ViewerTerrainScene {
             needs_dof,
             needs_post_process,
             needs_volumetrics,
+            needs_canonical_media,
             needs_denoise,
         })
     }

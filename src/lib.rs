@@ -57,6 +57,8 @@ static GLOBAL_CSM_STATE: Lazy<Mutex<CpuCsmState>> =
     Lazy::new(|| Mutex::new(CpuCsmState::default()));
 
 #[cfg(feature = "extension-module")]
+mod media_py;
+#[cfg(feature = "extension-module")]
 mod py_functions;
 #[cfg(feature = "extension-module")]
 mod py_module;
@@ -123,6 +125,7 @@ pub mod import; // Importers: OSM buildings, etc.
 pub mod io; // IO: OBJ/PLY/glTF readers/writers
 pub mod lighting; // P0: Production-ready lighting stack (lights, BRDFs, shadows, IBL)
 pub mod loaders;
+pub mod media;
 pub mod mesh;
 pub mod offscreen; // P7: Offscreen PBR harness for BRDF galleries and CI goldens
 pub mod path_tracing;
@@ -229,5 +232,6 @@ fn _forge3d(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     py_module::register_py_functions(m)?;
     py_module::register_py_classes(m)?;
+    media_py::register(m)?;
     Ok(())
 }

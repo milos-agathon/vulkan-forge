@@ -16,7 +16,7 @@ struct TonemapUniforms {
     white_balance_enabled: u32, // 0=disabled, 1=enabled
     temperature: f32,        // Color temperature in Kelvin (2000-12000)
     tint: f32,               // Green-magenta tint (-1 to 1)
-    _pad0: f32,
+    output_gamma_enabled: f32, // 1 for linear UNORM targets, 0 for sRGB targets
     _pad1: f32,
 }
 
@@ -114,5 +114,13 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         tonemapped_color = mix(tonemapped_color, lut_color, uniforms.lut_strength);
     }
     
-    return vec4<f32>(clamp(tonemapped_color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    tonemapped_color = clamp(tonemapped_color, vec3<f32>(0.0), vec3<f32>(1.0));
+    if (uniforms.output_gamma_enabled > 0.5) {
+        // The tracked NEPHELE presentation contract is IEC 61966-2-1 sRGB,
+        // including its linear toe.  Keep the shared tonemap/LUT/white-balance
+        // pipeline authoritative, but never approximate the final encoding
+        // with a configurable power curve.
+        tonemapped_color = linear_to_srgb(tonemapped_color);
+    }
+    return vec4<f32>(tonemapped_color, 1.0);
 }

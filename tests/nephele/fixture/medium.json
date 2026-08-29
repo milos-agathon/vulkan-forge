@@ -1,0 +1,120 @@
+{
+  "density_r16": [
+    3277,
+    16384,
+    3277,
+    13107,
+    52428,
+    16384,
+    3277,
+    19660,
+    3277,
+    6554,
+    36044,
+    6554,
+    29491,
+    65535,
+    36044,
+    6554,
+    32768,
+    6554,
+    1311,
+    13107,
+    1311,
+    9830,
+    42598,
+    13107,
+    1311,
+    16384,
+    1311
+  ],
+  "density_scale": 1.0,
+  "density_transport": {
+    "decode": "unorm16-div-65535-as-f32-then-ieee-f16-rne",
+    "f16_sha256": "b67c3b52d1385022cb2b7e788c1dfd3a9220758a8dc7f793d3b0b4294aeeb1fe",
+    "sampling": "normalized-clamp-to-edge-linear-texel-center-uN-minus-0.5",
+    "schema": "forge3d.nephele.density_transport/1",
+    "storage": "ieee-f16-bits-little-endian"
+  },
+  "domain": {
+    "bounds_max": [
+      30.0,
+      44.0,
+      30.0
+    ],
+    "bounds_min": [
+      -30.0,
+      4.0,
+      -30.0
+    ],
+    "grid_shape": [
+      3,
+      3,
+      3
+    ]
+  },
+  "majorant_cells": [
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898,
+    0.06500005722045898
+  ],
+  "majorant_transport": {
+    "construction": "3x3x3-clamped-neighborhood-trilinear-outward-then-f32-extinction-outward",
+    "grid_shape": [
+      3,
+      3,
+      3
+    ],
+    "query": "floor(clamp(unit,0,1)*N)-clamped-to-N-minus-1",
+    "schema": "forge3d.nephele.majorant_transport/1"
+  },
+  "phase": {
+    "g": 0.45,
+    "kind": "henyey_greenstein"
+  },
+  "schema": "forge3d.nephele.heterogeneous_medium/2",
+  "sigma_a": [
+    0.01,
+    0.012,
+    0.015
+  ],
+  "sigma_s": [
+    0.055,
+    0.05,
+    0.045
+  ],
+  "transport": {
+    "extinction_channel": 0,
+    "sigma_t_max_channel": 0.065,
+    "sigma_t_spectrum": [
+      0.065,
+      0.062,
+      0.06
+    ],
+    "slab_axis": 2
+  }
+}

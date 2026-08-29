@@ -245,6 +245,11 @@ impl Viewer {
                     self.pending_snapshot_tex = Some(snap_tex);
                 }
             }
+            let (media_diagnostics, media_render_error) = tv.media_render_status();
+            crate::viewer::event_loop::update_ipc_media_diagnostics(
+                media_diagnostics,
+                media_render_error,
+            );
             self.terrain_viewer = Some(tv);
         }
 

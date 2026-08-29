@@ -5,6 +5,113 @@ use crate::viewer::terrain::overlay::OverlayStack;
 use half::f16;
 
 impl ViewerTerrainScene {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn prepare_canonical_media_frame(
+        &mut self,
+        viewport: (u32, u32),
+        camera: glam::Vec3,
+        view_projection: glam::Mat4,
+        near: f32,
+        far: f32,
+        sun_direction: glam::Vec3,
+        render_origin_span: [f32; 4],
+        z_scale: f32,
+    ) -> anyhow::Result<()> {
+        let Some(medium) = self.canonical_media.clone() else {
+            return Ok(());
+        };
+        let mut pass = self.canonical_media_pass.take().map_or_else(
+            || {
+                crate::terrain::realtime_media::ViewerMediaPass::new(
+                    self.device.as_ref(),
+                    self.queue.as_ref(),
+                    viewport,
+                    medium,
+                    self.canonical_media_version,
+                )
+            },
+            Ok,
+        )?;
+        let result: anyhow::Result<()> = (|| {
+            pass.prepare_viewer_frame(
+                self.queue.as_ref(),
+                camera,
+                view_projection,
+                near,
+                far,
+                sun_direction,
+            )?;
+            let terrain = self
+                .terrain
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("canonical media requires loaded terrain"))?;
+            pass.prepare_viewer_terrain_trace(
+                self.device.as_ref(),
+                self.queue.as_ref(),
+                self.adapter.as_ref(),
+                viewport,
+                &terrain.heightmap,
+                terrain.dimensions,
+                [render_origin_span[0], render_origin_span[1]],
+                [render_origin_span[2], render_origin_span[3]],
+                terrain.domain.0,
+                terrain.height_range(),
+                z_scale,
+                terrain.revision,
+            )?;
+            Ok(())
+        })();
+        self.canonical_media_pass = Some(pass);
+        result
+    }
+
+    fn ensure_media_light_transmittance_fallback(&mut self) -> anyhow::Result<()> {
+        if self.media_light_transmittance_fallback.is_some() {
+            return Ok(());
+        }
+        let texture = tracked_create_texture(
+            &self.device,
+            &wgpu::TextureDescriptor {
+                label: Some("terrain_viewer.media_light_transmittance_fallback"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D3,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+        )?;
+        let one = half::f16::ONE.to_bits();
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&[one, one, one, one]),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(8),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.media_light_transmittance_fallback_view =
+            Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+        self.media_light_transmittance_fallback = Some(texture);
+        Ok(())
+    }
+
     fn clear_terrain_ibl(&mut self) {
         self.terrain_ibl_renderer = None;
         self.terrain_ibl_hdr_path = None;
@@ -252,6 +359,7 @@ impl ViewerTerrainScene {
         // Ensure fallback texture exists first (before any borrows)
         self.ensure_fallback_texture()?;
         self.ensure_terrain_ibl_resources()?;
+        self.ensure_media_light_transmittance_fallback()?;
 
         // Early return checks
         if self.pbr_bind_group_layout.is_none() || self.terrain.is_none() {
@@ -323,6 +431,16 @@ impl ViewerTerrainScene {
             .or(self.terrain_ibl_fallback_brdf_view.as_ref())
             .unwrap();
         let ibl_sampler = self.terrain_ibl_sampler.as_ref().unwrap();
+        let media_light_transmittance_view = self
+            .canonical_media_pass
+            .as_ref()
+            .map(crate::terrain::realtime_media::ViewerMediaPass::light_transmittance_view)
+            .unwrap_or_else(|| {
+                self.media_light_transmittance_fallback
+                    .as_ref()
+                    .expect("media transmittance fallback was created")
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+            });
 
         // Get overlay view and sampler from stack
         // ensure_fallback_texture() guarantees composite_view is Some (either actual composite or RGBA fallback)
@@ -519,6 +637,12 @@ impl ViewerTerrainScene {
                     wgpu::BindGroupEntry {
                         binding: 15,
                         resource: wgpu::BindingResource::TextureView(ibl_brdf_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 16,
+                        resource: wgpu::BindingResource::TextureView(
+                            &media_light_transmittance_view,
+                        ),
                     },
                 ],
             }));

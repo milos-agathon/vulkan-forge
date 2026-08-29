@@ -1,0 +1,23 @@
+{
+  "algorithm": "deterministic-toroidal-void-and-cluster-rank-v1",
+  "dimensions": [
+    8,
+    8
+  ],
+  "generator": "scripts/generate_media_blue_noise.py",
+  "generator_sha256": "c79448da1945c229bddfe9bd8e66e04c2d70b56ce1ebc3ef0a769c8b0e3a3932",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "parameters": {
+    "initial_pattern": "deterministic-lowest-energy-best-candidate-half-fill",
+    "periodic_boundary": true,
+    "ranking": "cluster-removal-then-void-insertion",
+    "sigma": 1.5,
+    "tie_break": "splitmix64-point-hash",
+    "tie_break_seed_u64": 22031259295632453
+  },
+  "schema": "forge3d.nephele.blue_noise_provenance/1",
+  "source": "repository-generated; no third-party tile bytes",
+  "tile": "assets/media/nephele_blue_noise_8x8.txt",
+  "tile_sha256": "c4690ee9c66e9b2d1a608537cdc6c5384c93e69a42602093a6ce480606e780ea"
+}

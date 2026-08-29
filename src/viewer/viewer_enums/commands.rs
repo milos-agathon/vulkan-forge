@@ -83,6 +83,7 @@ pub enum ViewerCmd {
     SetTerrainScatter { batches: Vec<ViewerTerrainScatterBatchConfig> },
     ClearTerrainScatter,
     GetTerrainParams,
+    SetMedia { medium: Option<crate::media::Medium>, version: u64 },
     SetTerrainPbr {
         enabled: Option<bool>, hdr_path: Option<String>, ibl_intensity: Option<f32>,
         hdr_rotate_deg: Option<f32>,

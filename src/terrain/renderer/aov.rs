@@ -21,6 +21,36 @@ fn requested_aov_output_mask(settings: &render_params::AovSettingsNative) -> u8 
         | (u8::from(settings.depth) * AOV_DEPTH_BIT)
 }
 
+fn requested_media_aovs(settings: &render_params::AovSettingsNative) -> [bool; 4] {
+    [
+        settings.transmittance,
+        settings.in_scatter,
+        settings.cloud_shadow,
+        settings.optical_depth,
+    ]
+}
+
+fn ensure_media_aov_capture_supported(selection: [bool; 4], media_enabled: bool) -> Result<()> {
+    if selection.into_iter().any(|selected| selected) && !media_enabled {
+        return Err(anyhow!(
+            "media AOV capture requires TerrainRenderParams.media to be attached"
+        ));
+    }
+    Ok(())
+}
+
+fn resolved_media_capture_dimensions(
+    internal: (u32, u32),
+    output: (u32, u32),
+    needs_scaling: bool,
+) -> (u32, u32) {
+    if needs_scaling {
+        output
+    } else {
+        internal
+    }
+}
+
 #[cfg(test)]
 mod output_mask_tests {
     use super::*;
@@ -38,6 +68,128 @@ mod output_mask_tests {
         settings.albedo = false;
         settings.normal = false;
         assert_eq!(requested_aov_output_mask(&settings), AOV_DEPTH_BIT);
+    }
+
+    #[test]
+    fn media_capture_selectors_require_an_attached_canonical_medium() {
+        let mut settings = render_params::AovSettingsNative::default();
+        settings.transmittance = true;
+        settings.cloud_shadow = true;
+        let selection = requested_media_aovs(&settings);
+        assert_eq!(selection, [true, false, true, false]);
+        assert!(ensure_media_aov_capture_supported(selection, false)
+            .unwrap_err()
+            .to_string()
+            .contains("TerrainRenderParams.media"));
+        ensure_media_aov_capture_supported(selection, true).unwrap();
+    }
+
+    #[test]
+    fn scaled_media_capture_uses_public_frame_dimensions() {
+        assert_eq!(
+            resolved_media_capture_dimensions((320, 180), (640, 360), true),
+            (640, 360)
+        );
+        assert_eq!(
+            resolved_media_capture_dimensions((640, 360), (640, 360), false),
+            (640, 360)
+        );
+    }
+
+    #[test]
+    fn scaled_media_capture_executes_resolve_and_public_dimension_readback() {
+        let context = crate::core::gpu::try_ctx().expect("scaled media AOV test requires a GPU");
+        let scene = TerrainScene::new(
+            context.device.clone(),
+            context.queue.clone(),
+            context.adapter.clone(),
+        )
+        .expect("terrain renderer must construct for scaled media AOV capture");
+        let source_size = wgpu::Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        };
+        let source = tracked_create_texture(
+            context.device.as_ref(),
+            &wgpu::TextureDescriptor {
+                label: Some("terrain.aov.media.scaled-test.source"),
+                size: source_size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: TERRAIN_AOV_FORMAT,
+                usage: wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+        )
+        .unwrap();
+        let pixel = [
+            half::f16::from_f32(0.25).to_bits(),
+            half::f16::from_f32(0.5).to_bits(),
+            half::f16::from_f32(0.75).to_bits(),
+            half::f16::ONE.to_bits(),
+        ];
+        let pixels = pixel.repeat(4);
+        context.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &source,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&pixels),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(source_size.width * 8),
+                rows_per_image: Some(source_size.height),
+            },
+            source_size,
+        );
+        let sampling = render_params::SamplingSettingsNative {
+            mag_filter: render_params::FilterModeNative::Linear,
+            min_filter: render_params::FilterModeNative::Linear,
+            mip_filter: render_params::FilterModeNative::Linear,
+            anisotropy: 1,
+            address_u: render_params::AddressModeNative::ClampToEdge,
+            address_v: render_params::AddressModeNative::ClampToEdge,
+            address_w: render_params::AddressModeNative::ClampToEdge,
+        };
+        let mut encoder = context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("terrain.aov.media.scaled-test.encoder"),
+            });
+        let resolved = scene
+            .resolve_media_capture_texture(
+                &mut encoder,
+                &sampling,
+                Some(source),
+                5,
+                3,
+                true,
+                "terrain.aov.media.scaled-test.resolved",
+            )
+            .unwrap()
+            .unwrap();
+        context.queue.submit(Some(encoder.finish()));
+        let size = resolved.size();
+        assert_eq!((size.width, size.height), (5, 3));
+        let readback = crate::core::hdr::read_hdr_texture(
+            context.device.as_ref(),
+            context.queue.as_ref(),
+            &resolved,
+            5,
+            3,
+            TERRAIN_AOV_FORMAT,
+        )
+        .unwrap();
+        assert_eq!(readback.len(), 5 * 3 * 4);
+        for pixel in readback.chunks_exact(4) {
+            assert_eq!(pixel, [0.25, 0.5, 0.75, 1.0]);
+        }
     }
 }
 
@@ -103,6 +255,7 @@ impl TerrainScene {
     fn ensure_aov_pipeline_sample_count(
         &self,
         effective_msaa: u32,
+        color_format: wgpu::TextureFormat,
         output_mask: u8,
         include_source_id: bool,
         clipmap_geometry: bool,
@@ -115,6 +268,10 @@ impl TerrainScene {
             .aov_pipeline_sample_count
             .lock()
             .map_err(|_| anyhow!("TerrainRenderer AOV sample count mutex poisoned"))?;
+        let mut cached_color_format = self
+            .aov_pipeline_color_format
+            .lock()
+            .map_err(|_| anyhow!("TerrainRenderer AOV color-format mutex poisoned"))?;
         let mut cached_output_mask = self
             .aov_pipeline_output_mask
             .lock()
@@ -130,6 +287,7 @@ impl TerrainScene {
 
         if aov_pipeline.is_none()
             || *sample_count != effective_msaa
+            || *cached_color_format != color_format
             || *cached_output_mask != output_mask
             || *source_id_flag != include_source_id
             || *clipmap_flag != clipmap_geometry
@@ -147,13 +305,14 @@ impl TerrainScene {
                 &self.fog_bind_group_layout,
                 &self.water_reflection_bind_group_layout,
                 &self.material_layer_bind_group_layout,
-                self.color_format,
+                color_format,
                 effective_msaa,
                 output_mask,
                 include_source_id,
                 clipmap_geometry,
             ));
             *sample_count = effective_msaa;
+            *cached_color_format = color_format;
             *cached_output_mask = output_mask;
             *source_id_flag = include_source_id;
             *clipmap_flag = clipmap_geometry;
@@ -316,6 +475,7 @@ impl TerrainScene {
         water_reflection_bind_group: &wgpu::BindGroup,
         material_layer_bind_group: &wgpu::BindGroup,
         preserve_background: bool,
+        primary_depth_preinitialized: bool,
     ) -> Result<()> {
         let aov_pipeline_guard = self
             .aov_pipeline
@@ -348,7 +508,7 @@ impl TerrainScene {
                 view: color_view,
                 resolve_target,
                 ops: wgpu::Operations {
-                    load: if preserve_background {
+                    load: if preserve_background || primary_depth_preinitialized {
                         wgpu::LoadOp::Load
                     } else {
                         wgpu::LoadOp::Clear(wgpu::Color {
@@ -385,11 +545,7 @@ impl TerrainScene {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &render_targets.depth_view,
                     depth_ops: Some(wgpu::Operations {
-                        load: if preserve_background {
-                            wgpu::LoadOp::Load
-                        } else {
-                            wgpu::LoadOp::Clear(1.0)
-                        },
+                        load: aov_depth_load_op(primary_depth_preinitialized),
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -424,7 +580,7 @@ impl TerrainScene {
     pub(super) fn resolve_aux_output(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        decoded: &crate::terrain::render_params::DecodedTerrainSettings,
+        sampling: &crate::terrain::render_params::SamplingSettingsNative,
         internal_texture: TrackedTexture,
         internal_view: wgpu::TextureView,
         out_width: u32,
@@ -458,7 +614,6 @@ impl TerrainScene {
         )?;
         let output_view = output_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let sampling = &decoded.sampling;
         let blit_sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("terrain.aov.blit.sampler"),
             address_mode_u: Self::map_address_mode(sampling.address_u),
@@ -518,6 +673,43 @@ impl TerrainScene {
         Ok(output_texture)
     }
 
+    fn resolve_media_capture_texture(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        sampling: &crate::terrain::render_params::SamplingSettingsNative,
+        texture: Option<TrackedTexture>,
+        out_width: u32,
+        out_height: u32,
+        needs_scaling: bool,
+        label: &str,
+    ) -> Result<Option<TrackedTexture>> {
+        texture
+            .map(|texture| {
+                let size = texture.size();
+                let expected = resolved_media_capture_dimensions(
+                    (size.width, size.height),
+                    (out_width, out_height),
+                    needs_scaling,
+                );
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let resolved = self.resolve_aux_output(
+                    encoder,
+                    sampling,
+                    texture,
+                    view,
+                    out_width,
+                    out_height,
+                    needs_scaling,
+                    false,
+                    label,
+                )?;
+                let resolved_size = resolved.size();
+                debug_assert_eq!((resolved_size.width, resolved_size.height), expected);
+                Ok(resolved)
+            })
+            .transpose()
+    }
+
     /// Internal render method with populated terrain AOV capture.
     /// Returns (beauty_frame, aov_frame) tuple.
     pub(crate) fn render_internal_with_aov(
@@ -529,11 +721,71 @@ impl TerrainScene {
         water_mask: Option<numpy::PyReadonlyArray2<'_, f32>>,
         time_seconds: f32,
     ) -> Result<(crate::Frame, crate::AovFrame)> {
+        self.render_internal_with_aov_presentation(
+            material_set,
+            env_maps,
+            params,
+            heightmap,
+            water_mask,
+            time_seconds,
+            false,
+        )
+    }
+
+    /// Acceptance-only no-medium baseline.  It deliberately reuses the
+    /// floating-point terrain target and authoritative NEPHELE presentation
+    /// pass without enabling any media transport.  Ordinary public no-medium
+    /// rendering continues through [`Self::render_internal_with_aov`] and its
+    /// legacy target/presentation route.
+    pub(crate) fn render_nephele_acceptance_no_medium(
+        &mut self,
+        material_set: &crate::render::material_set::MaterialSet,
+        env_maps: &crate::lighting::ibl_wrapper::IBL,
+        params: &render_params::TerrainRenderParams,
+        heightmap: numpy::PyReadonlyArray2<'_, f32>,
+    ) -> Result<crate::Frame> {
+        let (frame, _) = self.render_internal_with_aov_presentation(
+            material_set,
+            env_maps,
+            params,
+            heightmap,
+            None,
+            0.0,
+            true,
+        )?;
+        Ok(frame)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_internal_with_aov_presentation(
+        &mut self,
+        material_set: &crate::render::material_set::MaterialSet,
+        env_maps: &crate::lighting::ibl_wrapper::IBL,
+        params: &render_params::TerrainRenderParams,
+        heightmap: numpy::PyReadonlyArray2<'_, f32>,
+        water_mask: Option<numpy::PyReadonlyArray2<'_, f32>>,
+        time_seconds: f32,
+        acceptance_no_medium_presentation: bool,
+    ) -> Result<(crate::Frame, crate::AovFrame)> {
         ensure_aov_shading_supported(&params.shading)?;
         let (certificate_capture, _allocation_scope) =
             self.begin_certificate_capture("terrain.render_internal_with_aov");
         let decoded = params.decoded();
         self.ensure_shadow_atlas(&decoded.shadow)?;
+        let media_graph = self.realtime_media_graph_config(params.size_px)?;
+        let media_enabled = media_graph.enabled;
+        if acceptance_no_medium_presentation && media_enabled {
+            return Err(anyhow!(
+                "NEPHELE no-medium acceptance presentation requires detached media transport"
+            ));
+        }
+        let presentation_enabled = media_enabled || acceptance_no_medium_presentation;
+        let media_aov_selection = if acceptance_no_medium_presentation {
+            [false; 4]
+        } else {
+            requested_media_aovs(&decoded.aov)
+        };
+        ensure_media_aov_capture_supported(media_aov_selection, media_enabled)?;
         let (height_height, height_width) = heightmap.as_array().dim();
         let mut declaration_uniforms = Vec::new();
         declaration_uniforms.extend_from_slice(&params.size_px.0.to_le_bytes());
@@ -547,7 +799,7 @@ impl TerrainScene {
                 .unwrap_or(u64::MAX)
                 .to_le_bytes(),
         );
-        let mut graph = super::render_graph::build_terrain_render_graph(
+        let graph_bundle = super::render_graph::build_terrain_render_graph(
             params.size_px.0,
             params.size_px.1,
             params.size_px.0,
@@ -556,8 +808,9 @@ impl TerrainScene {
             height_height as u32,
             self.csm_renderer.allocation_size,
             self.csm_renderer.allocation_layers,
-            self.color_format,
+            super::draw::terrain_internal_color_format(presentation_enabled, self.color_format),
             true,
+            media_graph,
             super::render_graph::TerrainPassDeclarations {
                 prepare: declaration_uniforms.clone(),
                 shadow: declaration_uniforms.clone(),
@@ -566,9 +819,10 @@ impl TerrainScene {
                 prepared_output_size: std::mem::size_of::<crate::terrain::TerrainUniforms>() as u64,
             },
             false,
-        )?
-        .plan;
-        debug_assert_eq!(graph.labels.len(), 4);
+        )?;
+        let graph_shadow = graph_bundle.handles.shadow;
+        let mut graph = graph_bundle.plan;
+        debug_assert_eq!(graph.labels.len(), if media_enabled { 8 } else { 4 });
         let mut timing = self.take_render_timing();
         let height_inputs = graph.execute_with_barriers("terrain.prepare", |_barriers| {
             self.prepare_frame_lighting(decoded)?;
@@ -609,7 +863,23 @@ impl TerrainScene {
             params.z_scale,
             height_inputs.terrain_data_hash,
         )?;
-        let materials = self.prepare_material_context(material_set, params, decoded)?;
+        let materials = self.prepare_material_context_with_mode(
+            material_set,
+            params,
+            decoded,
+            presentation_enabled,
+        )?;
+        if media_enabled {
+            self.prepare_realtime_media_terrain_trace(
+                &params.camera_mode,
+                &height_inputs.heightmap_data,
+                (height_inputs.width, height_inputs.height),
+                height_inputs.terrain_data_hash,
+                params.terrain_span,
+                params.z_scale,
+                materials.terrain_trace_albedo,
+            )?;
+        }
 
         let uniforms = self.build_uniforms(
             params,
@@ -655,13 +925,14 @@ impl TerrainScene {
             });
 
         let requested_msaa = params.msaa_samples.max(1);
-        let effective_msaa =
-            select_effective_msaa(requested_msaa, self.color_format, &self.adapter);
+        let render_format =
+            super::draw::terrain_internal_color_format(presentation_enabled, self.color_format);
+        let effective_msaa = select_effective_msaa(requested_msaa, render_format, &self.adapter);
         if effective_msaa != requested_msaa {
             log::warn!(
                 "MSAA: requested {} not supported for {:?}; using {}",
                 requested_msaa,
-                self.color_format,
+                render_format,
                 effective_msaa
             );
         }
@@ -678,14 +949,19 @@ impl TerrainScene {
         }
 
         let needs_clipmap = is_clipmap_camera_mode(&params.camera_mode);
-        self.ensure_pipeline_sample_count(effective_msaa, needs_clipmap)?;
+        self.ensure_pipeline_sample_count(effective_msaa, needs_clipmap, render_format)?;
         self.ensure_aov_pipeline_sample_count(
             effective_msaa,
+            render_format,
             aov_output_mask,
             want_source_id,
             needs_clipmap,
         )?;
-        let render_targets = self.create_render_targets(params, requested_msaa, effective_msaa)?;
+        let render_targets = if presentation_enabled {
+            self.create_realtime_media_render_targets(params)?
+        } else {
+            self.create_render_targets(params, requested_msaa, effective_msaa)?
+        };
         if want_source_id && render_targets.needs_scaling {
             return Err(anyhow!(
                 "AOV source_id capture requires render_scale=1.0 (per-pixel attribution cannot be resampled)"
@@ -759,6 +1035,7 @@ impl TerrainScene {
             .shadow_bind_group
             .as_ref()
             .unwrap_or(&self.noop_shadow.bind_group);
+        let mut media_tonemap_input = None;
         // Keep sky/atmosphere/water aligned with the camera matrices already
         // uploaded to the main terrain pass; ShadowSetup owns cascade state.
         let (camera_eye, camera_view, camera_proj) = Self::build_camera_matrices(params);
@@ -786,7 +1063,6 @@ impl TerrainScene {
             .as_ref()
             .and_then(|sky| sky.scattering_view.as_ref())
             .unwrap_or(&self.atmosphere_scattering_fallback_view);
-
         let main_height_view = self.main_pass_height_view(&height_inputs.heightmap_view);
         let pass_bind_groups = self.create_terrain_pass_bind_groups(
             &uniform_buffer,
@@ -839,18 +1115,91 @@ impl TerrainScene {
             &pass_bind_groups.material_layer,
         )?;
 
+        if media_enabled {
+            self.queue.submit(Some(encoder.finish()));
+            self.device.poll(wgpu::Maintain::Wait);
+            encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("terrain.encoder.aov.depth-preinitialize"),
+                });
+            {
+                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("terrain.aov.depth-preinitialize"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &render_targets.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            }
+            self.queue.submit(Some(encoder.finish()));
+            self.device.poll(wgpu::Maintain::Wait);
+            encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("terrain.encoder.aov.background-preinitialize"),
+                });
+        }
+
         if let Some(sky) = sky_texture.as_ref() {
             let bg_scope = ts_begin(&mut timing, &mut encoder, "terrain.background");
             self.blit_background_texture(&mut encoder, &render_targets, &sky.view, sky.linear_hdr)?;
             ts_end(&mut timing, &mut encoder, bg_scope, 1);
+        } else if media_enabled {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("terrain.aov.background-preinitialize"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &render_targets.internal_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.15,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+        }
+        if media_enabled {
+            self.queue.submit(Some(encoder.finish()));
+            self.device.poll(wgpu::Maintain::Wait);
+            encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("terrain.encoder.aov.forward-draw"),
+                });
         }
 
         graph.execute_with_barriers("terrain.forward_aov", |barriers| {
-            if barriers.is_empty() {
-                return Err(anyhow::anyhow!(
+            if !barriers
+                .iter()
+                .any(|barrier| barrier.resource == graph_shadow)
+            {
+                return Err(anyhow!(
                     "terrain.forward_aov lost its compiled shadow transition"
                 ));
             }
+            self.prepare_realtime_media_radiance_provider(
+                &mut encoder,
+                sky_texture.as_ref(),
+                decoded,
+                env_maps.hdr_image().map(AsRef::as_ref),
+                env_maps.intensity.max(0.0),
+                media::ibl_mean_radiance(env_maps),
+            )?;
             let main_scope = ts_begin(&mut timing, &mut encoder, "terrain.main");
             self.run_main_pass_with_aov(
                 &mut encoder,
@@ -864,10 +1213,68 @@ impl TerrainScene {
                 &water_reflection_bind_group,
                 &pass_bind_groups.material_layer,
                 sky_texture.is_some(),
+                media_enabled,
             )?;
             ts_end(&mut timing, &mut encoder, main_scope, 1);
             Ok::<_, anyhow::Error>(())
         })?;
+
+        if media_enabled {
+            // The full terrain render pass and NEPHELE's storage-texture
+            // compute chain require distinct Metal command buffers. Queue
+            // submission order preserves the compiled graph dependency while
+            // making render-attachment writes visible to media sampling.
+            self.queue.submit(Some(encoder.finish()));
+            self.device.poll(wgpu::Maintain::Wait);
+            encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("terrain.encoder.aov.media"),
+                });
+            graph.execute_with_barriers("nephele.media.inject", |_barriers| {
+                self.encode_attached_realtime_media_inject_for_terrain(
+                    &mut encoder,
+                    params,
+                    decoded,
+                )?
+                .ok_or_else(|| anyhow!("media graph executed without attached resources"))?;
+                Ok::<_, anyhow::Error>(())
+            })?;
+            graph.execute_with_barriers("nephele.media.integrate", |_barriers| {
+                // Forward declares the authoritative depth write as the same
+                // sampled-texture usage consumed here, so no transition is
+                // required. Compiled dependency/order validation is the guard.
+                self.encode_attached_realtime_media_integrate(
+                    &mut encoder,
+                    &render_targets.depth_view,
+                )?;
+                Ok::<_, anyhow::Error>(())
+            })?;
+            graph.execute_with_barriers("nephele.media.composite", |_barriers| {
+                self.encode_attached_realtime_media_composite(
+                    &mut encoder,
+                    &render_targets.internal_view,
+                )
+            })?;
+            graph.execute_with_barriers("nephele.media.history.commit", |_barriers| {
+                self.commit_attached_realtime_media_history(
+                    &mut encoder,
+                    &render_targets._depth_texture,
+                )?;
+                Ok::<_, anyhow::Error>(())
+            })?;
+            // Media storage writes feed both the authoritative tonemap and
+            // persistent AOV copies. Submit them before those transfer/read
+            // consumers so Metal observes the storage-to-sampled/copy edge.
+            self.queue.submit(Some(encoder.finish()));
+            self.device.poll(wgpu::Maintain::Wait);
+            media_tonemap_input = Some(self.realtime_media_composite_view()?);
+            encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("terrain.encoder.aov.media-resolve"),
+                });
+        }
 
         #[cfg(feature = "enable-gpu-instancing")]
         {
@@ -905,15 +1312,41 @@ impl TerrainScene {
                 ));
             }
             let resolve_scope = ts_begin(&mut timing, &mut encoder, "terrain.resolve");
-            let (final_texture, final_width, final_height) =
-                self.resolve_output(&mut encoder, params, decoded, &render_targets)?;
+            let (final_texture, final_width, final_height) = if presentation_enabled {
+                let presentation_input = if media_enabled {
+                    media_tonemap_input
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("media tonemap input was not materialized"))?
+                } else {
+                    &render_targets.internal_view
+                };
+                self.resolve_realtime_media_output_from_view(
+                    &mut encoder,
+                    params,
+                    decoded,
+                    &render_targets,
+                    presentation_input,
+                )?
+            } else {
+                self.resolve_output(&mut encoder, params, decoded, &render_targets)?
+            };
+            if presentation_enabled {
+                let next = self
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("terrain.encoder.aov.resolve-aux"),
+                    });
+                let tonemap = std::mem::replace(&mut encoder, next);
+                self.queue.submit(Some(tonemap.finish()));
+                self.device.poll(wgpu::Maintain::Wait);
+            }
 
             let albedo_texture = aov_targets
                 .albedo
                 .map(|target| {
                     self.resolve_aux_output(
                         &mut encoder,
-                        decoded,
+                        &decoded.sampling,
                         target.internal_texture,
                         target.internal_view,
                         final_width,
@@ -929,7 +1362,7 @@ impl TerrainScene {
                 .map(|target| {
                     self.resolve_aux_output(
                         &mut encoder,
-                        decoded,
+                        &decoded.sampling,
                         target.internal_texture,
                         target.internal_view,
                         final_width,
@@ -945,7 +1378,7 @@ impl TerrainScene {
                 .map(|target| {
                     self.resolve_aux_output(
                         &mut encoder,
-                        decoded,
+                        &decoded.sampling,
                         target.internal_texture,
                         target.internal_view,
                         final_width,
@@ -972,6 +1405,54 @@ impl TerrainScene {
                 depth_texture,
             ))
         })?;
+        let captured_media_aovs = if media_aov_selection.into_iter().any(|selected| selected) {
+            self.copy_realtime_media_capture_textures(media_aov_selection)?
+        } else {
+            super::media::RealtimeMediaCaptureTextures {
+                transmittance: None,
+                in_scatter: None,
+                cloud_shadow: None,
+                optical_depth: None,
+            }
+        };
+        let media_aovs = super::media::RealtimeMediaCaptureTextures {
+            transmittance: self.resolve_media_capture_texture(
+                &mut encoder,
+                &decoded.sampling,
+                captured_media_aovs.transmittance,
+                final_width,
+                final_height,
+                needs_scaling,
+                "terrain.aov.transmittance.resolved",
+            )?,
+            in_scatter: self.resolve_media_capture_texture(
+                &mut encoder,
+                &decoded.sampling,
+                captured_media_aovs.in_scatter,
+                final_width,
+                final_height,
+                needs_scaling,
+                "terrain.aov.in_scatter.resolved",
+            )?,
+            cloud_shadow: self.resolve_media_capture_texture(
+                &mut encoder,
+                &decoded.sampling,
+                captured_media_aovs.cloud_shadow,
+                final_width,
+                final_height,
+                needs_scaling,
+                "terrain.aov.cloud_shadow.resolved",
+            )?,
+            optical_depth: self.resolve_media_capture_texture(
+                &mut encoder,
+                &decoded.sampling,
+                captured_media_aovs.optical_depth,
+                final_width,
+                final_height,
+                needs_scaling,
+                "terrain.aov.optical_depth.resolved",
+            )?,
+        };
         if let Some(t) = timing.as_mut() {
             t.resolve_queries(&mut encoder);
         }
@@ -983,12 +1464,23 @@ impl TerrainScene {
         self.store_render_timing(timing);
         self.finish_certificate_capture(certificate_capture);
 
+        let media_diagnostics_json = if media_enabled {
+            Some(serde_json::to_string(&self.realtime_media_diagnostics()?)?)
+        } else {
+            None
+        };
+
         let aov_frame = crate::AovFrame::new(
             self.device.clone(),
             self.queue.clone(),
             albedo_texture,
             normal_texture,
             depth_texture,
+            media_aovs.transmittance,
+            media_aovs.in_scatter,
+            media_aovs.cloud_shadow,
+            media_aovs.optical_depth,
+            media_diagnostics_json,
             // VERITAS: needs_scaling is rejected above, so the internal
             // texture is already at the final output dimensions.
             aov_targets.source_id.map(|target| target.internal_texture),
@@ -1056,9 +1548,26 @@ impl TerrainScene {
     }
 }
 
+fn aov_depth_load_op(preinitialized: bool) -> wgpu::LoadOp<f32> {
+    if preinitialized {
+        wgpu::LoadOp::Load
+    } else {
+        wgpu::LoadOp::Clear(1.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ensure_aov_shading_supported;
+    use super::{aov_depth_load_op, ensure_aov_shading_supported};
+
+    #[test]
+    fn media_draw_loads_only_after_attachment_preinitialization() {
+        assert!(matches!(aov_depth_load_op(true), wgpu::LoadOp::Load));
+        match aov_depth_load_op(false) {
+            wgpu::LoadOp::Clear(value) => assert_eq!(value, 1.0),
+            wgpu::LoadOp::Load => panic!("an uninitialized AOV depth attachment must be cleared"),
+        }
+    }
 
     #[test]
     fn visibility_aov_is_rejected_instead_of_silently_rendering_forward() {

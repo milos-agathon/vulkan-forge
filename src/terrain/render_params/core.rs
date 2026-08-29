@@ -91,5 +91,6 @@ pub struct TerrainRenderParams {
     pub(crate) sampling: Py<PyAny>,
     pub(crate) clamp: Py<PyAny>,
     pub(crate) python_object: Py<PyAny>,
+    pub(crate) media: Option<Py<crate::media_py::PyMedium>>,
     pub(crate) decoded: DecodedTerrainSettings,
 }

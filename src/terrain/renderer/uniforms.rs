@@ -29,6 +29,10 @@ pub(super) struct FogUniforms {
     pub(super) sky_params1: [f32; 4],
     pub(super) aether_sun_direction: [f32; 4],
     pub(super) aether_planet_lut: [f32; 4],
+    /// x=enabled, y/z=visible froxel width/height, w=froxel depth.
+    pub(super) media_params: [f32; 4],
+    /// x=near, y=far, z=log(far/near), w=off-axis border.
+    pub(super) media_depth: [f32; 4],
 }
 
 impl FogUniforms {
@@ -40,6 +44,8 @@ impl FogUniforms {
             sky_params1: [0.0, 0.0, 0.0, 0.0],
             aether_sun_direction: [0.0, 0.0, 1.0, 0.0],
             aether_planet_lut: [6_360_000.0, 6_460_000.0, 2.0, 2.0],
+            media_params: [0.0, 1.0, 1.0, 0.0],
+            media_depth: [0.1, 1.0, std::f32::consts::LN_10, 1.0],
         }
     }
 }

@@ -1,0 +1,15 @@
+{
+  "fov_y": 45.0,
+  "schema": "forge3d.nephele.camera/1",
+  "terrain_camera": {
+    "mode": "mesh:yup",
+    "phi_deg": 90.0,
+    "radius": 50.990195,
+    "target": [
+      0.0,
+      15.0,
+      0.0
+    ],
+    "theta_deg": 78.690068
+  }
+}

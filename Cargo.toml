@@ -103,6 +103,12 @@ proj = { version = "0.27", optional = true }
 # G-002c C4.1: pure-Rust polygon boolean operations, feature-gated.
 geo = { version = "0.33.1", default-features = false, optional = true }
 
+# Keep the public wgpu 0.19.4 API/application stack.  This exact 0.19.5 HAL
+# source is vendored only to carry the macOS 26 Metal timestamp boundary fix;
+# its registry package checksum is bfabcfc55fd86611a855816326b2d54c3b2fd7972c27ce414291562650552703.
+[patch.crates-io]
+wgpu-hal = { path = "vendor/wgpu-hal-0.19.5" }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 

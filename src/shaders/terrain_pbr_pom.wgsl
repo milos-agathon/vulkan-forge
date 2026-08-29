@@ -432,6 +432,10 @@ struct FogUniforms {
     aether_sun_direction: vec4<f32>,
     // x=bottom radius, y=top radius, z=scattering height count, w=nu count.
     aether_planet_lut: vec4<f32>,
+    // x=NEPHELE enabled, y/z=visible froxel width/height, w=depth slices.
+    media_params: vec4<f32>,
+    // x=near, y=far, z=log(far/near), w=off-axis froxel border.
+    media_depth: vec4<f32>,
 }
 
 @group(4) @binding(0)
@@ -442,6 +446,23 @@ var sky_atmosphere_tex: texture_2d<f32>;
 
 @group(4) @binding(2)
 var aether_accumulated_scattering_tex: texture_3d<f32>;
+
+@group(4) @binding(3)
+var nephele_light_transmittance_tex: texture_3d<f32>;
+
+fn nephele_same_medium_direct_transmittance(screen_position: vec2<f32>, distance_m: f32) -> vec3<f32> {
+    if (fog_uniforms.media_params.x < 0.5) { return vec3<f32>(1.0); }
+    let dimensions = max(vec3<f32>(textureDimensions(nephele_light_transmittance_tex)), vec3<f32>(1.0));
+    // The canonical froxel grid stores one XY sample per 8x8 framebuffer
+    // tile plus one off-axis border texel on every side.
+    let xy = screen_position / vec2<f32>(8.0) + vec2<f32>(fog_uniforms.media_depth.w);
+    let near = max(fog_uniforms.media_depth.x, 1e-6);
+    let distance_ratio = max(det_div(distance_m, near), 1.0);
+    let log2_range = max(fog_uniforms.media_depth.z * 1.4426950408889634, 1e-6);
+    let unit_depth = clamp(det_div(det_log2(distance_ratio), log2_range), 0.0, 1.0);
+    let froxel_coord = clamp(vec3<f32>(xy / dimensions.xy, unit_depth), vec3<f32>(0.0), vec3<f32>(1.0));
+    return clamp(textureSampleLevel(nephele_light_transmittance_tex, material_samp, froxel_coord, 0.0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // P4: Water Planar Reflection Uniforms (@group(5))
@@ -1382,7 +1403,12 @@ fn normalize_for_shadow(tex_coord: vec2<f32>) -> vec3<f32> {
     // Compute shadow-normalized Z (matches shadow depth shader: world_z = h_curved * h_exag)
     let shadow_z = h_curved * h_exag;
     
-    return vec3<f32>(world_xy.x, world_xy.y, shadow_z);
+    let shadow_height = det_fma(h_curved, h_max - h_min, h_min) * h_exag;
+    return select(
+        vec3<f32>(world_xy.x, world_xy.y, shadow_z),
+        vec3<f32>(world_xy.x, shadow_height, world_xy.y),
+        u_terrain.camera_mode_params.x == 2.0,
+    );
 }
 
 /// Calculate shadow visibility for terrain
@@ -1586,7 +1612,7 @@ fn vs_main(@builtin(vertex_index) vertex_id : u32) -> VertexOutput {
     
     var uv : vec2<f32>;
     
-    if (camera_mode == 1u) {
+    if (camera_mode != 0u) {
         // MESH MODE: Use grid coordinates for perspective-correct terrain rendering
         // Generate triangle mesh from vertex_id
         // For a grid_size x grid_size grid, we have (grid_size-1)^2 quads, each with 2 triangles
@@ -1659,16 +1685,28 @@ fn vs_main(@builtin(vertex_index) vertex_id : u32) -> VertexOutput {
     
     // Use centered Z for mesh mode clip position, but keep original for world_position
     // (world_position is used for lighting which expects real elevation)
-    let world_pos = vec3<f32>(world_xy.x, world_xy.y, world_z_original);
+    let world_pos = select(
+        vec3<f32>(world_xy.x, world_xy.y, world_z_original),
+        vec3<f32>(world_xy.x, world_z_original, world_xy.y),
+        camera_mode == 2u,
+    );
     out.world_position = world_pos;
-    out.world_normal = vec3<f32>(0.0, 0.0, 1.0); // Z-up, recalculated in fragment shader
+    out.world_normal = select(
+        vec3<f32>(0.0, 0.0, 1.0),
+        vec3<f32>(0.0, 1.0, 0.0),
+        camera_mode == 2u,
+    );
     out.tex_coord = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
     out.tile_id = 0u;
     
-    if (camera_mode == 1u) {
+    if (camera_mode != 0u) {
         // MESH MODE: Apply view and projection matrices for proper perspective
         // Use centered Z for clip position so terrain is visible from camera at origin
-        let mesh_world_pos = vec3<f32>(world_xy.x, world_xy.y, world_z_centered);
+        let mesh_world_pos = select(
+            vec3<f32>(world_xy.x, world_xy.y, world_z_centered),
+            vec3<f32>(world_xy.x, world_z_original, world_xy.y),
+            camera_mode == 2u,
+        );
         out.clip_position = det_mat4_mul_vec4(
             u_terrain.proj,
             det_mat4_mul_vec4(u_terrain.view, vec4<f32>(mesh_world_pos, 1.0)),
@@ -3335,7 +3373,9 @@ fn apply_atmospheric_fog(
     screen_pos: vec2<f32>,
 ) -> vec3<f32> {
     let density_raw = fog_uniforms.params0.x;
-    let fog_enabled = density_raw > 0.0;
+    // NEPHELE owns spatial-media transport. Keep the analytic-sky/AETHER
+    // boundary, but bypass the independent legacy height-fog density model.
+    let fog_enabled = density_raw > 0.0 && fog_uniforms.media_params.x < 0.5;
     let sky_enabled = fog_uniforms.sky_params0.x > 0.5;
     let sky_aerial_enabled = sky_enabled && fog_uniforms.sky_params0.z > 0.5;
     let aether_enabled = fog_uniforms.fog_inscatter.w > 0.5;
@@ -4098,6 +4138,10 @@ fn shade_main(input : VertexOutput) -> FragmentOutput {
             lighting = lighting * shadow_factor;
         }
     }
+    // Every direct-light path consumes the light-ray transmittance produced
+    // from the same canonical 3-D medium as the froxel integration.
+    let same_medium_direct_t = nephele_same_medium_direct_transmittance(input.clip_position.xy, view_distance);
+    lighting = lighting * same_medium_direct_t;
 
     // Apply IBL rotation (terrain-specific feature)
     let rotated_normal = rotate_y(shading_normal, u_ibl.sin_theta, u_ibl.cos_theta);
@@ -4699,7 +4743,7 @@ fn shade_main(input : VertexOutput) -> FragmentOutput {
             // Sun contribution - NO artificial boost; proper GGX + low roughness = natural glints
             let sun_color = vec3<f32>(1.0, 0.98, 0.95); // Slightly warm sun
             let sun_intensity = u_shading.light_params.z; // Use actual sun intensity (no boost!)
-            let sun_spec = direct_spec * sun_color * sun_intensity * n_dot_l;
+            let sun_spec = direct_spec * sun_color * sun_intensity * n_dot_l * same_medium_direct_t;
             
             // ─────────────────────────────────────────────────────────────────────
             // P4: Planar Reflection Integration
@@ -4860,7 +4904,10 @@ fn shade_main(input : VertexOutput) -> FragmentOutput {
             // Direct product for full contrast range (no sqrt compression)
             // P3 requires lf_max/lf_min >= 4.5
             // Use combined_shadow which includes both CSM and heightfield sun visibility
-            let ao_shadow_factor = ao_clamped * combined_shadow; // Range [0.195, 1.0]
+            // Direct light consumes transmittance from the same canonical 3-D
+            // medium; NEPHELE bypasses the unrelated procedural 2-D path.
+            let direct_shadow = combined_shadow;
+            let ao_shadow_factor = ao_clamped * direct_shadow;
             let diffuse_lit = diffuse_raw * ao_shadow_factor;
             
             // P3-S1: IBL term adds minimal fill light
@@ -4875,16 +4922,13 @@ fn shade_main(input : VertexOutput) -> FragmentOutput {
                 shading_normal,
                 view_dir,
                 light_dir,
-                combined_shadow,
+                direct_shadow,
                 ibl_diffuse_factor,
             );
             
-            // P2-S4: lighting_factor = diffuse_lit + ibl_term
-            let lighting_factor = diffuse_lit + ibl_term;
-            
             // Apply lighting factor to albedo
             // Spec H-03: Lighting modulates brightness, not colormap lookup
-            let lit_albedo = albedo * lighting_factor;
+            let lit_albedo = albedo * (diffuse_lit * same_medium_direct_t + ibl_term);
             
             // Add specular contribution (capped at 25% per P2-S4)
             // Specular for terrain must not exceed 25% of total RGB
@@ -4892,7 +4936,7 @@ fn shade_main(input : VertexOutput) -> FragmentOutput {
             let spec_capped = min(spec_contrib, albedo * 0.20);
             
             // Final terrain shading
-            shaded = lit_albedo + spec_capped + terrain_sss;
+            shaded = lit_albedo + spec_capped + terrain_sss * same_medium_direct_t;
         }
         
         let exposure = max(u_shading.light_params.w, 0.0);

@@ -95,7 +95,7 @@ fn worley_noise(st: vec2<f32>, scale: f32) -> f32 {
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
             let neighbor = vec2<f32>(f32(x), f32(y));
-            let point = random(i_st + neighbor) * 0.5 + 0.25;
+            var point = random(i_st + neighbor) * 0.5 + 0.25;
             point = 0.5 + 0.5 * sin(cloud_params.time * 0.5 + 6.2831 * point);
             let diff = neighbor + point - f_st;
             let dist = length(diff);

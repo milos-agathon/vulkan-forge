@@ -1,9 +1,8 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use half::f16;
-
 use crate::core::resource_tracker::{tracked_create_texture, TrackedTexture};
+use crate::media::{Bounds3, DensityField, DensityMapping, Grid3D, MediaError, SpatialTransform};
 use crate::viewer::ipc::{TerrainVolumetricsReport, TerrainVolumetricsVolumeReport};
 use crate::viewer::terrain::pbr_renderer::DensityVolumeConfig;
 
@@ -37,7 +36,9 @@ pub struct DensityVolumeGpuMetadata {
 #[derive(Debug, Clone)]
 pub struct DensityVolumeAtlasData {
     pub dimensions: [u32; 3],
+    /// Exact dequantized R16 values, retained for CPU reporting/tests.
     pub voxels: Vec<f32>,
+    pub r16_voxels: Vec<u16>,
     pub metadata: Vec<DensityVolumeGpuMetadata>,
     pub fingerprint: u64,
     pub report: TerrainVolumetricsReport,
@@ -61,6 +62,17 @@ impl DensityVolumeAtlasGpu {
         half_res: bool,
     ) -> anyhow::Result<Self> {
         let dimensions = data.dimensions;
+        let expected_texels = dimensions
+            .into_iter()
+            .try_fold(1usize, |count, axis| count.checked_mul(axis as usize))
+            .ok_or_else(|| anyhow::anyhow!("density atlas dimensions overflow address space"))?;
+        if data.r16_voxels.len() != expected_texels || data.voxels.len() != expected_texels {
+            anyhow::bail!(
+                "density atlas dimensions require {expected_texels} texels, got {} R16 and {} CPU values",
+                data.r16_voxels.len(),
+                data.voxels.len()
+            );
+        }
         let texture = tracked_create_texture(
             device,
             &wgpu::TextureDescriptor {
@@ -79,12 +91,6 @@ impl DensityVolumeAtlasGpu {
             },
         )?;
 
-        let texels = data
-            .voxels
-            .iter()
-            .map(|value| f16::from_f32(*value).to_bits())
-            .collect::<Vec<_>>();
-
         queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &texture,
@@ -92,7 +98,7 @@ impl DensityVolumeAtlasGpu {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            bytemuck::cast_slice(&texels),
+            bytemuck::cast_slice(&data.r16_voxels),
             wgpu::ImageDataLayout {
                 offset: 0,
                 bytes_per_row: Some(dimensions[0] * DENSITY_VOLUME_TEXEL_BYTES as u32),
@@ -138,19 +144,23 @@ impl DensityVolumeAtlasGpu {
     }
 }
 
-pub fn build_density_volume_atlas_data(
+pub fn build_density_volume_atlas_data_checked(
     context: TerrainVolumeContext<'_>,
     configs: &[DensityVolumeConfig],
-) -> Option<DensityVolumeAtlasData> {
-    let active_configs = configs
-        .iter()
-        .take(MAX_DENSITY_VOLUMES)
-        .map(sanitize_config)
-        .collect::<Vec<_>>();
-
-    if active_configs.is_empty() {
-        return None;
+) -> Result<Option<DensityVolumeAtlasData>, MediaError> {
+    if configs.is_empty() {
+        return Ok(None);
     }
+    if configs.len() > MAX_DENSITY_VOLUMES {
+        return Err(MediaError::InvalidDensity(format!(
+            "density volume count {} exceeds enforced limit {MAX_DENSITY_VOLUMES}",
+            configs.len()
+        )));
+    }
+    for config in configs {
+        validate_config(config)?;
+    }
+    let active_configs = configs.to_vec();
 
     let atlas_width = active_configs
         .iter()
@@ -171,17 +181,24 @@ pub fn build_density_volume_atlas_data(
     let total_voxels = atlas_width as u64 * atlas_height as u64 * atlas_depth as u64;
     let texture_bytes = total_voxels * DENSITY_VOLUME_TEXEL_BYTES;
     if texture_bytes > DENSITY_VOLUME_MEMORY_BUDGET_BYTES {
-        return None;
+        return Err(MediaError::InvalidDensity(format!(
+            "density atlas requires {texture_bytes} bytes, exceeding enforced budget {DENSITY_VOLUME_MEMORY_BUDGET_BYTES}"
+        )));
     }
 
     let mut atlas = vec![0.0; total_voxels as usize];
+    let mut r16_atlas = vec![0u16; total_voxels as usize];
     let mut metadata = Vec::with_capacity(active_configs.len());
     let mut volume_reports = Vec::with_capacity(active_configs.len());
     let fingerprint = fingerprint_configs(context, &active_configs);
     let mut z_cursor = 0u32;
 
     for config in active_configs {
-        let density = generate_density_volume(context, &config);
+        let density = generate_density_field(context, &config)?;
+        let DensityField::Grid3D(grid) = &density else {
+            unreachable!("legacy adapter always creates canonical grids")
+        };
+        let dequantized = grid.dequantized_density();
         let resolution = config.resolution;
 
         for z in 0..resolution[2] {
@@ -190,7 +207,8 @@ pub fn build_density_volume_atlas_data(
                     let src_index = ((z * resolution[1] + y) * resolution[0] + x) as usize;
                     let dst_index =
                         (((z_cursor + z) * atlas_height + y) * atlas_width + x) as usize;
-                    atlas[dst_index] = density[src_index];
+                    atlas[dst_index] = dequantized[src_index];
+                    r16_atlas[dst_index] = grid.r16_density_bits()[src_index];
                 }
             }
         }
@@ -209,11 +227,18 @@ pub fn build_density_volume_atlas_data(
                 1.0 / render_size[1].max(1e-3),
                 1.0 / render_size[2].max(1e-3),
             ],
-            atlas_offset: [0.0, 0.0, z_cursor as f32 / atlas_depth as f32],
+            // Map local [0,1] to the first/last texel centers. Mapping to
+            // region edges lets linear filtering blend the endpoint with
+            // padding or the next packed volume.
+            atlas_offset: [
+                0.5 / atlas_width as f32,
+                0.5 / atlas_height as f32,
+                (z_cursor as f32 + 0.5) / atlas_depth as f32,
+            ],
             atlas_scale: [
-                resolution[0] as f32 / atlas_width as f32,
-                resolution[1] as f32 / atlas_height as f32,
-                resolution[2] as f32 / atlas_depth as f32,
+                resolution[0].saturating_sub(1) as f32 / atlas_width as f32,
+                resolution[1].saturating_sub(1) as f32 / atlas_height as f32,
+                resolution[2].saturating_sub(1) as f32 / atlas_depth as f32,
             ],
         });
         volume_reports.push(TerrainVolumetricsVolumeReport {
@@ -227,9 +252,10 @@ pub fn build_density_volume_atlas_data(
         z_cursor += resolution[2];
     }
 
-    Some(DensityVolumeAtlasData {
+    Ok(Some(DensityVolumeAtlasData {
         dimensions: [atlas_width, atlas_height, atlas_depth],
         voxels: atlas,
+        r16_voxels: r16_atlas,
         metadata,
         fingerprint,
         report: TerrainVolumetricsReport {
@@ -243,36 +269,63 @@ pub fn build_density_volume_atlas_data(
             half_res: false,
             volumes: volume_reports,
         },
-    })
+    }))
 }
 
-fn sanitize_config(config: &DensityVolumeConfig) -> DensityVolumeConfig {
-    DensityVolumeConfig {
-        preset: match config.preset.as_str() {
-            "plume" => "plume".to_string(),
-            "localized_haze" => "localized_haze".to_string(),
-            _ => "valley_fog".to_string(),
-        },
-        center: config.center,
-        size: [
-            config.size[0].max(1.0),
-            config.size[1].max(1.0),
-            config.size[2].max(1.0),
-        ],
-        resolution: [
-            config.resolution[0].clamp(8, MAX_VOLUME_RESOLUTION_AXIS),
-            config.resolution[1].clamp(8, MAX_VOLUME_RESOLUTION_AXIS),
-            config.resolution[2].clamp(8, MAX_VOLUME_RESOLUTION_AXIS),
-        ],
-        density_scale: config.density_scale.clamp(0.0, 4.0),
-        edge_softness: config.edge_softness.clamp(0.02, 0.95),
-        noise_strength: config.noise_strength.clamp(0.0, 1.0),
-        floor_offset: config.floor_offset,
-        ceiling: config.ceiling.clamp(0.0, 1.0),
-        plume_spread: config.plume_spread.clamp(0.05, 2.0),
-        wind: config.wind,
-        seed: config.seed,
+fn validate_config(config: &DensityVolumeConfig) -> Result<(), MediaError> {
+    if !matches!(
+        config.preset.as_str(),
+        "valley_fog" | "plume" | "localized_haze"
+    ) {
+        return Err(MediaError::InvalidDensity(format!(
+            "unsupported density preset {:?}",
+            config.preset
+        )));
     }
+    if config
+        .center
+        .iter()
+        .chain(config.size.iter())
+        .chain(config.wind.iter())
+        .any(|value| !value.is_finite())
+        || config.size.iter().any(|value| *value < 1.0)
+    {
+        return Err(MediaError::InvalidDensity(
+            "density volume center/size/wind must be finite and size must be at least 1".into(),
+        ));
+    }
+    if config
+        .resolution
+        .iter()
+        .any(|axis| !(8..=MAX_VOLUME_RESOLUTION_AXIS).contains(axis))
+    {
+        return Err(MediaError::InvalidDensity(format!(
+            "density volume resolution axes must lie in [8, {MAX_VOLUME_RESOLUTION_AXIS}]"
+        )));
+    }
+    let finite = [
+        config.density_scale,
+        config.edge_softness,
+        config.noise_strength,
+        config.floor_offset,
+        config.ceiling,
+        config.plume_spread,
+    ]
+    .into_iter()
+    .all(f32::is_finite);
+    if !finite
+        || !(0.0..=4.0).contains(&config.density_scale)
+        || !(0.02..=0.95).contains(&config.edge_softness)
+        || !(0.0..=1.0).contains(&config.noise_strength)
+        || !(-100.0..=100.0).contains(&config.floor_offset)
+        || !(0.0..=1.0).contains(&config.ceiling)
+        || !(0.05..=2.0).contains(&config.plume_spread)
+    {
+        return Err(MediaError::InvalidDensity(
+            "density volume scalar parameters are outside their enforced domains".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn fingerprint_configs(context: TerrainVolumeContext<'_>, configs: &[DensityVolumeConfig]) -> u64 {
@@ -310,10 +363,10 @@ fn fingerprint_configs(context: TerrainVolumeContext<'_>, configs: &[DensityVolu
     hasher.finish()
 }
 
-fn generate_density_volume(
+fn generate_density_field(
     context: TerrainVolumeContext<'_>,
     config: &DensityVolumeConfig,
-) -> Vec<f32> {
+) -> Result<DensityField, MediaError> {
     let resolution = config.resolution;
     let voxel_count = resolution[0] as usize * resolution[1] as usize * resolution[2] as usize;
     let mut voxels = vec![0.0; voxel_count];
@@ -350,7 +403,24 @@ fn generate_density_volume(
         }
     }
 
-    voxels
+    let max_corner = [
+        min_corner[0] + config.size[0],
+        min_corner[1] + config.size[1],
+        min_corner[2] + config.size[2],
+    ];
+    Ok(DensityField::Grid3D(Grid3D::new(
+        SpatialTransform {
+            bounds: Bounds3 {
+                min: min_corner,
+                max: max_corner,
+            },
+        },
+        resolution,
+        voxels,
+        DensityMapping {
+            physical_density_per_authored_unit: 1.0,
+        },
+    )?))
 }
 
 fn valley_fog_density(
@@ -587,15 +657,46 @@ mod tests {
 
     #[test]
     fn build_density_volume_data_is_deterministic() {
-        let a = build_density_volume_atlas_data(flat_context(), &[config("valley_fog")]).unwrap();
-        let b = build_density_volume_atlas_data(flat_context(), &[config("valley_fog")]).unwrap();
+        let a = build_density_volume_atlas_data_checked(flat_context(), &[config("valley_fog")])
+            .unwrap()
+            .unwrap();
+        let b = build_density_volume_atlas_data_checked(flat_context(), &[config("valley_fog")])
+            .unwrap()
+            .unwrap();
         assert_eq!(a.dimensions, b.dimensions);
         assert_eq!(a.fingerprint, b.fingerprint);
         assert_eq!(a.voxels, b.voxels);
+        assert_eq!(a.r16_voxels, b.r16_voxels);
+        assert!(a
+            .voxels
+            .iter()
+            .zip(&a.r16_voxels)
+            .all(|(value, bits)| *value == half::f16::from_bits(*bits).to_f32()));
     }
 
     #[test]
-    fn density_volume_report_tracks_budget_and_truncation() {
+    fn checked_adapter_rejects_instead_of_clamping() {
+        let mut invalid = config("valley_fog");
+        invalid.resolution[0] = MAX_VOLUME_RESOLUTION_AXIS + 1;
+        assert!(matches!(
+            build_density_volume_atlas_data_checked(flat_context(), &[invalid]),
+            Err(MediaError::InvalidDensity(_))
+        ));
+        let mut invalid_floor = config("valley_fog");
+        invalid_floor.floor_offset = 100.1;
+        assert!(matches!(
+            build_density_volume_atlas_data_checked(flat_context(), &[invalid_floor]),
+            Err(MediaError::InvalidDensity(_))
+        ));
+        let too_many = vec![config("plume"); MAX_DENSITY_VOLUMES + 1];
+        assert!(matches!(
+            build_density_volume_atlas_data_checked(flat_context(), &too_many),
+            Err(MediaError::InvalidDensity(_))
+        ));
+    }
+
+    #[test]
+    fn checked_density_volume_report_rejects_excess_volumes() {
         let configs = vec![
             config("valley_fog"),
             config("plume"),
@@ -603,16 +704,18 @@ mod tests {
             config("valley_fog"),
             config("plume"),
         ];
-        let atlas = build_density_volume_atlas_data(flat_context(), &configs).unwrap();
-        assert_eq!(atlas.report.active_volume_count, MAX_DENSITY_VOLUMES as u32);
-        assert!(atlas.report.texture_bytes <= DENSITY_VOLUME_MEMORY_BUDGET_BYTES);
-        assert_eq!(atlas.report.volumes.len(), MAX_DENSITY_VOLUMES);
+        assert!(matches!(
+            build_density_volume_atlas_data_checked(flat_context(), &configs),
+            Err(MediaError::InvalidDensity(_))
+        ));
     }
 
     #[test]
     fn valley_fog_prefers_ground_layer() {
         let atlas =
-            build_density_volume_atlas_data(flat_context(), &[config("valley_fog")]).unwrap();
+            build_density_volume_atlas_data_checked(flat_context(), &[config("valley_fog")])
+                .unwrap()
+                .unwrap();
         let dims = atlas.dimensions;
         let low = atlas.voxels[((1 * dims[1] + 1) * dims[0] + 1) as usize];
         let high = atlas.voxels
@@ -628,7 +731,9 @@ mod tests {
         let mut volume = config("localized_haze");
         volume.center = [4.0, 10.0, 2.0];
         volume.size = [2.0, 6.0, 4.0];
-        let atlas = build_density_volume_atlas_data(context, &[volume]).unwrap();
+        let atlas = build_density_volume_atlas_data_checked(context, &[volume])
+            .unwrap()
+            .unwrap();
         let metadata = &atlas.metadata[0];
         // Render center = (300, 10, 90), render size = (200, 6, 100).
         assert_eq!(metadata.min_corner, [200.0, 7.0, 40.0]);
@@ -636,11 +741,43 @@ mod tests {
     }
 
     #[test]
+    fn atlas_metadata_maps_local_endpoints_to_region_texel_centers() {
+        let atlas = build_density_volume_atlas_data_checked(
+            flat_context(),
+            &[config("valley_fog"), config("plume")],
+        )
+        .unwrap()
+        .unwrap();
+        for (index, metadata) in atlas.metadata.iter().enumerate() {
+            let report = &atlas.report.volumes[index];
+            for axis in 0..3 {
+                let atlas_axis = atlas.dimensions[axis] as f32;
+                let first_center = if axis == 2 {
+                    (report.atlas_offset[axis] as f32 + 0.5) / atlas_axis
+                } else {
+                    0.5 / atlas_axis
+                };
+                let last_center =
+                    first_center + report.resolution[axis].saturating_sub(1) as f32 / atlas_axis;
+                assert!((metadata.atlas_offset[axis] - first_center).abs() < f32::EPSILON);
+                assert!(
+                    (metadata.atlas_offset[axis] + metadata.atlas_scale[axis] - last_center).abs()
+                        < f32::EPSILON
+                );
+            }
+        }
+    }
+
+    #[test]
     fn rebases_change_only_density_metadata_not_voxel_identity() {
-        let before = build_density_volume_atlas_data(flat_context(), &[config("plume")]).unwrap();
+        let before = build_density_volume_atlas_data_checked(flat_context(), &[config("plume")])
+            .unwrap()
+            .unwrap();
         let mut rebased_context = flat_context();
         rebased_context.render_origin_span = [-10_000.0, 25_000.0, 8.0, 8.0];
-        let after = build_density_volume_atlas_data(rebased_context, &[config("plume")]).unwrap();
+        let after = build_density_volume_atlas_data_checked(rebased_context, &[config("plume")])
+            .unwrap()
+            .unwrap();
 
         assert_eq!(before.fingerprint, after.fingerprint);
         assert_eq!(before.dimensions, after.dimensions);

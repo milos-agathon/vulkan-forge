@@ -1,5 +1,6 @@
 use super::*;
 use crate::terrain::render_params;
+use numpy::IntoPyArray;
 use numpy::PyUntypedArrayMethods;
 use pyo3::types::PyDict;
 use sha2::{Digest, Sha256};
@@ -9,6 +10,30 @@ fn append_content_digest(target: &mut Vec<u8>, domain: &[u8], content: &[u8]) {
     target.extend_from_slice(domain);
     target.extend_from_slice(&(content.len() as u64).to_le_bytes());
     target.extend_from_slice(&Sha256::digest(content));
+}
+
+fn resize_scalar_nearest(
+    values: Vec<f32>,
+    source: (u32, u32),
+    destination: (u32, u32),
+) -> anyhow::Result<Vec<f32>> {
+    anyhow::ensure!(
+        values.len() == (u64::from(source.0) * u64::from(source.1)) as usize,
+        "scalar capture size does not match its source dimensions"
+    );
+    if source == destination {
+        return Ok(values);
+    }
+    let mut resized =
+        Vec::with_capacity((u64::from(destination.0) * u64::from(destination.1)) as usize);
+    for y in 0..destination.1 {
+        let source_y = (u64::from(y) * u64::from(source.1) / u64::from(destination.1)) as u32;
+        for x in 0..destination.0 {
+            let source_x = (u64::from(x) * u64::from(source.0) / u64::from(destination.0)) as u32;
+            resized.push(values[(source_y * source.0 + source_x) as usize]);
+        }
+    }
+    Ok(resized)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -278,6 +303,23 @@ impl TerrainRenderer {
         self.scene
             .validate_material_vt_request(params, material_set.materials().len() as u32)
             .map_err(|error| PyRuntimeError::new_err(format!("Rendering failed: {error:#}")))?;
+        if let Some(media) = &params.media {
+            let media = media.borrow(py);
+            self.scene
+                .prepare_realtime_media_for_terrain(
+                    params,
+                    params.decoded(),
+                    media.medium(),
+                    media.version_value(),
+                )
+                .map_err(|error| {
+                    PyRuntimeError::new_err(format!("Media preparation failed: {error:#}"))
+                })?;
+        } else {
+            self.scene.clear_realtime_media().map_err(|error| {
+                PyRuntimeError::new_err(format!("Media removal failed: {error:#}"))
+            })?;
+        }
 
         let certificate_enabled = certificate
             .as_ref()
@@ -352,6 +394,23 @@ impl TerrainRenderer {
             .map_err(|error| {
                 PyRuntimeError::new_err(format!("Rendering with AOV failed: {error:#}"))
             })?;
+        if let Some(media) = &params.media {
+            let media = media.borrow(py);
+            self.scene
+                .prepare_realtime_media_for_terrain(
+                    params,
+                    params.decoded(),
+                    media.medium(),
+                    media.version_value(),
+                )
+                .map_err(|error| {
+                    PyRuntimeError::new_err(format!("Media preparation failed: {error:#}"))
+                })?;
+        } else {
+            self.scene.clear_realtime_media().map_err(|error| {
+                PyRuntimeError::new_err(format!("Media removal failed: {error:#}"))
+            })?;
+        }
 
         let (frame, aov_frame) = self
             .scene
@@ -367,6 +426,248 @@ impl TerrainRenderer {
 
         crate::core::certificate::emit_certificate_for_kwarg(py, certificate.as_ref())?;
         Ok((Py::new(py, frame)?, Py::new(py, aov_frame)?))
+    }
+
+    /// Acceptance-only deterministic capture for NEPHELE physical gates.
+    /// This deliberately remains a private native method rather than a stable
+    /// public rendering API.
+    #[pyo3(signature = (material_set, env_maps, params, heightmap, *, terrain_occlusion_in_media=true, include_no_medium=false))]
+    fn _capture_nephele_acceptance<'py>(
+        &mut self,
+        py: Python<'py>,
+        material_set: &crate::render::material_set::MaterialSet,
+        env_maps: &crate::lighting::ibl_wrapper::IBL,
+        params: &render_params::TerrainRenderParams,
+        heightmap: PyReadonlyArray2<'py, f32>,
+        terrain_occlusion_in_media: bool,
+        include_no_medium: bool,
+    ) -> PyResult<PyObject> {
+        let media = params.media.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err("NEPHELE acceptance capture requires TerrainRenderParams.media")
+        })?;
+        let aov = &params.decoded().aov;
+        if ![
+            aov.transmittance,
+            aov.in_scatter,
+            aov.cloud_shadow,
+            aov.optical_depth,
+        ]
+        .into_iter()
+        .all(|selected| selected)
+        {
+            return Err(PyRuntimeError::new_err(
+                "NEPHELE acceptance capture requires all four media AOV selectors",
+            ));
+        }
+        let (acceptance_capture, _allocation_scope) = self
+            .scene
+            .begin_certificate_capture("terrain._capture_nephele_acceptance");
+        let media = media.borrow(py);
+        self.scene
+            .prepare_realtime_media_for_terrain(
+                params,
+                params.decoded(),
+                media.medium(),
+                media.version_value(),
+            )
+            .map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "NEPHELE acceptance media preparation failed: {error:#}"
+                ))
+            })?;
+        let previous_occlusion = self
+            .scene
+            .replace_media_terrain_occlusion_enabled(terrain_occlusion_in_media)
+            .map_err(|error| PyRuntimeError::new_err(format!("{error:#}")))?;
+        let rendered = self.scene.render_internal_with_aov(
+            material_set,
+            env_maps,
+            params,
+            heightmap.clone(),
+            None,
+            0.0,
+        );
+        let restore = self
+            .scene
+            .replace_media_terrain_occlusion_enabled(previous_occlusion);
+        let (frame, aov_frame) = rendered.map_err(|error| {
+            PyRuntimeError::new_err(format!("NEPHELE acceptance render failed: {error:#}"))
+        })?;
+        restore.map_err(|error| {
+            PyRuntimeError::new_err(format!(
+                "NEPHELE acceptance state restoration failed: {error:#}"
+            ))
+        })?;
+
+        // Read the enabled transport's termination evidence before the
+        // optional no-medium baseline temporarily detaches and recreates the
+        // media resources.  Reattached resources have no executed termination
+        // history and must never replace the enabled capture's evidence.
+        let (termination, internal_viewport, froxel_depth, _termination_allocation) = self
+            .scene
+            .read_realtime_media_termination_slice()
+            .map_err(|error| PyRuntimeError::new_err(format!("{error:#}")))?;
+        if termination.iter().any(|value| !value.is_finite()) {
+            return Err(PyRuntimeError::new_err(
+                "NEPHELE acceptance termination readback contains non-finite values",
+            ));
+        }
+
+        let no_medium_frame = if include_no_medium {
+            self.scene.clear_realtime_media().map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "NEPHELE acceptance no-medium detachment failed: {error:#}"
+                ))
+            })?;
+            let no_medium = self.scene.render_nephele_acceptance_no_medium(
+                material_set,
+                env_maps,
+                params,
+                heightmap,
+            );
+            let reattach = self.scene.prepare_realtime_media_for_terrain(
+                params,
+                params.decoded(),
+                media.medium(),
+                media.version_value(),
+            );
+            let no_medium = no_medium.map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "NEPHELE acceptance no-medium render failed: {error:#}"
+                ))
+            })?;
+            reattach.map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "NEPHELE acceptance media reattachment failed: {error:#}"
+                ))
+            })?;
+            Some(no_medium)
+        } else {
+            None
+        };
+
+        let (beauty, media_aovs, no_medium_beauty) = py
+            .allow_threads(|| {
+                Ok::<_, anyhow::Error>((
+                    frame.read_rgb_u8()?,
+                    aov_frame.read_all_media_rgb()?,
+                    no_medium_frame
+                        .map(|frame| frame.read_rgb_u8())
+                        .transpose()?,
+                ))
+            })
+            .map_err(|error| {
+                PyRuntimeError::new_err(format!("NEPHELE acceptance readback failed: {error:#}"))
+            })?;
+        if media_aovs
+            .iter()
+            .flat_map(|array| array.iter())
+            .any(|value| !value.is_finite())
+        {
+            return Err(PyRuntimeError::new_err(
+                "NEPHELE acceptance media AOV readback contains non-finite values",
+            ));
+        }
+        let termination = resize_scalar_nearest(termination, internal_viewport, params.size_px)
+            .map_err(|error| PyRuntimeError::new_err(format!("{error:#}")))?;
+        let viewport = params.size_px;
+        let termination = ndarray::Array2::from_shape_vec(
+            (viewport.1 as usize, viewport.0 as usize),
+            termination,
+        )
+        .map_err(|_| PyRuntimeError::new_err("failed to reshape termination_slice"))?;
+        let diagnostics = aov_frame.media_diagnostics_value().map_err(|error| {
+            PyRuntimeError::new_err(format!("NEPHELE acceptance diagnostics failed: {error:#}"))
+        })?;
+        let diagnostic_u64 = |name: &str| -> PyResult<u64> {
+            diagnostics
+                .get(name)
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| {
+                    PyRuntimeError::new_err(format!(
+                        "NEPHELE acceptance diagnostic {name} is missing or invalid"
+                    ))
+                })
+        };
+        let staging_bytes = self
+            .scene
+            .realtime_media_staging_bytes()
+            .map_err(|error| PyRuntimeError::new_err(format!("{error:#}")))?;
+        self.scene.finish_certificate_capture(acceptance_capture);
+        let allocation_report = crate::core::certificate::completed_ledger_report()
+            .map_err(|error| PyRuntimeError::new_err(format!("{error:#}")))?;
+        let memory = PyDict::new_bound(py);
+        memory.set_item(
+            "peak_host_visible_bytes",
+            allocation_report.peak_host_visible_bytes,
+        )?;
+        memory.set_item(
+            "froxel_device_local_bytes",
+            diagnostic_u64("froxel_device_local_bytes")?,
+        )?;
+        memory.set_item(
+            "density_majorant_device_local_bytes",
+            diagnostic_u64("density_device_local_bytes")?
+                + diagnostic_u64("majorant_device_local_bytes")?,
+        )?;
+        memory.set_item("staging_bytes", staging_bytes)?;
+        memory.set_item(
+            "readback_bytes",
+            media::acceptance_readback_bytes(
+                viewport,
+                internal_viewport,
+                no_medium_beauty.is_some(),
+            ),
+        )?;
+
+        let result = PyDict::new_bound(py);
+        result.set_item("beauty", beauty.into_pyarray_bound(py))?;
+        if let Some(no_medium_beauty) = no_medium_beauty {
+            result.set_item("no_medium_beauty", no_medium_beauty.into_pyarray_bound(py))?;
+        }
+        for (name, array) in [
+            "transmittance",
+            "in_scatter",
+            "cloud_shadow",
+            "optical_depth",
+        ]
+        .into_iter()
+        .zip(media_aovs)
+        {
+            result.set_item(name, array.into_pyarray_bound(py))?;
+        }
+        result.set_item("termination_slice", termination.into_pyarray_bound(py))?;
+        result.set_item("froxel_depth", froxel_depth)?;
+        result.set_item("memory", memory)?;
+        let (camera_eye, camera_view, _) = TerrainScene::build_camera_matrices(params);
+        let camera_target = glam::Vec3::from_array(params.cam_target);
+        let camera_forward = (camera_target - camera_eye).normalize();
+        let camera_right = glam::Vec3::new(
+            camera_view.x_axis.x,
+            camera_view.y_axis.x,
+            camera_view.z_axis.x,
+        );
+        let camera_up = glam::Vec3::new(
+            camera_view.x_axis.y,
+            camera_view.y_axis.y,
+            camera_view.z_axis.y,
+        );
+        let camera_contract = PyDict::new_bound(py);
+        camera_contract.set_item("origin", camera_eye.to_array())?;
+        camera_contract.set_item("look_at", camera_target.to_array())?;
+        camera_contract.set_item("up", camera_up.to_array())?;
+        camera_contract.set_item("right", camera_right.to_array())?;
+        camera_contract.set_item("forward", camera_forward.to_array())?;
+        camera_contract.set_item("fov_y", params.fov_y_deg)?;
+        result.set_item("camera_contract", camera_contract)?;
+        let diagnostics_json = serde_json::to_string(&diagnostics)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        result.set_item(
+            "diagnostics",
+            py.import_bound("json")?
+                .call_method1("loads", (diagnostics_json,))?,
+        )?;
+        Ok(result.into())
     }
 
     pub fn info(&self) -> String {
@@ -1285,4 +1586,18 @@ fn height_streaming_stats_to_py(
     dict.set_item("loader_pending", stats.loader_pending)?;
     dict.set_item("loader_completed", stats.loader_completed)?;
     Ok(dict.into())
+}
+
+#[cfg(test)]
+mod nephele_acceptance_tests {
+    use super::resize_scalar_nearest;
+
+    #[test]
+    fn termination_slice_resolves_to_public_capture_dimensions() {
+        let source = vec![0.0, 1.0, 2.0, 3.0];
+        let resolved = resize_scalar_nearest(source, (2, 2), (4, 4)).unwrap();
+        assert_eq!(resolved.len(), 16);
+        assert_eq!(&resolved[0..4], &[0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(&resolved[12..16], &[2.0, 2.0, 3.0, 3.0]);
+    }
 }

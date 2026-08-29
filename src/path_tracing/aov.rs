@@ -28,6 +28,14 @@ pub enum AovKind {
     Emission,
     /// Visibility mask (1 = hit geometry, 0 = sky)
     Visibility,
+    /// RGB medium transmittance along the camera segment.
+    Transmittance,
+    /// RGB medium in-scattered radiance.
+    InScatter,
+    /// RGB medium transmittance applied to terrain direct lighting.
+    CloudShadow,
+    /// RGB optical depth along the camera segment.
+    OpticalDepth,
 }
 
 impl AovKind {
@@ -41,6 +49,10 @@ impl AovKind {
             AovKind::Indirect,
             AovKind::Emission,
             AovKind::Visibility,
+            AovKind::Transmittance,
+            AovKind::InScatter,
+            AovKind::CloudShadow,
+            AovKind::OpticalDepth,
         ]
     }
 
@@ -54,6 +66,10 @@ impl AovKind {
             AovKind::Indirect => "indirect",
             AovKind::Emission => "emission",
             AovKind::Visibility => "visibility",
+            AovKind::Transmittance => "transmittance",
+            AovKind::InScatter => "in_scatter",
+            AovKind::CloudShadow => "cloud_shadow",
+            AovKind::OpticalDepth => "optical_depth",
         }
     }
 
@@ -67,6 +83,10 @@ impl AovKind {
             "indirect" => Some(AovKind::Indirect),
             "emission" => Some(AovKind::Emission),
             "visibility" => Some(AovKind::Visibility),
+            "transmittance" => Some(AovKind::Transmittance),
+            "in_scatter" => Some(AovKind::InScatter),
+            "cloud_shadow" => Some(AovKind::CloudShadow),
+            "optical_depth" => Some(AovKind::OpticalDepth),
             _ => None,
         }
     }
@@ -79,6 +99,10 @@ impl AovKind {
             | AovKind::Direct
             | AovKind::Indirect
             | AovKind::Emission => TextureFormat::Rgba16Float,
+            AovKind::Transmittance
+            | AovKind::InScatter
+            | AovKind::CloudShadow
+            | AovKind::OpticalDepth => TextureFormat::Rgba16Float,
             AovKind::Depth => TextureFormat::R32Float,
             AovKind::Visibility => TextureFormat::Rgba8Unorm,
         }
@@ -94,19 +118,10 @@ impl AovKind {
             AovKind::Indirect => 4,
             AovKind::Emission => 5,
             AovKind::Visibility => 6,
-        }
-    }
-
-    /// Get the bit position in the aov_flags uniform
-    pub fn flag_bit(self) -> u32 {
-        match self {
-            AovKind::Albedo => 0,
-            AovKind::Normal => 1,
-            AovKind::Depth => 2,
-            AovKind::Direct => 3,
-            AovKind::Indirect => 4,
-            AovKind::Emission => 5,
-            AovKind::Visibility => 6,
+            AovKind::Transmittance => 7,
+            AovKind::InScatter => 8,
+            AovKind::CloudShadow => 9,
+            AovKind::OpticalDepth => 10,
         }
     }
 
@@ -118,6 +133,10 @@ impl AovKind {
             | AovKind::Direct
             | AovKind::Indirect
             | AovKind::Emission => 3, // RGB
+            AovKind::Transmittance
+            | AovKind::InScatter
+            | AovKind::CloudShadow
+            | AovKind::OpticalDepth => 3,
             AovKind::Depth | AovKind::Visibility => 1, // Single channel
         }
     }
@@ -133,6 +152,10 @@ impl AovKind {
             | AovKind::Emission => {
                 pixel_count * 8 // rgba16float = 4 channels * 2 bytes
             }
+            AovKind::Transmittance
+            | AovKind::InScatter
+            | AovKind::CloudShadow
+            | AovKind::OpticalDepth => pixel_count * 8,
             AovKind::Depth => {
                 pixel_count * 4 // r32float = 1 channel * 4 bytes
             }
@@ -196,7 +219,7 @@ impl AovFrames {
             )?;
 
             textures.insert(aov_kind, texture);
-            enabled_mask |= 1u32 << aov_kind.flag_bit();
+            enabled_mask |= 1u32 << aov_kind.binding_index();
         }
 
         Ok(Self {
@@ -214,7 +237,7 @@ impl AovFrames {
 
     /// Check if AOV is enabled
     pub fn is_enabled(&self, kind: AovKind) -> bool {
-        (self.enabled_mask & (1u32 << kind.flag_bit())) != 0
+        (self.enabled_mask & (1u32 << kind.binding_index())) != 0
     }
 
     /// Calculate total memory usage for all enabled AOVs
@@ -248,9 +271,11 @@ mod tests {
             TextureFormat::Rgba8Unorm
         );
 
-        assert_eq!(AovKind::Albedo.binding_index(), 0);
-        assert_eq!(AovKind::Normal.binding_index(), 1);
-        assert_eq!(AovKind::Depth.binding_index(), 2);
+        assert!(AovKind::all()
+            .iter()
+            .copied()
+            .map(AovKind::binding_index)
+            .eq(0..AovKind::all().len() as u32));
 
         assert_eq!(AovKind::Albedo.channel_count(), 3);
         assert_eq!(AovKind::Depth.channel_count(), 1);

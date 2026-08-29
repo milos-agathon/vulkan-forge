@@ -37,9 +37,10 @@ impl ViewerTerrainScene {
         }
 
         self.prepare_snapshot_resources(width, height);
+        let scene_format = self.scene_color_format_for(target_format);
         let (color_tex, color_view) = match self.create_snapshot_color_target(
             "terrain_viewer.snapshot_color",
-            target_format,
+            scene_format,
             width,
             height,
         ) {
@@ -56,7 +57,15 @@ impl ViewerTerrainScene {
                 return None;
             }
         };
-        let state = self.build_snapshot_render_state(encoder, target_format, width, height, frame);
+        let state =
+            match self.build_snapshot_render_state(encoder, scene_format, width, height, frame) {
+                Ok(state) => state,
+                Err(error) => {
+                    self.canonical_media_render_error =
+                        Some(format!("media_prepare_failed: {error:#}"));
+                    return None;
+                }
+            };
         let has_vector_overlays = self.prepare_snapshot_overlays();
 
         self.render_snapshot_scene_pass(
@@ -83,11 +92,23 @@ impl ViewerTerrainScene {
             target_format,
             width,
             height,
+            &depth_tex,
             &depth_view,
             color_tex,
             color_view,
             &state,
         );
+        let output = match output {
+            Ok(output) => {
+                self.canonical_media_render_error = None;
+                output
+            }
+            Err(error) => {
+                self.canonical_media_render_error =
+                    Some(format!("media_snapshot_render_failed: {error:#}"));
+                return None;
+            }
+        };
         self.snapshot_depth_texture = Some(depth_tex);
         Some(output)
     }

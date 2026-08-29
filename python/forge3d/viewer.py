@@ -16,9 +16,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from .media import Medium
 
 from ._viewer_binary import find_viewer_binary as _resolve_viewer_binary
 from .diagnostics import (
@@ -258,6 +261,17 @@ class ViewerHandle:
     def send_ipc(self, cmd: Dict[str, Any]) -> Dict[str, Any]:
         """Send a raw IPC command to the viewer and return the decoded response."""
         return self._send_command(cmd)
+
+    def set_media(self, media: Optional["Medium"]) -> None:
+        """Attach a canonical NEPHELE medium, or remove it with ``None``."""
+        if media is None:
+            self._send_command({"cmd": "set_media", "media": None})
+            return
+        from .media import Medium
+
+        if not isinstance(media, Medium):
+            raise TypeError("media must be forge3d.media.Medium or None")
+        self._send_command({"cmd": "set_media", "media": media.to_dict()})
 
     def _allocate_label_id(self) -> int:
         return int(getattr(self, "_next_public_label_id", 1))

@@ -229,15 +229,7 @@ pub mod utils {
 
     /// Check if AOV should be written as EXR (HDR) or PNG (LDR)
     pub fn is_hdr_aov(kind: AovKind) -> bool {
-        match kind {
-            AovKind::Albedo
-            | AovKind::Normal
-            | AovKind::Depth
-            | AovKind::Direct
-            | AovKind::Indirect
-            | AovKind::Emission => true,
-            AovKind::Visibility => false,
-        }
+        kind != AovKind::Visibility
     }
 }
 
@@ -282,9 +274,13 @@ mod tests {
 
     #[test]
     fn test_hdr_classification() {
-        assert!(utils::is_hdr_aov(AovKind::Albedo));
-        assert!(utils::is_hdr_aov(AovKind::Normal));
-        assert!(utils::is_hdr_aov(AovKind::Depth));
-        assert!(!utils::is_hdr_aov(AovKind::Visibility));
+        assert_eq!(
+            AovKind::all()
+                .iter()
+                .copied()
+                .filter(|kind| !utils::is_hdr_aov(*kind))
+                .collect::<Vec<_>>(),
+            vec![AovKind::Visibility]
+        );
     }
 }

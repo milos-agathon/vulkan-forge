@@ -42,7 +42,7 @@ struct DofUniforms {
 @group(0) @binding(4) var dof_output: texture_storage_2d<rgba16float, write>;
 
 // Poisson disk samples for gather blur (precomputed for different quality levels)
-const POISSON_SAMPLES_16: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
+var<private> POISSON_SAMPLES_16: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
     vec2<f32>(-0.94201624, -0.39906216), vec2<f32>(0.94558609, -0.76890725),
     vec2<f32>(-0.094184101, -0.92938870), vec2<f32>(0.34495938, 0.29387760),
     vec2<f32>(-0.91588581, 0.45771432), vec2<f32>(-0.81544232, -0.87912464),
@@ -53,7 +53,7 @@ const POISSON_SAMPLES_16: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
     vec2<f32>(0.19984126, 0.78641367), vec2<f32>(0.14383161, -0.14100790)
 );
 
-const POISSON_SAMPLES_32: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
+var<private> POISSON_SAMPLES_32: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
     vec2<f32>(-0.975402, -0.0711386), vec2<f32>(-0.920505, -0.41142), vec2<f32>(-0.883908, 0.217872),
     vec2<f32>(-0.884518, 0.568041), vec2<f32>(-0.811945, 0.90521), vec2<f32>(-0.792474, -0.779962),
     vec2<f32>(-0.614856, 0.386578), vec2<f32>(-0.580859, -0.208777), vec2<f32>(-0.53795, 0.716666),
@@ -68,7 +68,7 @@ const POISSON_SAMPLES_32: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
 );
 
 // Hexagonal sample pattern for bokeh simulation
-const HEX_SAMPLES: array<vec2<f32>, 7> = array<vec2<f32>, 7>(
+var<private> HEX_SAMPLES: array<vec2<f32>, 7> = array<vec2<f32>, 7>(
     vec2<f32>(0.0, 0.0),                    // Center
     vec2<f32>(1.0, 0.0),                    // Right
     vec2<f32>(0.5, 0.866025),               // Top-right
@@ -155,14 +155,14 @@ fn get_field_type(depth: f32) -> u32 {
 
 // Sample color with bilateral filtering (depth-aware)
 fn sample_bilateral(uv: vec2<f32>, center_depth: f32, blur_radius: f32) -> vec4<f32> {
-    let sample_depth = textureSample(depth_texture, color_sampler, uv).r;
+    let sample_depth = textureSampleLevel(depth_texture, color_sampler, uv, 0.0).r;
     let depth_diff = abs(sample_depth - center_depth);
 
     // Reduce weight for samples with significantly different depths
     let depth_weight = exp(-depth_diff * 10.0);
     let spatial_weight = 1.0; // Could add spatial weighting here
 
-    let color = textureSample(color_texture, color_sampler, uv);
+    let color = textureSampleLevel(color_texture, color_sampler, uv, 0.0);
     let weight = depth_weight * spatial_weight;
 
     return vec4<f32>(color.rgb * weight, weight);
@@ -271,7 +271,7 @@ fn cs_dof(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let uv = (vec2<f32>(pixel_coord) + 0.5) / dof_params.screen_size;
 
     // Sample depth and calculate CoC
-    let depth = textureSample(depth_texture, color_sampler, uv).r;
+    let depth = textureSampleLevel(depth_texture, color_sampler, uv, 0.0).r;
     
     // M3: Use tilt-shift CoC calculation when tilt is enabled
     let has_tilt = abs(dof_params.tilt_pitch) > 0.001 || abs(dof_params.tilt_yaw) > 0.001;
@@ -301,7 +301,7 @@ fn cs_dof(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     } else {
         // Standard DOF rendering
-        let base_color = textureSample(color_texture, color_sampler, uv);
+        let base_color = textureSampleLevel(color_texture, color_sampler, uv, 0.0);
 
         if (coc < 0.5) {
             // Sharp/in-focus region
@@ -325,7 +325,10 @@ fn cs_dof(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Apply CoC visualization if enabled
     if (dof_params.show_coc == 1u && dof_params.debug_mode == 0u) {
         let coc_overlay = coc / dof_params.max_blur_radius;
-        final_color.rgb = mix(final_color.rgb, vec3<f32>(1.0, 1.0, 0.0), coc_overlay * 0.3);
+        final_color = vec4<f32>(
+            mix(final_color.rgb, vec3<f32>(1.0, 1.0, 0.0), coc_overlay * 0.3),
+            final_color.a,
+        );
     }
 
     textureStore(dof_output, pixel_coord, final_color);
@@ -343,12 +346,12 @@ fn cs_dof_separable_h(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let uv = (vec2<f32>(pixel_coord) + 0.5) / dof_params.screen_size;
-    let depth = textureSample(depth_texture, color_sampler, uv).r;
+    let depth = textureSampleLevel(depth_texture, color_sampler, uv, 0.0).r;
     let coc = calculate_coc(depth);
 
     if (coc < 0.5) {
         // No blur needed
-        let color = textureSample(color_texture, color_sampler, uv);
+        let color = textureSampleLevel(color_texture, color_sampler, uv, 0.0);
         textureStore(dof_output, pixel_coord, color);
         return;
     }
@@ -366,7 +369,7 @@ fn cs_dof_separable_h(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         if (sample_uv.x >= 0.0 && sample_uv.x <= 1.0) {
             let weight = exp(-f32(i * i) * 0.25); // Gaussian weight
-            let color = textureSample(color_texture, color_sampler, sample_uv);
+            let color = textureSampleLevel(color_texture, color_sampler, sample_uv, 0.0);
 
             total_color += color.rgb * weight;
             total_weight += weight;
@@ -391,12 +394,12 @@ fn cs_dof_separable_v(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let uv = (vec2<f32>(pixel_coord) + 0.5) / dof_params.screen_size;
-    let depth = textureSample(depth_texture, color_sampler, uv).r;
+    let depth = textureSampleLevel(depth_texture, color_sampler, uv, 0.0).r;
     let coc = calculate_coc(depth);
 
     if (coc < 0.5) {
         // No blur needed
-        let color = textureSample(color_texture, color_sampler, uv);
+        let color = textureSampleLevel(color_texture, color_sampler, uv, 0.0);
         textureStore(dof_output, pixel_coord, color);
         return;
     }
@@ -414,7 +417,7 @@ fn cs_dof_separable_v(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         if (sample_uv.y >= 0.0 && sample_uv.y <= 1.0) {
             let weight = exp(-f32(i * i) * 0.25); // Gaussian weight
-            let color = textureSample(color_texture, color_sampler, sample_uv);
+            let color = textureSampleLevel(color_texture, color_sampler, sample_uv, 0.0);
 
             total_color += color.rgb * weight;
             total_weight += weight;

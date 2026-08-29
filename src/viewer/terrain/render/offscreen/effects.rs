@@ -10,15 +10,79 @@ impl ViewerTerrainScene {
         target_format: wgpu::TextureFormat,
         width: u32,
         height: u32,
+        _depth_texture: &TrackedTexture,
         depth_view: &wgpu::TextureView,
         color_tex: TrackedTexture,
         color_view: wgpu::TextureView,
         state: &SnapshotRenderState,
-    ) -> TrackedTexture {
+    ) -> anyhow::Result<TrackedTexture> {
         let mut out_tex = color_tex;
         let mut out_view = color_view;
+        let canonical_media = self.canonical_media.is_some();
+        let scene_format = self.scene_color_format_for(target_format);
 
-        let needs_volumetrics = self.pbr_config.volumetrics.is_effectively_enabled();
+        if let Some(medium) = self.canonical_media.clone() {
+            if self.post_process.is_none() {
+                self.init_post_process();
+            }
+            let mut pass = self.canonical_media_pass.take().map_or_else(
+                || {
+                    crate::terrain::realtime_media::ViewerMediaPass::new(
+                        self.device.as_ref(),
+                        self.queue.as_ref(),
+                        (width, height),
+                        medium,
+                        self.canonical_media_version,
+                    )
+                },
+                Ok,
+            )?;
+            let terrain = self
+                .terrain
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("canonical media requires loaded terrain"))?;
+            let csm = self.csm_renderer.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("canonical media shadow resources are unavailable")
+            })?;
+            pass.prepare_viewer_terrain_trace(
+                self.device.as_ref(),
+                self.queue.as_ref(),
+                self.adapter.as_ref(),
+                (width, height),
+                &terrain.heightmap,
+                terrain.dimensions,
+                [state.render_origin_span[0], state.render_origin_span[1]],
+                [state.render_origin_span[2], state.render_origin_span[3]],
+                terrain.domain.0,
+                terrain.height_range(),
+                state.shader_z_scale,
+                terrain.revision,
+            )?;
+            let output = pass.encode(
+                self.device.as_ref(),
+                self.queue.as_ref(),
+                self.adapter.as_ref(),
+                encoder,
+                (width, height),
+                state.eye,
+                state.view_mat,
+                state.proj,
+                1.0,
+                terrain.cam_radius * 10.0,
+                state.sun_dir,
+                [terrain.sun_intensity; 3],
+                terrain.revision,
+                _depth_texture,
+                depth_view,
+                &out_view,
+                csm,
+            )?;
+            self.canonical_media_diagnostics = Some(pass.diagnostics(self.adapter.as_ref()));
+            self.canonical_media_pass = Some(pass);
+            out_view = output;
+        }
+        let needs_volumetrics =
+            self.canonical_media.is_none() && self.pbr_config.volumetrics.is_effectively_enabled();
         if needs_volumetrics {
             if self.volumetrics_pass.is_none() {
                 self.init_volumetrics_pass();
@@ -93,7 +157,7 @@ impl ViewerTerrainScene {
 
             let dof_target = match self.create_snapshot_color_target(
                 "terrain_viewer.snapshot_dof_output",
-                target_format,
+                scene_format,
                 width,
                 height,
             ) {
@@ -111,7 +175,7 @@ impl ViewerTerrainScene {
             if let (Some((dof_output_tex, dof_output_view)), Some(ref mut dof)) =
                 (dof_target, self.dof_pass.as_mut())
             {
-                let _ = dof.get_input_view(width, height, target_format);
+                let _ = dof.get_input_view(width, height, scene_format);
                 let cam_radius = self
                     .terrain
                     .as_ref()
@@ -136,7 +200,7 @@ impl ViewerTerrainScene {
                     &dof_output_view,
                     width,
                     height,
-                    target_format,
+                    scene_format,
                     &dof_cfg,
                     1.0,
                     cam_radius * 10.0,
@@ -153,6 +217,41 @@ impl ViewerTerrainScene {
             && (self.pbr_config.lens_effects.distortion.abs() > 0.001
                 || self.pbr_config.lens_effects.chromatic_aberration > 0.001
                 || self.pbr_config.lens_effects.vignette_strength > 0.001);
+        if canonical_media {
+            let (output_tex, output_view) = self.create_snapshot_color_target(
+                "terrain_viewer.snapshot_nephele_resolve",
+                target_format,
+                width,
+                height,
+            )?;
+            let lens = &self.pbr_config.lens_effects;
+            let (distortion, chromatic_aberration, vignette_strength) = if lens.enabled {
+                (
+                    lens.distortion,
+                    lens.chromatic_aberration,
+                    lens.vignette_strength,
+                )
+            } else {
+                (0.0, 0.0, 0.0)
+            };
+            self.post_process
+                .as_mut()
+                .expect("canonical media initializes post-process pass")
+                .apply_from_linear_hdr(
+                    encoder,
+                    &self.queue,
+                    &out_view,
+                    &output_view,
+                    width,
+                    height,
+                    distortion,
+                    chromatic_aberration,
+                    vignette_strength,
+                    lens.vignette_radius,
+                    lens.vignette_softness,
+                );
+            return Ok(output_tex);
+        }
         if needs_post_process {
             if self.post_process.is_none() {
                 self.init_post_process();
@@ -193,10 +292,10 @@ impl ViewerTerrainScene {
                     lens.vignette_radius,
                     lens.vignette_softness,
                 );
-                return lens_output_tex;
+                return Ok(lens_output_tex);
             }
         }
 
-        out_tex
+        Ok(out_tex)
     }
 }

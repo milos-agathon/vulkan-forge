@@ -42,6 +42,7 @@ pub(crate) fn handle_cmd(viewer: &mut Viewer, cmd: &ViewerCmd) -> bool {
                 let mut candidate = match terrain::ViewerTerrainScene::new(
                     std::sync::Arc::clone(&viewer.device),
                     std::sync::Arc::clone(&viewer.queue),
+                    std::sync::Arc::clone(&viewer.adapter),
                     viewer.config.format,
                 ) {
                     Ok(scene) => scene,
@@ -75,6 +76,21 @@ pub(crate) fn handle_cmd(viewer: &mut Viewer, cmd: &ViewerCmd) -> bool {
             // A loaded scene owns fresh terrain lighting state; restore the live sun.
             viewer.sync_terrain_sun_to_lit();
             viewer.astro_terrain_revision = viewer.astro_observation_revision;
+            true
+        }
+        ViewerCmd::SetMedia { medium, version } => {
+            let outcome = viewer
+                .terrain_viewer
+                .as_mut()
+                .ok_or_else(|| "set_media requires a loaded terrain scene".to_string())
+                .and_then(|terrain| {
+                    terrain
+                        .set_media(medium.clone(), *version)
+                        .map_err(|error| error.to_string())
+                });
+            if let Err(error) = outcome {
+                viewer.reject_command(format!("media_attachment_rejected: {error}"));
+            }
             true
         }
         ViewerCmd::SetTerrainCamera {

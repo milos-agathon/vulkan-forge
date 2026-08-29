@@ -16,7 +16,7 @@ impl ViewerTerrainScene {
     ) {
         let render_target: &wgpu::TextureView = if flags.needs_denoise {
             self.denoise_pass.as_ref().unwrap().view_a.as_ref().unwrap()
-        } else if flags.needs_taa || flags.needs_volumetrics {
+        } else if flags.needs_taa || flags.needs_volumetrics || flags.needs_canonical_media {
             self.post_process
                 .as_ref()
                 .unwrap()
@@ -294,6 +294,7 @@ impl ViewerTerrainScene {
     }
 
     pub(super) fn prepare_screen_overlays(&mut self) -> bool {
+        let scene_format = self.scene_color_format();
         let has_vector_overlays = if let Some(ref stack) = self.vector_overlay_stack {
             stack.is_enabled() && stack.visible_layer_count() > 0
         } else {
@@ -351,7 +352,7 @@ impl ViewerTerrainScene {
 
             if let Some(ref mut stack) = self.vector_overlay_stack {
                 if !stack.pipelines_ready() || (self.oit_enabled && !stack.oit_pipelines_ready()) {
-                    if let Err(e) = stack.init_pipelines(self.surface_format) {
+                    if let Err(e) = stack.init_pipelines(scene_format) {
                         eprintln!("[terrain] overlay pipeline init failed: {e}");
                     }
                 }

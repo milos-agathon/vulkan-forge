@@ -1,0 +1,10 @@
+# NEPHELE deterministic 8x8 void-and-cluster blue-noise rank tile.
+# Row-major permutation 0..63; generator and provenance are tracked.
+9 38 2 42 10 36 0 41
+26 48 19 60 24 50 17 63
+7 47 12 34 5 45 14 32
+23 56 30 54 21 58 29 52
+11 37 1 40 8 39 3 43
+25 51 16 62 27 49 18 61
+4 44 15 33 6 46 13 35
+20 59 28 53 22 57 31 55
