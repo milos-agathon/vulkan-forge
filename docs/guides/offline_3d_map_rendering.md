@@ -62,10 +62,10 @@ The MVP workflow is represented by three typed examples:
   CSM cast/receive in the GPU terrain path, records per-building batch ids, and
   saves a review bundle.
 
-Run the example and quickstart coverage with:
+Run the quickstart coverage with:
 
 ```powershell
-python -m pytest tests/test_mapscene_examples.py tests/test_mapscene_quickstart.py -q
+python -m pytest tests/test_mapscene_quickstart.py -q
 ```
 
 ## Support References

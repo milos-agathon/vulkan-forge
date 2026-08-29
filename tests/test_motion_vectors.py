@@ -1,17 +1,15 @@
 """P1.1: Motion vector / velocity buffer tests.
 
-Tests the motion vector infrastructure for TAA reprojection, motion blur,
-and temporal stability. Verifies that:
+Tests the motion vector infrastructure for TAA reprojection and motion blur.
+Verifies that:
 1. Velocity buffer exists in GBuffer
-2. Velocity is non-zero when camera moves between frames
-3. Velocity is approximately zero when camera is static
-4. Velocity direction matches camera motion direction
+2. Camera and shader interfaces expose previous-frame reprojection data
+3. The velocity shader implements reprojection, encoding, and clamping
 """
 
 import pytest
 from pathlib import Path
 import tempfile
-import os
 
 # Skip if forge3d not built
 pytest.importorskip("forge3d")
@@ -131,23 +129,6 @@ class TestMotionVectorsComputation:
         
         # Check for clamping to prevent inf/nan
         assert "clamp" in content, "Velocity clamping not found"
-
-
-class TestMotionVectorsIntegration:
-    """Integration tests for motion vectors with rendering pipeline."""
-
-    @pytest.mark.skipif(
-        os.environ.get("CI") == "true",
-        reason="Requires GPU and display for full integration test"
-    )
-    def test_motion_vectors_with_camera_animation(self):
-        """Test that motion vectors are generated during camera animation.
-        
-        This test requires GPU access and is skipped in CI.
-        Run locally with: pytest tests/test_motion_vectors.py -k integration -v
-        """
-        # This would use the camera_animation_demo.py infrastructure
-        # to verify velocity buffer output during animation
 
 
 if __name__ == "__main__":

@@ -241,23 +241,3 @@ class TestDrapeVerticesFlatTerrain:
         # Draping intent is captured in config
         assert config.drape is True
         assert config.drape_offset == 0.5
-
-    def test_drape_vertices_slope_doc(self):
-        """Document expected behavior: on sloped terrain, Y interpolates.
-        
-        The Rust drape_vertices function:
-        1. Converts world XZ to terrain UV
-        2. Samples heightmap with bilinear interpolation
-        3. Sets vertex Y = terrain_height + drape_offset
-        4. Computes normal from terrain gradient
-        """
-        # This documents the expected behavior
-
-    def test_drape_outside_bounds_doc(self):
-        """Document expected behavior: vertices outside terrain are clamped.
-        
-        When vertex X or Z is outside terrain bounds:
-        - UV is clamped to [0, 1]
-        - Height comes from edge of terrain
-        """
-        # This documents the expected behavior

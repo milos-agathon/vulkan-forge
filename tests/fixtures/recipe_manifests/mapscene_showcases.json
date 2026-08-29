@@ -87,7 +87,7 @@
     }
   ],
   "source_examples": [
-    "tests/test_mapscene_examples.py",
+    "examples/mapscene_terrain_raster.py",
     "tests/test_mapscene_recipe_contract.py",
     "tests/test_mapscene_save_bundle.py"
   ],

@@ -105,5 +105,4 @@ jobs:
         env:
           FORGE3D_NO_BOOTSTRAP: '1'
         run: |
-          python -m pytest tests/test_install_smoke.py tests/test_license.py -v --tb=short
           python scripts/ci_pytest_lane.py --profile full -v --tb=short

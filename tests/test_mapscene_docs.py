@@ -92,7 +92,7 @@ def test_offline_mapscene_guide_links_canonical_examples_and_support_guides():
         "guides/tiles3d_support_matrix",
         "guides/virtual_texturing_support_matrix",
         "guides/competitive_positioning",
-        "python -m pytest tests/test_mapscene_examples.py tests/test_mapscene_quickstart.py -q",
+        "python -m pytest tests/test_mapscene_quickstart.py -q",
     )
 
     for marker in required_markers:
