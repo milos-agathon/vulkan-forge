@@ -400,7 +400,6 @@ examples/**/*.py
 !examples/moon_south_pole.py
 tests/test_*example*.py
 tests/test_*examples*.py
-!tests/test_italy_forest_cover_example.py
 .superpowers/
 scripts/*
 !scripts/aether_acceptance_evidence.py

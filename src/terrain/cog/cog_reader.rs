@@ -407,7 +407,8 @@ fn decompress_lzw(data: &[u8]) -> Result<Vec<u8>, CogError> {
                 new_entry.push(entry[0]);
                 table.push(new_entry);
 
-                if table.len() == (1 << code_size) && code_size < 12 {
+                // TIFF LZW uses EarlyChange=1: increase the width one entry early.
+                if table.len() == (1 << code_size) - 1 && code_size < 12 {
                     code_size += 1;
                 }
             }
@@ -682,6 +683,50 @@ fn read_le_bytes8(data: &[u8], offset: usize) -> [u8; 8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pack_msb_codes(codes: &[(u16, u8)]) -> Vec<u8> {
+        let mut packed = Vec::new();
+        let mut byte = 0u8;
+        let mut bits_in_byte = 0u8;
+
+        for &(code, width) in codes {
+            for shift in (0..width).rev() {
+                byte = (byte << 1) | ((code >> shift) as u8 & 1);
+                bits_in_byte += 1;
+                if bits_in_byte == 8 {
+                    packed.push(byte);
+                    byte = 0;
+                    bits_in_byte = 0;
+                }
+            }
+        }
+
+        if bits_in_byte != 0 {
+            packed.push(byte << (8 - bits_in_byte));
+        }
+        packed
+    }
+
+    #[test]
+    fn lzw_tiff_early_change_crosses_9_to_10_bits() {
+        const CLEAR_CODE: u16 = 256;
+        const EOI_CODE: u16 = 257;
+        const FIRST_10_BIT_LITERAL: u16 = 254;
+
+        let mut codes = vec![(CLEAR_CODE, 9)];
+        for value in 0u16..300 {
+            let width = if value < FIRST_10_BIT_LITERAL { 9 } else { 10 };
+            codes.push((value % 256, width));
+        }
+        codes.push((EOI_CODE, 10));
+
+        let encoded = pack_msb_codes(&codes);
+        let expected = (0u16..300)
+            .map(|value| (value % 256) as u8)
+            .collect::<Vec<_>>();
+
+        assert_eq!(decompress_lzw(&encoded).unwrap(), expected);
+    }
 
     #[test]
     fn decode_heights_applies_horizontal_predictor_to_u16_rows() {

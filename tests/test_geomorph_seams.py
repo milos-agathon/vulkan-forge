@@ -200,22 +200,6 @@ class TestMorphRangeConfiguration:
 class TestSkirtVertices:
     """Test skirt vertex handling for seam hiding."""
 
-    def test_skirt_vertices_marked_correctly(self):
-        """Skirt vertices should have negative morph weight."""
-        from forge3d import ClipmapConfig, clipmap_generate_py
-
-        config = ClipmapConfig(ring_count=4, ring_resolution=32, skirt_depth=10.0)
-        mesh = clipmap_generate_py(config, (0.0, 0.0), 1000.0)
-
-        morph_data = mesh.morph_data()
-        morph_weights = morph_data[:, 0]
-
-        # Count skirt vertices (negative weight)
-        skirt_count = np.sum(morph_weights < 0)
-        # With current implementation, skirts may not be generated
-        # This is a placeholder test for when skirts are fully implemented
-        assert skirt_count >= 0  # Always passes, but documents intent
-
     def test_skirt_depth_configuration(self):
         """Skirt depth should be configurable."""
         from forge3d import ClipmapConfig

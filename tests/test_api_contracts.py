@@ -36,6 +36,29 @@ if not NATIVE_AVAILABLE:
 _native = get_native_module()
 
 
+def _assert_expected_symbols(namespace, expected_names, *, label, value_kind=None):
+    """Report all missing and incorrectly typed expected symbols together."""
+    expected = set(expected_names)
+    available = {name for name in expected if hasattr(namespace, name)}
+    missing = sorted(expected - available)
+
+    wrong_type = []
+    if value_kind is not None:
+        for name in sorted(available):
+            value = getattr(namespace, name)
+            if value_kind == "class" and not isinstance(value, type):
+                wrong_type.append(name)
+            elif value_kind == "callable" and not callable(value):
+                wrong_type.append(name)
+
+    failures = []
+    if missing:
+        failures.append(f"missing: {missing}")
+    if wrong_type:
+        failures.append(f"wrong type (expected {value_kind}): {wrong_type}")
+    assert not failures, f"{label} contract failures; " + "; ".join(failures)
+
+
 def _try_create_terrain_spike():
     try:
         return _native.TerrainSpike(64, 64)
@@ -103,16 +126,13 @@ class TestNativeModuleSymbols:
         "ShapedText",
     ]
 
-    @pytest.mark.parametrize("cls_name", EXPECTED_CLASSES)
-    def test_registered_class_exists(self, cls_name: str):
-        """Each registered pyclass must be accessible on the native module."""
-        assert hasattr(_native, cls_name), (
-            f"_forge3d.{cls_name} not found -- "
-            f"was it removed from m.add_class in lib.rs?"
-        )
-        obj = getattr(_native, cls_name)
-        assert isinstance(obj, type), (
-            f"_forge3d.{cls_name} should be a class, got {type(obj)}"
+    def test_registered_classes_exist(self):
+        """All registered pyclasses must be accessible on the native module."""
+        _assert_expected_symbols(
+            _native,
+            self.EXPECTED_CLASSES,
+            label="_forge3d registered classes",
+            value_kind="class",
         )
 
     # ---- Registered free functions (wrap_pyfunction in lib.rs) ----
@@ -322,16 +342,13 @@ class TestNativeModuleSymbols:
         "verify_dem",
     ]
 
-    @pytest.mark.parametrize("fn_name", EXPECTED_FUNCTIONS)
-    def test_registered_function_exists(self, fn_name: str):
-        """Each registered pyfunction must be callable on the native module."""
-        assert hasattr(_native, fn_name), (
-            f"_forge3d.{fn_name} not found -- "
-            f"was it removed from wrap_pyfunction in lib.rs?"
-        )
-        obj = getattr(_native, fn_name)
-        assert callable(obj), (
-            f"_forge3d.{fn_name} should be callable, got {type(obj)}"
+    def test_registered_functions_exist(self):
+        """All registered pyfunctions must be callable on the native module."""
+        _assert_expected_symbols(
+            _native,
+            self.EXPECTED_FUNCTIONS,
+            label="_forge3d registered functions",
+            value_kind="callable",
         )
 
 
@@ -836,11 +853,12 @@ class TestPackageLevelApiContracts:
         "terrain",
     ]
 
-    @pytest.mark.parametrize("attr_name", EXPECTED_PACKAGE_ATTRS)
-    def test_package_exports_symbol(self, attr_name: str):
-        """forge3d package must re-export key symbols."""
-        assert hasattr(f3d, attr_name), (
-            f"forge3d.{attr_name} not found in package __init__.py"
+    def test_package_exports_symbols(self):
+        """forge3d package must re-export all key symbols."""
+        _assert_expected_symbols(
+            f3d,
+            self.EXPECTED_PACKAGE_ATTRS,
+            label="forge3d package exports",
         )
 
     def test_version_is_string(self):
@@ -1033,13 +1051,14 @@ class TestGeometryFunctionContracts:
         "geometry_simplify_mesh_py",
     ]
 
-    @pytest.mark.parametrize("fn_name", GEOMETRY_FUNCTIONS)
-    def test_geometry_function_exists(self, fn_name: str):
-        """Geometry functions must be accessible on the native module."""
-        assert hasattr(_native, fn_name), (
-            f"_forge3d.{fn_name} not found"
+    def test_geometry_functions_exist(self):
+        """All geometry functions must be accessible and callable."""
+        _assert_expected_symbols(
+            _native,
+            self.GEOMETRY_FUNCTIONS,
+            label="_forge3d geometry functions",
+            value_kind="callable",
         )
-        assert callable(getattr(_native, fn_name))
 
 
 # ===========================================================================
@@ -1056,11 +1075,14 @@ class TestCameraFunctionContracts:
         "camera_dof_params",
     ]
 
-    @pytest.mark.parametrize("fn_name", CAMERA_FUNCTIONS)
-    def test_camera_function_exists(self, fn_name: str):
-        """Camera functions must be accessible on the native module."""
-        assert hasattr(_native, fn_name), f"_forge3d.{fn_name} not found"
-        assert callable(getattr(_native, fn_name))
+    def test_camera_functions_exist(self):
+        """All camera functions must be accessible and callable."""
+        _assert_expected_symbols(
+            _native,
+            self.CAMERA_FUNCTIONS,
+            label="_forge3d camera functions",
+            value_kind="callable",
+        )
 
 
 # ===========================================================================
@@ -1077,11 +1099,14 @@ class TestIoFunctionContracts:
         "io_import_gltf_with_materials_py",
     ]
 
-    @pytest.mark.parametrize("fn_name", IO_FUNCTIONS)
-    def test_io_function_exists(self, fn_name: str):
-        """IO functions must be accessible on the native module."""
-        assert hasattr(_native, fn_name), f"_forge3d.{fn_name} not found"
-        assert callable(getattr(_native, fn_name))
+    def test_io_functions_exist(self):
+        """All IO functions must be accessible and callable."""
+        _assert_expected_symbols(
+            _native,
+            self.IO_FUNCTIONS,
+            label="_forge3d IO functions",
+            value_kind="callable",
+        )
 
 
 # ===========================================================================
@@ -1098,11 +1123,14 @@ class TestTransformFunctionContracts:
         "scale",
     ]
 
-    @pytest.mark.parametrize("fn_name", TRANSFORM_FUNCTIONS)
-    def test_transform_function_exists(self, fn_name: str):
-        """Transform functions must be accessible on the native module."""
-        assert hasattr(_native, fn_name), f"_forge3d.{fn_name} not found"
-        assert callable(getattr(_native, fn_name))
+    def test_transform_functions_exist(self):
+        """All transform functions must be accessible and callable."""
+        _assert_expected_symbols(
+            _native,
+            self.TRANSFORM_FUNCTIONS,
+            label="_forge3d transform functions",
+            value_kind="callable",
+        )
 
 
 # ===========================================================================
@@ -1250,18 +1278,17 @@ class TestTerrainRendererHeightStreamingContract:
     tests/test_terrain_clipmap_streaming.py.
     """
 
-    @pytest.mark.parametrize(
-        "method",
-        [
-            "enable_height_streaming",
-            "disable_height_streaming",
-            "stream_height_tiles",
-            "height_streaming_stats",
-        ],
-    )
-    def test_terrain_renderer_streaming_method_exists(self, method):
-        assert hasattr(_native.TerrainRenderer, method), (
-            f"TerrainRenderer.{method} missing from native API"
+    def test_terrain_renderer_streaming_methods_exist(self):
+        """All height-streaming methods must exist on TerrainRenderer."""
+        _assert_expected_symbols(
+            _native.TerrainRenderer,
+            [
+                "enable_height_streaming",
+                "disable_height_streaming",
+                "stream_height_tiles",
+                "height_streaming_stats",
+            ],
+            label="TerrainRenderer height-streaming methods",
         )
 
 

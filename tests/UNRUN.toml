@@ -59,10 +59,3 @@ file = "tests/test_mapscene_sutura_integrity.py"
 reason = "requires_hardware_adapter: save/load re-render SSIM needs native terrain adapter; raises MapSceneNativeUnavailable with no CPU skip on GPU-less runners"
 owner = "milos"
 expires = "2026-10-10"
-
-# --- CI-only decode divergence under investigation ----------------------------
-[[entries]]
-file = "tests/test_cog_streaming.py"
-reason = "ci_only_lzw_divergence: tile reads fail on hosted runners with LZW 'code out of range' while the identical LFS object decodes cleanly across every tile locally (verified 2026-07-11); needs on-runner debugging of the fetched bytes/decoder"
-owner = "milos"
-expires = "2026-08-15"
