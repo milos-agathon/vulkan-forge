@@ -4,6 +4,7 @@
 // RELEVANT FILES: src/geo/projections/tmerc.rs, src/gis/crs.rs, src/geo/geodesic.rs
 
 pub mod aea;
+pub mod eqc;
 pub mod geocentric;
 pub mod lcc;
 pub mod merc;
@@ -144,10 +145,13 @@ pub(crate) fn lat_from_epsg_t(t: f64, e: f64) -> ProjResult<f64> {
 /// without pretending forge3d ships a complete EPSG registry.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ProjectionDefinition {
+    Equirectangular(eqc::Equirectangular),
+    PlanetocentricEquirectangular(eqc::Equirectangular),
     TransverseMercator(tmerc::TransverseMercator),
     LambertConformal2Sp(lcc::LambertConformal2Sp),
     AlbersEqualArea(aea::AlbersEqualArea),
     PolarStereographicA(stere::PolarStereographicA),
+    PlanetocentricPolarStereographicA(stere::PolarStereographicA),
     MercatorA(merc::MercatorA),
     WebMercator,
 }
@@ -155,10 +159,28 @@ pub enum ProjectionDefinition {
 impl ProjectionDefinition {
     pub fn forward(self, lon_deg: f64, lat_deg: f64) -> ProjResult<(f64, f64)> {
         match self {
+            Self::Equirectangular(p) => p.forward(lon_deg, lat_deg),
+            Self::PlanetocentricEquirectangular(p) => {
+                let projection = eqc::Equirectangular {
+                    ellipsoid: Ellipsoid {
+                        a: p.ellipsoid.a,
+                        f: 0.0,
+                    },
+                    ..p
+                };
+                projection.forward(
+                    lon_deg,
+                    planetocentric_to_planetographic_lat(p.ellipsoid, lat_deg),
+                )
+            }
             Self::TransverseMercator(p) => p.forward(lon_deg, lat_deg),
             Self::LambertConformal2Sp(p) => p.forward(lon_deg, lat_deg),
             Self::AlbersEqualArea(p) => p.forward(lon_deg, lat_deg),
             Self::PolarStereographicA(p) => p.forward(lon_deg, lat_deg),
+            Self::PlanetocentricPolarStereographicA(p) => p.forward(
+                lon_deg,
+                planetocentric_to_planetographic_lat(p.ellipsoid, lat_deg),
+            ),
             Self::MercatorA(p) => p.forward(lon_deg, lat_deg),
             Self::WebMercator => merc::web_mercator_forward(lon_deg, lat_deg),
         }
@@ -166,14 +188,169 @@ impl ProjectionDefinition {
 
     pub fn inverse(self, easting: f64, northing: f64) -> ProjResult<(f64, f64)> {
         match self {
+            Self::Equirectangular(p) => p.inverse(easting, northing),
+            Self::PlanetocentricEquirectangular(p) => {
+                let projection = eqc::Equirectangular {
+                    ellipsoid: Ellipsoid {
+                        a: p.ellipsoid.a,
+                        f: 0.0,
+                    },
+                    ..p
+                };
+                let (lon, lat) = projection.inverse(easting, northing)?;
+                Ok((lon, planetographic_to_planetocentric_lat(p.ellipsoid, lat)))
+            }
             Self::TransverseMercator(p) => p.inverse(easting, northing),
             Self::LambertConformal2Sp(p) => p.inverse(easting, northing),
             Self::AlbersEqualArea(p) => p.inverse(easting, northing),
             Self::PolarStereographicA(p) => p.inverse(easting, northing),
+            Self::PlanetocentricPolarStereographicA(p) => {
+                let (lon, lat) = p.inverse(easting, northing)?;
+                Ok((lon, planetographic_to_planetocentric_lat(p.ellipsoid, lat)))
+            }
             Self::MercatorA(p) => p.inverse(easting, northing),
             Self::WebMercator => merc::web_mercator_inverse(easting, northing),
         }
     }
+}
+
+fn planetocentric_to_planetographic_lat(ellipsoid: Ellipsoid, lat_deg: f64) -> f64 {
+    let lat = lat_deg.to_radians();
+    lat.sin()
+        .atan2((1.0 - ellipsoid.e2()) * lat.cos())
+        .to_degrees()
+}
+
+fn planetographic_to_planetocentric_lat(ellipsoid: Ellipsoid, lat_deg: f64) -> f64 {
+    let lat = lat_deg.to_radians();
+    ((1.0 - ellipsoid.e2()) * lat.sin())
+        .atan2(lat.cos())
+        .to_degrees()
+}
+
+/// Return the registered body for a supported IAU 2015 CRS code.
+pub fn iau_body(code: u32) -> Option<&'static crate::geo::body::Body> {
+    use crate::geo::body::{MARS, MOON};
+    match code {
+        30100 | 30110 | 30115 | 30130 | 30135 => Some(&MOON),
+        49900 | 49902 | 49910 | 49912 | 49915 | 49917 | 49930 | 49932 | 49935 | 49937 => {
+            Some(&MARS)
+        }
+        _ => None,
+    }
+}
+
+/// Whether an IAU code is a planetocentric +East geographic CRS.
+pub fn iau_geographic(body: &crate::geo::body::Body, code: u32) -> bool {
+    iau_body(code) == Some(body) && matches!(code, 30100 | 49900 | 49902)
+}
+
+/// Ellipsoid or sphere declared by a supported IAU CRS code.
+pub fn iau_ellipsoid(body: &crate::geo::body::Body, code: u32) -> Option<Ellipsoid> {
+    if iau_body(code) != Some(body) {
+        return None;
+    }
+    Some(if matches!(code, 49902 | 49912 | 49917 | 49932 | 49937) {
+        body.ellipsoid
+    } else {
+        Ellipsoid {
+            a: body.ellipsoid.a,
+            f: 0.0,
+        }
+    })
+}
+
+/// Resolve the supported IAU 2015 planetary projection codes for `body`.
+pub fn iau_projection(body: &crate::geo::body::Body, code: u32) -> Option<ProjectionDefinition> {
+    let ellipsoid = iau_ellipsoid(body, code)?;
+    match code {
+        30110 | 49910 => Some(ProjectionDefinition::PlanetocentricEquirectangular(
+            eqc::Equirectangular {
+                ellipsoid,
+                lat0_deg: 0.0,
+                lon0_deg: 0.0,
+                lat_ts_deg: 0.0,
+                false_easting: 0.0,
+                false_northing: 0.0,
+            },
+        )),
+        49912 => Some(ProjectionDefinition::PlanetocentricEquirectangular(
+            eqc::Equirectangular {
+                ellipsoid,
+                lat0_deg: 0.0,
+                lon0_deg: 0.0,
+                lat_ts_deg: 0.0,
+                false_easting: 0.0,
+                false_northing: 0.0,
+            },
+        )),
+        30115 | 49915 => Some(ProjectionDefinition::PlanetocentricEquirectangular(
+            eqc::Equirectangular {
+                ellipsoid,
+                lat0_deg: 0.0,
+                lon0_deg: 180.0,
+                lat_ts_deg: 0.0,
+                false_easting: 0.0,
+                false_northing: 0.0,
+            },
+        )),
+        49917 => Some(ProjectionDefinition::PlanetocentricEquirectangular(
+            eqc::Equirectangular {
+                ellipsoid,
+                lat0_deg: 0.0,
+                lon0_deg: 180.0,
+                lat_ts_deg: 0.0,
+                false_easting: 0.0,
+                false_northing: 0.0,
+            },
+        )),
+        30130 | 49930 => Some(ProjectionDefinition::PlanetocentricPolarStereographicA(
+            stere::PolarStereographicA {
+                ellipsoid,
+                lat0_deg: 90.0,
+                lon0_deg: 0.0,
+                k0: 1.0,
+                false_easting: 0.0,
+                false_northing: 0.0,
+            },
+        )),
+        49932 => Some(ProjectionDefinition::PlanetocentricPolarStereographicA(
+            stere::PolarStereographicA {
+                ellipsoid,
+                lat0_deg: 90.0,
+                lon0_deg: 0.0,
+                k0: 1.0,
+                false_easting: 0.0,
+                false_northing: 0.0,
+            },
+        )),
+        30135 | 49935 => Some(ProjectionDefinition::PlanetocentricPolarStereographicA(
+            stere::PolarStereographicA {
+                ellipsoid,
+                lat0_deg: -90.0,
+                lon0_deg: 0.0,
+                k0: 1.0,
+                false_easting: 0.0,
+                false_northing: 0.0,
+            },
+        )),
+        49937 => Some(ProjectionDefinition::PlanetocentricPolarStereographicA(
+            stere::PolarStereographicA {
+                ellipsoid,
+                lat0_deg: -90.0,
+                lon0_deg: 0.0,
+                k0: 1.0,
+                false_easting: 0.0,
+                false_northing: 0.0,
+            },
+        )),
+        _ => None,
+    }
+}
+
+/// Mars IAU codes that use the deliberately unsupported ographic/west-positive convention.
+pub(crate) fn iau_is_mars_ographic(code: u32) -> bool {
+    matches!(code, 49901 | 49911 | 49916 | 49931 | 49936)
 }
 
 fn utm(zone: u8, north: bool) -> tmerc::TransverseMercator {
@@ -277,4 +454,22 @@ pub fn epsg_inverse(code: u32, easting: f64, northing: f64) -> Option<ProjResult
 #[cfg(test)]
 pub(crate) fn dms(d: f64, m: f64, s: f64) -> f64 {
     d.signum() * (d.abs() + m / 60.0 + s / 3600.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geo::body::MARS;
+
+    #[test]
+    fn mars_ocentric_projections_match_proj_iau_2015() {
+        let eqc = iau_projection(&MARS, 49912).unwrap();
+        let polar = iau_projection(&MARS, 49932).unwrap();
+        let (x, y) = eqc.forward(10.0, 20.0).unwrap();
+        assert!((x - 592_746.975_233_062_2).abs() < 1e-6);
+        assert!((y - 1_198_439.570_168_155_2).abs() < 1e-6);
+        let (x, y) = polar.forward(10.0, 80.0).unwrap();
+        assert!((x - 102_584.234_327_933_29).abs() < 1e-6);
+        assert!((y + 581_784.103_123_411_1).abs() < 1e-6);
+    }
 }

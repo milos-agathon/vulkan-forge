@@ -287,6 +287,7 @@ impl ViewerTerrainScene {
             sun_azimuth_deg: 135.0,
             sun_elevation_deg: 35.0,
             sun_intensity: 1.0,
+            sun_source: "manual_angles".to_string(),
             ambient: 0.3,
             z_scale: 1.0,
             shadow_intensity: 0.5,
@@ -342,20 +343,21 @@ impl ViewerTerrainScene {
         Ok(())
     }
 
-    pub fn set_sun(&mut self, azimuth: f32, elevation: f32, intensity: f32) {
+    pub fn set_sun(&mut self, azimuth: f32, elevation: f32, intensity: f32, source: &str) {
         if let Some(ref mut t) = self.terrain {
             t.sun_azimuth_deg = azimuth;
             t.sun_elevation_deg = elevation;
             t.sun_intensity = intensity;
+            t.sun_source = source.to_string();
         }
     }
 
     pub fn get_params(&self) -> Option<String> {
         self.terrain.as_ref().map(|t| format!(
-            "phi={:.1} theta={:.1} radius={:.0} fov={:.1} target=({:.1}, {:.1}, {:.1}) | sun_az={:.1} sun_el={:.1} intensity={:.2} ambient={:.2} | zscale={:.2} shadow={:.2} | origin=({:.6},{:.6}) span=({:.6},{:.6}) fallback={} crs={:?} transform={:?}",
+            "phi={:.1} theta={:.1} radius={:.0} fov={:.1} target=({:.1}, {:.1}, {:.1}) | sun_az={:.1} sun_el={:.1} intensity={:.2} ambient={:.2} source={} | zscale={:.2} shadow={:.2} | origin=({:.6},{:.6}) span=({:.6},{:.6}) fallback={} crs={:?} transform={:?}",
             t.cam_phi_deg, t.cam_theta_deg, t.cam_radius, t.cam_fov_deg,
             t.cam_target[0], t.cam_target[1], t.cam_target[2],
-            t.sun_azimuth_deg, t.sun_elevation_deg, t.sun_intensity, t.ambient,
+            t.sun_azimuth_deg, t.sun_elevation_deg, t.sun_intensity, t.ambient, t.sun_source,
             t.z_scale, t.shadow_intensity,
             t.world_origin_xz.x, t.world_origin_xz.y,
             t.world_span_xz.x, t.world_span_xz.y,

@@ -368,6 +368,18 @@ fn eval_sky(view_dir: vec3<f32>, params: SkyParams) -> vec3<f32> {
         sky_color = eval_preetham(normalized_view, params);
     }
 
+    // Declared SIDERA civil-to-astronomical smoothstep rendering model.
+    // It fades the daylight fit from solar altitude -4 degrees to -18 degrees.
+    let solar_altitude = asin(clamp(sky_sun_direction(params).y, -1.0, 1.0)) * 180.0 / PI;
+    let daylight = smoothstep(-18.0, -4.0, solar_altitude);
+    let horizon = 1.0 - clamp(normalized_view.y, 0.0, 1.0);
+    let night_color = mix(
+        vec3<f32>(0.002, 0.003, 0.009),
+        vec3<f32>(0.008, 0.012, 0.024),
+        horizon * horizon,
+    );
+    sky_color = mix(night_color, sky_color, daylight);
+
     // Add sun disk
     let sun_contribution = render_sun_disk(
         normalized_view,
@@ -391,7 +403,7 @@ fn eval_sky(view_dir: vec3<f32>, params: SkyParams) -> vec3<f32> {
 // ============================================================================
 
 @group(0) @binding(0) var<uniform> sky_params: SkyParams;
-@group(0) @binding(1) var output_texture: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(1) var output_texture: texture_storage_2d<rgba16float, write>;
 
 struct CameraUniforms {
     view: mat4x4<f32>,

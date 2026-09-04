@@ -36,6 +36,29 @@ if not NATIVE_AVAILABLE:
 _native = get_native_module()
 
 
+def _assert_expected_symbols(namespace, expected_names, *, label, value_kind=None):
+    """Report all missing and incorrectly typed expected symbols together."""
+    expected = set(expected_names)
+    available = {name for name in expected if hasattr(namespace, name)}
+    missing = sorted(expected - available)
+
+    wrong_type = []
+    if value_kind is not None:
+        for name in sorted(available):
+            value = getattr(namespace, name)
+            if value_kind == "class" and not isinstance(value, type):
+                wrong_type.append(name)
+            elif value_kind == "callable" and not callable(value):
+                wrong_type.append(name)
+
+    failures = []
+    if missing:
+        failures.append(f"missing: {missing}")
+    if wrong_type:
+        failures.append(f"wrong type (expected {value_kind}): {wrong_type}")
+    assert not failures, f"{label} contract failures; " + "; ".join(failures)
+
+
 def _try_create_terrain_spike():
     try:
         return _native.TerrainSpike(64, 64)
@@ -78,6 +101,7 @@ class TestNativeModuleSymbols:
         "ClipmapMesh",
         "CogDataset",
         "SunPosition",
+        "AtmosphereLutHandle",
         # P0.3: Previously-orphaned classes now registered
         "Frame",
         "SdfPrimitive",
@@ -102,16 +126,13 @@ class TestNativeModuleSymbols:
         "ShapedText",
     ]
 
-    @pytest.mark.parametrize("cls_name", EXPECTED_CLASSES)
-    def test_registered_class_exists(self, cls_name: str):
-        """Each registered pyclass must be accessible on the native module."""
-        assert hasattr(_native, cls_name), (
-            f"_forge3d.{cls_name} not found -- "
-            f"was it removed from m.add_class in lib.rs?"
-        )
-        obj = getattr(_native, cls_name)
-        assert isinstance(obj, type), (
-            f"_forge3d.{cls_name} should be a class, got {type(obj)}"
+    def test_registered_classes_exist(self):
+        """All registered pyclasses must be accessible on the native module."""
+        _assert_expected_symbols(
+            _native,
+            self.EXPECTED_CLASSES,
+            label="_forge3d registered classes",
+            value_kind="class",
         )
 
     # ---- Registered free functions (wrap_pyfunction in lib.rs) ----
@@ -123,6 +144,17 @@ class TestNativeModuleSymbols:
         "device_probe",
         "sun_position",
         "sun_position_utc",
+        "solar_position",
+        "terrain_viewshed",
+        "terrain_shadow_mask",
+        "terrain_shadow_tip",
+        "astro_body_position",
+        "astro_moon_phase",
+        "astro_delta_t_seconds",
+        "astro_sidereal_time",
+        "astro_refraction_arcminutes",
+        "sky_set_observation",
+        "astro_validation_metrics",
         "clipmap_generate_py",
         "engine_info",
         "hybrid_render",
@@ -147,6 +179,12 @@ class TestNativeModuleSymbols:
         "render_adjudication_pair",
         # PROMETHEUS: GPU terrain path-traced reference
         "hybrid_render_terrain_reference",
+        "hybrid_render_aether_spectral_reference",
+        # AETHER: spectral atmosphere public surface
+        "atmosphere_bake_luts",
+        "atmosphere_spectral_to_linear_rgb",
+        "atmosphere_generate_environment",
+        "atmosphere_reference_aerial",
         # VERITAS: per-pixel cryptographic provenance
         "seal_provenance",
         "verify_provenance",
@@ -156,6 +194,8 @@ class TestNativeModuleSymbols:
         "mesh_generate_cube_tbn",
         "mesh_generate_plane_tbn",
         # CARTOGRAPHER-PRIME: bounded-optimal label declutter
+        "_reserve_label_depth_host_allocation",
+        "declutter",
         "declutter_optimal",
         "anamnesis_leaf_key",
         "anamnesis_pass_key",
@@ -182,6 +222,8 @@ class TestNativeModuleSymbols:
         "geometry_measure",
         "measure_geometries",
         # MENSURA geodesy surface (src/py_functions/geodesy.rs)
+        "body_info",
+        "areoid_undulation",
         "geoid_undulation",
         "orthometric_to_ellipsoidal",
         "ellipsoidal_to_orthometric",
@@ -270,6 +312,14 @@ class TestNativeModuleSymbols:
         # CENSOR: global degradation sink
         "native_degradations",
         "clear_native_degradations",
+        "terrain_culling_stats",
+        "terrain_visibility_stats",
+        "terrain_vt_stats",
+        "terrain_seam_stats",
+        "encode_bc7_rgba8",
+        "decode_bc7_rgba8",
+        "encode_bc5_rg8",
+        "decode_bc5_rg8",
         # CENSOR: negotiated GPU capability report
         "capabilities",
         # CENSOR: last-render execution certificate JSON
@@ -292,16 +342,13 @@ class TestNativeModuleSymbols:
         "verify_dem",
     ]
 
-    @pytest.mark.parametrize("fn_name", EXPECTED_FUNCTIONS)
-    def test_registered_function_exists(self, fn_name: str):
-        """Each registered pyfunction must be callable on the native module."""
-        assert hasattr(_native, fn_name), (
-            f"_forge3d.{fn_name} not found -- "
-            f"was it removed from wrap_pyfunction in lib.rs?"
-        )
-        obj = getattr(_native, fn_name)
-        assert callable(obj), (
-            f"_forge3d.{fn_name} should be callable, got {type(obj)}"
+    def test_registered_functions_exist(self):
+        """All registered pyfunctions must be callable on the native module."""
+        _assert_expected_symbols(
+            _native,
+            self.EXPECTED_FUNCTIONS,
+            label="_forge3d registered functions",
+            value_kind="callable",
         )
 
 
@@ -347,6 +394,16 @@ class TestSceneMethodContracts:
         assert hasattr(f3d.Scene, "set_height_from_r32f"), (
             "Scene.set_height_from_r32f not found"
         )
+
+    # ---- AETHER spectral atmosphere ----
+
+    @pytest.mark.parametrize(
+        "method_name",
+        ("set_atmosphere", "clear_atmosphere", "get_atmosphere_settings"),
+    )
+    def test_aether_scene_method_exists(self, method_name: str):
+        assert hasattr(f3d.Scene, method_name), f"Scene.{method_name} not found"
+        assert callable(getattr(f3d.Scene, method_name))
 
     # ---- OIT methods ----
 
@@ -778,6 +835,7 @@ class TestPackageLevelApiContracts:
         "MapSceneNativeUnavailable",
         "CompiledScenePlan",
         # CARTOGRAPHER-PRIME: bounded-optimal label solve + rationale
+        "declutter",
         "declutter_optimal",
         "LabelRationale",
         # CENSOR: native Ed25519 certificate signer
@@ -793,13 +851,16 @@ class TestPackageLevelApiContracts:
         "dd_selftest",
         "dd_harness",
         "dd_jitter_demo",
+        "geo",
+        "terrain",
     ]
 
-    @pytest.mark.parametrize("attr_name", EXPECTED_PACKAGE_ATTRS)
-    def test_package_exports_symbol(self, attr_name: str):
-        """forge3d package must re-export key symbols."""
-        assert hasattr(f3d, attr_name), (
-            f"forge3d.{attr_name} not found in package __init__.py"
+    def test_package_exports_symbols(self):
+        """forge3d package must re-export all key symbols."""
+        _assert_expected_symbols(
+            f3d,
+            self.EXPECTED_PACKAGE_ATTRS,
+            label="forge3d package exports",
         )
 
     def test_version_is_string(self):
@@ -833,6 +894,145 @@ class TestPackageLevelApiContracts:
             )
 
 
+class TestCartographerPrimeNativeContract:
+    """Generic/compatibility declutter surfaces share strict typed inputs."""
+
+    CANDIDATES = [
+        (1, 0, (0.0, 0.0, 10.0, 10.0), 6.0, True),
+        (2, 0, (5.0, 0.0, 15.0, 10.0), 10.0, True),
+        (3, 0, (12.0, 0.0, 22.0, 10.0), 6.0, True),
+    ]
+
+    def test_generic_optimal_dispatch_matches_compatibility_alias(self):
+        generic = _native.declutter(
+            self.CANDIDATES, algorithm="optimal", gap_tolerance=0.0, margin=0.0
+        )
+        compatibility = _native.declutter_optimal(
+            self.CANDIDATES, gap_tolerance=0.0, margin=0.0
+        )
+        assert generic[0] == compatibility[0] == [(1, 0), (3, 0)]
+        assert generic[1] == compatibility[1] == 0.0
+        assert generic[2].records() == compatibility[2].records()
+        assert isinstance(generic[2], _native.LabelRationale)
+
+    @pytest.mark.parametrize(
+        "candidate",
+        [
+            (1, 0, (0.0, float("nan"), 1.0, 1.0), 1.0, True),
+            (1, 0, (0.0, 0.0, 1.0, 1.0), float("inf"), True),
+            (1, 0, (0.0, 0.0, 1.0, 1.0), -1.0, True),
+        ],
+    )
+    def test_invalid_candidate_is_rejected(self, candidate):
+        with pytest.raises(ValueError, match=r"candidate \(1, 0\)"):
+            _native.declutter([candidate])
+
+    def test_duplicate_candidate_identity_is_rejected(self):
+        duplicate = (7, 3, (0.0, 0.0, 1.0, 1.0), 1.0, True)
+        with pytest.raises(ValueError, match="identity is duplicated"):
+            _native.declutter([duplicate, duplicate])
+
+    @pytest.mark.parametrize(
+        "bounds",
+        [
+            (0.0, 0.0, 0.0, 1.0),
+            (0.0, 0.0, 0.01, 1.0),
+        ],
+    )
+    def test_degenerate_or_quantization_collapsed_bounds_are_rejected(self, bounds):
+        with pytest.raises(ValueError, match="non-degenerate after quantization"):
+            _native.declutter([(1, 0, bounds, 1.0, True)])
+
+    def test_large_weight_aggregate_does_not_overflow(self):
+        candidates = [
+            (1, 0, (0.0, 0.0, 1.0, 1.0), 5.0e15, True),
+            (2, 0, (2.0, 0.0, 3.0, 1.0), 5.0e15, True),
+            (3, 0, (4.0, 0.0, 5.0, 1.0), 5.0e15, True),
+        ]
+        placements, gap, rationale = _native.declutter(
+            candidates, gap_tolerance=0.0, margin=0.0
+        )
+        assert placements == [(1, 0), (2, 0), (3, 0)]
+        assert gap == 0.0
+        solver = next(record for record in rationale.records() if record["kind"] == "solver")
+        assert solver["objective"] == pytest.approx(1.5e16)
+        assert solver["objective"] == solver["upper_bound"]
+
+    def test_raw_priority_is_primary_over_cardinality(self):
+        unit = 1.0 / 1024.0
+        placements, gap, rationale = _native.declutter(
+            [
+                (1, 0, (0.0, 0.0, 30.0, 10.0), 10.0 * unit, True),
+                (2, 0, (0.0, 0.0, 9.0, 10.0), 3.0 * unit, True),
+                (3, 0, (10.5, 0.0, 19.5, 10.0), 3.0 * unit, True),
+                (4, 0, (21.0, 0.0, 30.0, 10.0), 3.0 * unit, True),
+            ],
+            gap_tolerance=0.0,
+            margin=0.0,
+        )
+        assert placements == [(1, 0)]
+        assert gap == 0.0
+        solver = next(record for record in rationale.records() if record["kind"] == "solver")
+        assert solver["objective"] == pytest.approx(10.0 * unit)
+        assert solver["objective"] == solver["upper_bound"]
+
+    def test_large_box_overlap_area_does_not_overflow(self):
+        placements, _, rationale = _native.declutter(
+            [
+                (1, 0, (0.0, 0.0, 1.0e9, 1.0e9), 2.0, True),
+                (2, 0, (0.0, 0.0, 1.0e9, 1.0e9), 1.0, True),
+            ],
+            gap_tolerance=0.0,
+            margin=0.0,
+        )
+        assert placements == [(1, 0)]
+        placed = next(record for record in rationale.records() if record["kind"] == "placed")
+        assert placed["displaced"][0]["overlap_area_px"] == pytest.approx(1.0e18)
+
+    def test_visibility_gate_is_solver_only_evidence(self):
+        _, _, rationale = _native.declutter(
+            [(1, 0, (0.0, 0.0, 1.0, 1.0), 1.0, False)], margin=0.0
+        )
+        assert rationale.records()[0] == {
+            "kind": "visibility_filtered_candidate",
+            "label_id": 1,
+            "candidate_index": 0,
+        }
+        rendered = " ".join(rationale.render()).lower()
+        for unsupported_claim in ("depth", "silhouette", "occluded"):
+            assert unsupported_claim not in rendered
+
+    def test_unsupported_generic_algorithm_is_explicit(self):
+        with pytest.raises(ValueError, match="expected 'optimal'"):
+            _native.declutter(self.CANDIDATES, algorithm="greedy")
+
+    def test_internal_depth_host_reservation_lifetime_and_double_close(self):
+        before = _native.global_memory_metrics()["host_visible_bytes"]
+        reservation = _native._reserve_label_depth_host_allocation(
+            4096, "labels.depth.api-contract"
+        )
+        assert type(reservation).__name__ == "_LabelDepthHostAllocation"
+        assert reservation.bytes == 4096
+        assert reservation.active is True
+        assert _native.global_memory_metrics()["host_visible_bytes"] == before + 4096
+        assert reservation.close() is True
+        assert reservation.close() is False
+        assert reservation.active is False
+        assert _native.global_memory_metrics()["host_visible_bytes"] == before
+
+    def test_canonical_clippy_aliases_are_single_strings(self):
+        from pathlib import Path
+        import tomllib
+
+        config_path = Path(__file__).resolve().parents[1] / ".cargo" / "config.toml"
+        aliases = tomllib.loads(config_path.read_text(encoding="utf-8"))["alias"]
+        for name in ("forge3d-clippy", "forge3d-clippy-acceptance"):
+            alias = aliases[name]
+            assert isinstance(alias, str), f"{name} must use Cargo's string alias form"
+            assert alias.startswith("clippy --workspace --all-targets --features ")
+            assert alias.endswith(" -- -D warnings")
+
+
 # ===========================================================================
 # Section 7: Geometry free-function contracts
 # ===========================================================================
@@ -853,13 +1053,14 @@ class TestGeometryFunctionContracts:
         "geometry_simplify_mesh_py",
     ]
 
-    @pytest.mark.parametrize("fn_name", GEOMETRY_FUNCTIONS)
-    def test_geometry_function_exists(self, fn_name: str):
-        """Geometry functions must be accessible on the native module."""
-        assert hasattr(_native, fn_name), (
-            f"_forge3d.{fn_name} not found"
+    def test_geometry_functions_exist(self):
+        """All geometry functions must be accessible and callable."""
+        _assert_expected_symbols(
+            _native,
+            self.GEOMETRY_FUNCTIONS,
+            label="_forge3d geometry functions",
+            value_kind="callable",
         )
-        assert callable(getattr(_native, fn_name))
 
 
 # ===========================================================================
@@ -876,11 +1077,14 @@ class TestCameraFunctionContracts:
         "camera_dof_params",
     ]
 
-    @pytest.mark.parametrize("fn_name", CAMERA_FUNCTIONS)
-    def test_camera_function_exists(self, fn_name: str):
-        """Camera functions must be accessible on the native module."""
-        assert hasattr(_native, fn_name), f"_forge3d.{fn_name} not found"
-        assert callable(getattr(_native, fn_name))
+    def test_camera_functions_exist(self):
+        """All camera functions must be accessible and callable."""
+        _assert_expected_symbols(
+            _native,
+            self.CAMERA_FUNCTIONS,
+            label="_forge3d camera functions",
+            value_kind="callable",
+        )
 
 
 # ===========================================================================
@@ -897,11 +1101,14 @@ class TestIoFunctionContracts:
         "io_import_gltf_with_materials_py",
     ]
 
-    @pytest.mark.parametrize("fn_name", IO_FUNCTIONS)
-    def test_io_function_exists(self, fn_name: str):
-        """IO functions must be accessible on the native module."""
-        assert hasattr(_native, fn_name), f"_forge3d.{fn_name} not found"
-        assert callable(getattr(_native, fn_name))
+    def test_io_functions_exist(self):
+        """All IO functions must be accessible and callable."""
+        _assert_expected_symbols(
+            _native,
+            self.IO_FUNCTIONS,
+            label="_forge3d IO functions",
+            value_kind="callable",
+        )
 
 
 # ===========================================================================
@@ -918,11 +1125,14 @@ class TestTransformFunctionContracts:
         "scale",
     ]
 
-    @pytest.mark.parametrize("fn_name", TRANSFORM_FUNCTIONS)
-    def test_transform_function_exists(self, fn_name: str):
-        """Transform functions must be accessible on the native module."""
-        assert hasattr(_native, fn_name), f"_forge3d.{fn_name} not found"
-        assert callable(getattr(_native, fn_name))
+    def test_transform_functions_exist(self):
+        """All transform functions must be accessible and callable."""
+        _assert_expected_symbols(
+            _native,
+            self.TRANSFORM_FUNCTIONS,
+            label="_forge3d transform functions",
+            value_kind="callable",
+        )
 
 
 # ===========================================================================
@@ -1070,18 +1280,17 @@ class TestTerrainRendererHeightStreamingContract:
     tests/test_terrain_clipmap_streaming.py.
     """
 
-    @pytest.mark.parametrize(
-        "method",
-        [
-            "enable_height_streaming",
-            "disable_height_streaming",
-            "stream_height_tiles",
-            "height_streaming_stats",
-        ],
-    )
-    def test_terrain_renderer_streaming_method_exists(self, method):
-        assert hasattr(_native.TerrainRenderer, method), (
-            f"TerrainRenderer.{method} missing from native API"
+    def test_terrain_renderer_streaming_methods_exist(self):
+        """All height-streaming methods must exist on TerrainRenderer."""
+        _assert_expected_symbols(
+            _native.TerrainRenderer,
+            [
+                "enable_height_streaming",
+                "disable_height_streaming",
+                "stream_height_tiles",
+                "height_streaming_stats",
+            ],
+            label="TerrainRenderer height-streaming methods",
         )
 
 

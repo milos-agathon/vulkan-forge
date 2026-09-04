@@ -3,6 +3,8 @@ def _point(label_id, priority_class, *, priority=0):
         "id": label_id,
         "text": label_id.title().replace("-", ""),
         "geometry": {"type": "Point", "coordinates": (40.0, 40.0, 0.0)},
+        "label_size": (10.0, 10.0),
+        "candidate_policy": {"offset_px": 0.0, "radial_count": 0},
         "priority": priority,
         "priority_class": priority_class,
     }

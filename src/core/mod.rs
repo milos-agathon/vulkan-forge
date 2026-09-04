@@ -20,6 +20,9 @@ pub mod degradation;
 // CENSOR: negotiated GPU capability set (replaces Features::empty())
 pub mod capabilities;
 
+// AETHER: spectral precomputed atmospheric transport.
+pub mod atmosphere;
+
 // CENSOR: WGSL shader-hash registry + validation error scopes
 pub mod shader_registry;
 

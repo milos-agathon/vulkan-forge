@@ -139,6 +139,15 @@ pub struct CurvedTextLayout {
     pub success: bool,
 }
 
+/// Screen-space glyph geometry emitted by the curved-layout projection
+/// authority. Solver adapters consume this output without recomputing layout.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedCurvedGlyph {
+    pub screen_pos: [f32; 2],
+    pub rotation: f32,
+    pub scale: f32,
+}
+
 /// Compute curved text layout along a path.
 ///
 /// Places each glyph at uniform arc-length intervals along the path,
@@ -229,12 +238,12 @@ pub fn layout_curved_text(
 }
 
 /// Project curved text layout to screen space.
-pub fn project_curved_layout(
+pub fn project_curved_glyphs(
     layout: &CurvedTextLayout,
     view_proj: Mat4,
     screen_width: f32,
     screen_height: f32,
-) -> Vec<(Vec2, f32)> {
+) -> Vec<ProjectedCurvedGlyph> {
     let mut screen_positions = Vec::with_capacity(layout.glyphs.len());
 
     for glyph in &layout.glyphs {
@@ -248,23 +257,46 @@ pub fn project_curved_layout(
         let screen_y = (1.0 - (ndc.y * 0.5 + 0.5)) * screen_height;
 
         // Project tangent to get screen-space rotation
-        let tangent_world = Vec3::new(glyph.rotation.cos(), 0.0, glyph.rotation.sin());
+        // `layout_curved_text` records atan2(tangent.x, tangent.z), so invert
+        // that convention exactly when projecting the tangent endpoint.
+        let tangent_world = Vec3::new(glyph.rotation.sin(), 0.0, glyph.rotation.cos());
         let tangent_end = glyph.world_pos + tangent_world * 10.0;
         let clip_end = view_proj * tangent_end.extend(1.0);
 
-        let screen_rotation = if clip_end.w > 0.0 {
-            let ndc_end = clip_end.truncate() / clip_end.w;
-            let screen_end_x = (ndc_end.x * 0.5 + 0.5) * screen_width;
-            let screen_end_y = (1.0 - (ndc_end.y * 0.5 + 0.5)) * screen_height;
-            (screen_end_y - screen_y).atan2(screen_end_x - screen_x)
-        } else {
-            0.0
-        };
+        if clip_end.w <= 0.0 {
+            continue;
+        }
+        let ndc_end = clip_end.truncate() / clip_end.w;
+        let screen_end_x = (ndc_end.x * 0.5 + 0.5) * screen_width;
+        let screen_end_y = (1.0 - (ndc_end.y * 0.5 + 0.5)) * screen_height;
+        let screen_rotation = (screen_end_y - screen_y).atan2(screen_end_x - screen_x);
 
-        screen_positions.push((Vec2::new(screen_x, screen_y), screen_rotation));
+        screen_positions.push(ProjectedCurvedGlyph {
+            screen_pos: [screen_x, screen_y],
+            rotation: screen_rotation,
+            scale: glyph.scale,
+        });
     }
 
     screen_positions
+}
+
+/// Compatibility projection surface retaining the historical tuple shape.
+pub fn project_curved_layout(
+    layout: &CurvedTextLayout,
+    view_proj: Mat4,
+    screen_width: f32,
+    screen_height: f32,
+) -> Vec<(Vec2, f32)> {
+    project_curved_glyphs(layout, view_proj, screen_width, screen_height)
+        .into_iter()
+        .map(|glyph| {
+            (
+                Vec2::new(glyph.screen_pos[0], glyph.screen_pos[1]),
+                glyph.rotation,
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

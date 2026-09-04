@@ -37,7 +37,7 @@ pub mod unicode;
 pub use atlas::{GlyphKey, GlyphMetrics, MsdfAtlas};
 pub use callout::{Callout, CalloutStyle, PointerDirection};
 pub use collision::CollisionGrid;
-pub use curved::{CurvedGlyphInstance, CurvedTextLayout, SampledPath};
+pub use curved::{CurvedGlyphInstance, CurvedTextLayout, ProjectedCurvedGlyph, SampledPath};
 pub use declutter::{DeclutterAlgorithm, DeclutterConfig, DeclutterResult, PlacementCandidate};
 pub use layer::{
     FeatureGeometry, FeatureType, LabelFeature, LabelLayer, LabelLayerConfig, PlacementStrategy,
@@ -45,7 +45,9 @@ pub use layer::{
 pub use leader::{create_leader_line, generate_leader_vertices};
 pub use line_label::{compute_glyph_advances, compute_line_label_placement};
 pub use optimal::{
-    declutter_optimal, ladder_candidates, OptimalOutcome, RationaleRecord, SolverCandidate,
+    candidate_from_curved_instances, candidate_from_line_instances, candidate_from_rendered_glyphs,
+    declutter_optimal, ladder_candidates, CandidateError, DepthHostAllocationReservation,
+    OptimalOutcome, RationaleRecord, SolverCandidate,
 };
 pub use projection::LabelProjector;
 pub use rtree::LabelRTree;
@@ -74,6 +76,103 @@ pub struct LabelLayoutDiagnostic {
     pub label_id: LabelId,
     pub stage: &'static str,
     pub reason: String,
+}
+
+fn curved_placements_from_authority(
+    text: &str,
+    render_polyline: &[Vec3],
+    shaped_advances: &[f32],
+    font_size: f32,
+    tracking: f32,
+    color: [f32; 4],
+    view_proj: Mat4,
+    screen_width: f32,
+    screen_height: f32,
+) -> Result<Vec<GlyphPlacement>, String> {
+    if render_polyline.len() < 2
+        || render_polyline.iter().any(|point| !point.is_finite())
+        || !font_size.is_finite()
+        || font_size <= 0.0
+        || !tracking.is_finite()
+        || !screen_width.is_finite()
+        || screen_width <= 0.0
+        || !screen_height.is_finite()
+        || screen_height <= 0.0
+        || view_proj
+            .to_cols_array()
+            .iter()
+            .any(|component| !component.is_finite())
+    {
+        return Err("curved layout geometry is unavailable".to_owned());
+    }
+    if text.chars().count() != shaped_advances.len()
+        || shaped_advances
+            .iter()
+            .any(|advance| !advance.is_finite() || *advance < 0.0)
+    {
+        return Err("curved layout cannot map the shaped glyph stream one-for-one".to_owned());
+    }
+
+    let normalized_advances = shaped_advances
+        .iter()
+        .map(|advance| *advance / font_size)
+        .collect::<Vec<_>>();
+    let path = curved::SampledPath::from_polyline(render_polyline);
+    let layout = curved::layout_curved_text(
+        text,
+        &path,
+        &normalized_advances,
+        font_size,
+        color,
+        tracking,
+        true,
+    );
+    if !layout.success || layout.glyphs.len() != shaped_advances.len() {
+        return Err("curved layout geometry is unavailable for this path".to_owned());
+    }
+
+    let projected = curved::project_curved_glyphs(&layout, view_proj, screen_width, screen_height);
+    if projected.len() != layout.glyphs.len()
+        || projected.iter().any(|glyph| {
+            !glyph.screen_pos[0].is_finite()
+                || !glyph.screen_pos[1].is_finite()
+                || !glyph.rotation.is_finite()
+                || !glyph.scale.is_finite()
+                || glyph.scale <= 0.0
+        })
+    {
+        return Err("curved projection geometry is unavailable".to_owned());
+    }
+
+    Ok(projected
+        .into_iter()
+        .map(|glyph| GlyphPlacement {
+            screen_pos: glyph.screen_pos,
+            rotation: glyph.rotation,
+            scale: glyph.scale,
+        })
+        .collect())
+}
+
+fn stage_curved_rendered_instances(
+    collision: &mut LabelRTree,
+    rendered: &mut Vec<TextInstance>,
+    label_id: LabelId,
+    priority: i32,
+    instances: Vec<TextInstance>,
+) -> Result<Option<PlacementCandidate>, String> {
+    let candidate =
+        optimal::candidate_from_curved_instances(label_id.0, 0, &instances, priority)
+            .ok_or_else(|| "curved atlas produced no valid rendered glyph quads".to_owned())?;
+    if collision.check_collision(candidate.bounds)
+        || !collision.try_insert(label_id.0, candidate.bounds)
+    {
+        return Ok(None);
+    }
+    // The candidate borrowed these exact atlas instances; move the same values
+    // into the renderer stream rather than laying the glyphs out again.
+    rendered.extend(instances);
+    Ok(Some(candidate))
 }
 
 fn font_collection_from_metrics(
@@ -738,63 +837,98 @@ impl LabelManager {
                 .copied()
                 .map(|world| anchor.to_render_vec3(world))
                 .collect::<Vec<_>>();
+            let is_curved = line_label.placement == LineLabelPlacement::Along;
+            let geometry_kind = if is_curved { "curved" } else { "line" };
 
-            let shaped = if let Some(fonts) = &fonts {
-                match shape::shape(
-                    &line_label.text,
-                    Arc::clone(fonts),
-                    line_label.style.size,
-                    None,
-                    None,
-                    &[],
-                ) {
-                    Ok(shaped) => Some(shaped),
-                    Err(error) => {
-                        staged_diagnostics.push(LabelLayoutDiagnostic {
-                            label_id: line_label.id,
-                            stage: "shape",
-                            reason: error.to_string(),
-                        });
-                        continue;
-                    }
+            let Some(atlas) = atlas else {
+                staged_diagnostics.push(LabelLayoutDiagnostic {
+                    label_id: line_label.id,
+                    stage: "authority",
+                    reason: format!("{geometry_kind} glyph bounds require a loaded atlas"),
+                });
+                continue;
+            };
+            let Some(fonts) = &fonts else {
+                staged_diagnostics.push(LabelLayoutDiagnostic {
+                    label_id: line_label.id,
+                    stage: "authority",
+                    reason: format!("{geometry_kind} glyph bounds require shaping fonts"),
+                });
+                continue;
+            };
+            let shaped = match shape::shape(
+                &line_label.text,
+                Arc::clone(fonts),
+                line_label.style.size,
+                None,
+                None,
+                &[],
+            ) {
+                Ok(shaped) => shaped,
+                Err(error) => {
+                    staged_diagnostics.push(LabelLayoutDiagnostic {
+                        label_id: line_label.id,
+                        stage: "shape",
+                        reason: error.to_string(),
+                    });
+                    continue;
                 }
-            } else {
-                None
             };
             let line_range = 0..line_label.text.chars().count();
             let line_ranges = std::slice::from_ref(&line_range);
-            let shaped_stream = if let Some(shaped) = &shaped {
-                match positioned::positioned_glyphs(shaped, line_ranges) {
-                    Ok(glyphs) => Some(glyphs),
-                    Err(error) => {
+            let shaped_stream = match positioned::positioned_glyphs(&shaped, line_ranges) {
+                Ok(glyphs) => glyphs,
+                Err(error) => {
+                    staged_diagnostics.push(LabelLayoutDiagnostic {
+                        label_id: line_label.id,
+                        stage: "position",
+                        reason: error.to_string(),
+                    });
+                    continue;
+                }
+            };
+            let advances = shaped_stream
+                .iter()
+                .map(|glyph| glyph.advance[0])
+                .collect::<Vec<_>>();
+
+            // `Along` is the production curved-label representation used by
+            // AddCurvedLabel. Its existing layout/projection authority places
+            // the shaped stream; `Center` retains the straight-line authority.
+            let placements = if is_curved {
+                match curved_placements_from_authority(
+                    &line_label.text,
+                    &render_polyline,
+                    &advances,
+                    line_label.style.size,
+                    self.typography.tracking,
+                    line_label.style.color,
+                    view_proj,
+                    screen_w,
+                    screen_h,
+                ) {
+                    Ok(placements) => placements,
+                    Err(reason) => {
                         staged_diagnostics.push(LabelLayoutDiagnostic {
                             label_id: line_label.id,
-                            stage: "position",
-                            reason: error.to_string(),
+                            stage: "authority",
+                            reason,
                         });
                         continue;
                     }
                 }
             } else {
-                None
+                compute_line_label_placement(
+                    &render_polyline,
+                    &line_label.text,
+                    &advances,
+                    view_proj,
+                    screen_w,
+                    screen_h,
+                    LineLabelPlacement::Center,
+                    line_label.style.size,
+                )
             };
-            let advances = if let Some(glyphs) = &shaped_stream {
-                glyphs.iter().map(|glyph| glyph.advance[0]).collect()
-            } else {
-                compute_glyph_advances(&line_label.text, line_label.style.size)
-            };
-
-            // Compute placements
-            let placements = compute_line_label_placement(
-                &render_polyline,
-                &line_label.text,
-                &advances,
-                view_proj,
-                screen_w,
-                screen_h,
-                line_label.placement,
-                line_label.style.size,
-            );
 
             if placements.is_empty() {
                 staged_diagnostics.push(LabelLayoutDiagnostic {
@@ -804,51 +938,74 @@ impl LabelManager {
                 });
                 continue;
             }
-
             let mut color = line_label.style.color;
             color[3] = color[3].clamp(0.0, 1.0);
-            let instances = if let (Some(atlas), Some(shaped)) = (atlas, &shaped) {
-                match atlas.layout_shaped_on_placements(
-                    shaped,
-                    line_ranges,
-                    &placements,
-                    color,
-                    line_label.style.halo_color,
-                    line_label.style.halo_width,
+            let instances = match atlas.layout_shaped_on_placements(
+                &shaped,
+                line_ranges,
+                &placements,
+                color,
+                line_label.style.halo_color,
+                line_label.style.halo_width,
+            ) {
+                Ok(instances) => instances,
+                Err(error) => {
+                    staged_diagnostics.push(LabelLayoutDiagnostic {
+                        label_id: line_label.id,
+                        stage: if is_curved { "authority" } else { "layout" },
+                        reason: if is_curved {
+                            format!("curved atlas glyph geometry is unavailable: {error}")
+                        } else {
+                            error
+                        },
+                    });
+                    continue;
+                }
+            };
+            if is_curved {
+                match stage_curved_rendered_instances(
+                    &mut staged_collision,
+                    &mut staged_instances,
+                    line_label.id,
+                    line_label.style.priority,
+                    instances,
                 ) {
-                    Ok(instances) => instances,
-                    Err(error) => {
+                    Ok(Some(_candidate)) => {}
+                    Ok(None) => continue,
+                    Err(reason) => {
                         staged_diagnostics.push(LabelLayoutDiagnostic {
                             label_id: line_label.id,
-                            stage: "layout",
-                            reason: error,
+                            stage: "authority",
+                            reason,
                         });
                         continue;
                     }
                 }
-            } else if let Some(atlas) = atlas {
-                let mut output = Vec::new();
-                for (ch, placement) in line_label.text.chars().zip(placements.iter()) {
-                    if ch == ' ' {
+            } else {
+                let placement_candidate = match optimal::candidate_from_line_instances(
+                    line_label.id.0,
+                    0,
+                    &instances,
+                    line_label.style.priority,
+                ) {
+                    Some(candidate) => candidate,
+                    None => {
+                        staged_diagnostics.push(LabelLayoutDiagnostic {
+                            label_id: line_label.id,
+                            stage: "bounds",
+                            reason: "atlas/shaping produced no valid rendered glyph quads"
+                                .to_owned(),
+                        });
                         continue;
                     }
-                    let mut instances = atlas.layout_text(
-                        &ch.to_string(),
-                        placement.screen_pos,
-                        line_label.style.size,
-                        color,
-                        line_label.style.halo_color,
-                        line_label.style.halo_width,
-                    );
-                    for instance in &mut instances {
-                        instance.rotation = placement.rotation;
-                    }
-                    output.extend(instances);
+                };
+                if staged_collision.check_collision(placement_candidate.bounds)
+                    || !staged_collision.try_insert(line_label.id.0, placement_candidate.bounds)
+                {
+                    continue;
                 }
-                output
-            } else {
-                Vec::new()
-            };
+                staged_instances.extend(instances);
+            }
             staged_line_labels.insert(
                 line_label.id,
                 StagedLineState {
@@ -857,7 +1014,6 @@ impl LabelManager {
                 },
             );
             visible_count += 1;
-            staged_instances.extend(instances);
         }
 
         for label in self.labels.values_mut() {
@@ -972,6 +1128,122 @@ mod tests {
         assert!(!manager.get_label(id).unwrap().visible);
         assert!(manager.get_label(id).unwrap().screen_pos.is_none());
         assert!(manager.pick_at(400.0, 300.0).is_none());
+    }
+
+    #[test]
+    fn curved_and_line_labels_report_distinct_missing_authority_diagnostics() {
+        let mut manager = LabelManager::new(800, 600);
+        let curved_id = manager.add_line_label(
+            "Road".to_owned(),
+            vec![Vec3::new(-0.5, 0.0, 0.0), Vec3::new(0.5, 0.0, 0.0)],
+            LabelStyle::default(),
+            LineLabelPlacement::Along,
+            0.0,
+        );
+        let line_id = manager.add_line_label(
+            "Street".to_owned(),
+            vec![Vec3::new(-0.5, 0.2, 0.0), Vec3::new(0.5, 0.2, 0.0)],
+            LabelStyle::default(),
+            LineLabelPlacement::Center,
+            0.0,
+        );
+        assert_eq!(manager.update(Mat4::IDENTITY), 0);
+        assert!(manager.layout_diagnostics().iter().any(|diagnostic| {
+            diagnostic.label_id == curved_id
+                && diagnostic.stage == "authority"
+                && diagnostic.reason == "curved glyph bounds require a loaded atlas"
+        }));
+        assert!(manager.layout_diagnostics().iter().any(|diagnostic| {
+            diagnostic.label_id == line_id
+                && diagnostic.stage == "authority"
+                && diagnostic.reason == "line glyph bounds require a loaded atlas"
+        }));
+    }
+
+    #[test]
+    fn production_curved_path_reuses_exact_rendered_quads_for_collision_and_render() {
+        let view_proj = Mat4::from_scale(Vec3::new(0.005, 0.01, 1.0));
+        let placements = curved_placements_from_authority(
+            "AB",
+            &[
+                Vec3::new(-100.0, 0.0, 0.0),
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(100.0, 0.0, 0.0),
+            ],
+            &[20.0, 30.0],
+            20.0,
+            0.0,
+            [0.2, 0.4, 0.6, 1.0],
+            view_proj,
+            800.0,
+            600.0,
+        )
+        .expect("curved layout and nonidentity projection must produce glyph placements");
+        assert_eq!(placements.len(), 2);
+
+        // These are the glyph-specific quads that the production branch gets
+        // from MsdfAtlas::layout_shaped_on_placements: deliberately distinct
+        // dimensions, bearings, UVs, halos, and rotations.
+        let mut first = TextInstance::new(
+            [
+                placements[0].screen_pos[0] - 3.0,
+                placements[0].screen_pos[1] - 7.0,
+            ],
+            [
+                placements[0].screen_pos[0] + 9.0,
+                placements[0].screen_pos[1] + 5.0,
+            ],
+            [0.0, 0.0],
+            [0.25, 0.5],
+            [0.2, 0.4, 0.6, 1.0],
+        )
+        .with_halo([1.0, 0.5, 0.25, 0.75], 1.25);
+        first.rotation = placements[0].rotation;
+        let mut second = TextInstance::new(
+            [
+                placements[1].screen_pos[0] - 8.0,
+                placements[1].screen_pos[1] - 4.0,
+            ],
+            [
+                placements[1].screen_pos[0] + 5.0,
+                placements[1].screen_pos[1] + 10.0,
+            ],
+            [0.25, 0.0],
+            [0.75, 0.5],
+            [0.2, 0.4, 0.6, 1.0],
+        )
+        .with_halo([1.0, 0.5, 0.25, 0.75], 1.25);
+        second.rotation = placements[1].rotation;
+        let atlas_instances = vec![first, second];
+        let exact_atlas_bytes = atlas_instances
+            .iter()
+            .map(bytemuck::bytes_of)
+            .map(<[u8]>::to_vec)
+            .collect::<Vec<_>>();
+
+        let mut collision = LabelRTree::new(800, 600);
+        let mut rendered = Vec::new();
+        let candidate = stage_curved_rendered_instances(
+            &mut collision,
+            &mut rendered,
+            LabelId(77),
+            9,
+            atlas_instances,
+        )
+        .expect("atlas quads are valid curved geometry")
+        .expect("curved geometry must fit the empty collision tree");
+
+        assert_eq!(rendered.len(), exact_atlas_bytes.len());
+        for (instance, expected) in rendered.iter().zip(&exact_atlas_bytes) {
+            assert_eq!(bytemuck::bytes_of(instance), expected);
+        }
+        let hits = collision.query_intersecting(candidate.bounds);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, 77);
+        assert_eq!(hits[0].bounds, candidate.bounds);
+        let rendered_candidate = optimal::candidate_from_curved_instances(77, 0, &rendered, 9)
+            .expect("the unchanged render stream remains valid collision geometry");
+        assert_eq!(rendered_candidate.bounds, candidate.bounds);
     }
 
     #[test]

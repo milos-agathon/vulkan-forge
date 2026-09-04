@@ -156,6 +156,22 @@ fn parse_backend_request(raw: String) -> RenderResult<(String, wgpu::Backends, w
     Ok((raw, pair.0, pair.1))
 }
 
+/// Instance flags for every forge3d-owned wgpu instance.
+///
+/// wgpu's build-config default enables DEBUG and VALIDATION together in
+/// debug builds. DEBUG makes naga embed the complete WGSL source and line
+/// table as SPIR-V debug info, and the Vulkan SDK's validation layer
+/// (observed with VK_LAYER_KHRONOS_validation 1.4.313 on Windows/NVIDIA)
+/// crashes with an access violation while consuming the multi-thousand-line
+/// terrain module in that form — either feature alone is fine. Keep
+/// VALIDATION's real API coverage in debug builds and drop only the embedded
+/// shader sources; `WGPU_DEBUG=1` opts back in and `WGPU_VALIDATION=0` opts
+/// out, per wgpu's standard environment convention. Release builds keep
+/// wgpu's empty default.
+pub(crate) fn instance_flags() -> wgpu::InstanceFlags {
+    (wgpu::InstanceFlags::default() - wgpu::InstanceFlags::DEBUG).with_env()
+}
+
 fn backends_from_env() -> RenderResult<wgpu::Backends> {
     if let Some((_, mask, _)) = requested_backend_from_env()? {
         return Ok(mask);
@@ -203,6 +219,7 @@ pub fn try_ctx() -> RenderResult<&'static GpuContext> {
         let backends = backends_from_env()?;
         let mut instance_desc = wgpu::InstanceDescriptor {
             backends,
+            flags: instance_flags(),
             ..Default::default()
         };
         let dx12_compiler = if deterministic_mode() {
@@ -400,6 +417,7 @@ pub fn align_copy_bpr(unpadded: u32) -> u32 {
 pub fn create_device_for_test() -> Option<wgpu::Device> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
+        flags: instance_flags(),
         ..Default::default()
     });
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -448,6 +466,7 @@ pub fn create_device_for_test() -> Option<wgpu::Device> {
 pub fn create_device_and_queue_for_test() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
+        flags: instance_flags(),
         ..Default::default()
     });
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {

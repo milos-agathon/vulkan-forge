@@ -15,7 +15,14 @@ pub(super) fn compress_rgba_to_format(
             compress_bc3(data, width, height)
         }
         TextureFormat::Bc7RgbaUnorm | TextureFormat::Bc7RgbaUnormSrgb => {
-            compress_bc7(data, width, height)
+            super::bc7::encode_bc7_rgba8(data, width, height)
+        }
+        TextureFormat::Bc5RgUnorm => {
+            let mut rg = Vec::with_capacity(width as usize * height as usize * 2);
+            for rgba in data.chunks_exact(4) {
+                rg.extend_from_slice(&rgba[..2]);
+            }
+            super::bc5::encode_bc5_rg8(&rg, width, height)
         }
         TextureFormat::Etc2Rgb8Unorm | TextureFormat::Etc2Rgb8UnormSrgb => {
             compress_etc2_rgb(data, width, height)
@@ -107,13 +114,6 @@ fn compress_bc3(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String>
     }
 
     Ok(compressed)
-}
-
-/// BC7 compression fallback; returns zeroed blocks.
-fn compress_bc7(_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
-    let blocks_x = (width + 3) / 4;
-    let blocks_y = (height + 3) / 4;
-    Ok(vec![0u8; (blocks_x * blocks_y * 16) as usize])
 }
 
 /// ETC2 RGB compression fallback; returns zeroed blocks.

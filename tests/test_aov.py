@@ -10,6 +10,7 @@ import os
 
 from forge3d.terrain_params import (
     AovSettings,
+    ShadowSettings,
     make_terrain_params_config,
 )
 from _terrain_runtime import terrain_rendering_available
@@ -188,6 +189,51 @@ class TestAovRendering:
         assert aov_frame.has_albedo is True
         assert aov_frame.has_normal is True
         assert aov_frame.has_depth is True
+
+    def test_aov_certificate_accounts_lazy_moment_atlas(
+        self, renderer_setup, simple_heightmap
+    ):
+        from forge3d.diagnostics import render_certificate
+
+        renderer, material_set, env_maps = renderer_setup
+        shadows = ShadowSettings(
+            enabled=True,
+            technique="VSM",
+            resolution=512,
+            cascades=1,
+            max_distance=100.0,
+            softness=1.0,
+            intensity=1.0,
+            slope_scale_bias=0.001,
+            depth_bias=0.0005,
+            normal_bias=0.0002,
+            min_variance=1e-4,
+            light_bleed_reduction=0.5,
+            evsm_exponent=9.0,
+            fade_start=1.0,
+        )
+        config = make_terrain_params_config(
+            size_px=(64, 64),
+            render_scale=1.0,
+            terrain_span=100.0,
+            msaa_samples=1,
+            z_scale=1.0,
+            exposure=1.0,
+            domain=(0.0, 100.0),
+            shadows=shadows,
+        )
+
+        renderer.render_with_aov(
+            material_set,
+            env_maps,
+            f3d.TerrainRenderParams(config),
+            simple_heightmap,
+        )
+
+        labels = render_certificate(sign=False)["allocations"]["by_label"]
+        rgba16f_bytes = 512 * 512 * 8
+        assert labels.get("csm_evsm_maps", 0) >= rgba16f_bytes, labels
+        assert labels.get("shadow_blur_intermediate") == rgba16f_bytes, labels
 
     def test_aov_frame_save_methods(
         self, renderer_setup, simple_heightmap

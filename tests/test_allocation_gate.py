@@ -154,6 +154,31 @@ def test_toml_fallback_parser_handles_named_tables_and_scalar_arrays():
     }
 
 
+def test_toml_fallback_parser_handles_nested_aot_tables_and_multiline_arrays():
+    sample = (
+        "[[asset]]\n"
+        'path = "vsop87d.bin"\n'
+        "\n"
+        "[asset.term_counts.mercury]\n"
+        "longitude = [986, 174, 10]\n"
+        "\n"
+        "[alias]\n"
+        "forge3d-clippy = [\n"
+        '    "clippy",\n'
+        '    "--workspace",\n'
+        "]\n"
+    )
+    assert parse_toml_fallback(sample) == {
+        "asset": [
+            {
+                "path": "vsop87d.bin",
+                "term_counts": {"mercury": {"longitude": [986, 174, 10]}},
+            }
+        ],
+        "alias": {"forge3d-clippy": ["clippy", "--workspace"]},
+    }
+
+
 def test_toml_fallback_parser_preserves_hashes_inside_strings():
     sample = (
         '[meta] # an actual comment\n'

@@ -459,7 +459,12 @@ impl TerrainScene {
 
         let height_inputs =
             self.upload_height_inputs(heightmap, water_mask, offline_params.terrain_data_revision)?;
-        self.prepare_geometry(&offline_params)?;
+        self.prepare_geometry(
+            &offline_params,
+            &height_inputs.heightmap_data,
+            (height_inputs.width, height_inputs.height),
+            height_inputs.terrain_data_hash,
+        )?;
         let probe_world_span = if is_mesh_camera_mode(&offline_params.camera_mode) {
             offline_params.terrain_span.max(1e-3)
         } else {
@@ -507,6 +512,7 @@ impl TerrainScene {
             render_targets.internal_width,
             render_targets.internal_height,
             1,
+            super::aov::AOV_ALL_BITS,
             false,
         )?;
         let beauty_accumulation = crate::terrain::AccumulationBuffer::new(
@@ -560,6 +566,7 @@ impl TerrainScene {
             &self.material_layer_bind_group_layout,
             OFFLINE_HDR_FORMAT,
             1,
+            super::aov::AOV_ALL_BITS,
             // VERITAS source-id capture is one-shot only; accumulation would
             // average ids, which is meaningless.
             false,
@@ -628,7 +635,12 @@ impl TerrainScene {
         // Re-prepare per sample: interleaved non-offline renders may have
         // switched the geometry provider; the clipmap mesh cache makes this
         // free when nothing changed.
-        self.prepare_geometry(&state.params)?;
+        self.prepare_geometry(
+            &state.params,
+            &state.height_inputs.heightmap_data,
+            (state.height_inputs.width, state.height_inputs.height),
+            state.height_inputs.terrain_data_hash,
+        )?;
         let (eye, view, proj) = Self::build_camera_matrices(&state.params);
         let jittered_proj = apply_jitter_to_projection(
             proj,
@@ -702,12 +714,21 @@ impl TerrainScene {
                 &state.params,
                 &state.decoded,
             )?;
+            let height_curve_view = state
+                .height_curve_lut_uploaded
+                .as_ref()
+                .map(|(texture, _)| texture.create_view(&wgpu::TextureViewDescriptor::default()))
+                .unwrap_or_else(|| {
+                    self._height_curve_identity_texture
+                        .create_view(&wgpu::TextureViewDescriptor::default())
+                });
 
             let shadow_setup = self.prepare_shadow_setup(
                 &mut encoder,
                 &state.params,
                 &state.decoded,
                 &state.height_inputs.heightmap_view,
+                &height_curve_view,
                 state.height_inputs.width,
                 state.height_inputs.height,
             )?;
@@ -726,14 +747,12 @@ impl TerrainScene {
             )?;
             let sky_view = sky_texture
                 .as_ref()
-                .map(|(_, view)| view)
+                .map(|sky| &sky.view)
                 .unwrap_or(&self.sky_fallback_view);
-
-            let height_curve_view = state
-                .height_curve_lut_uploaded
+            let atmosphere_scattering_view = sky_texture
                 .as_ref()
-                .map(|(_, view)| view)
-                .unwrap_or(&self.height_curve_identity_view);
+                .and_then(|sky| sky.scattering_view.as_ref())
+                .unwrap_or(&self.atmosphere_scattering_fallback_view);
 
             let main_height_view = self.main_pass_height_view(&state.height_inputs.heightmap_view);
             let pass_bind_groups = self.create_terrain_pass_bind_groups(
@@ -749,15 +768,20 @@ impl TerrainScene {
                 state.materials.colormap_view(),
                 state.materials.colormap_sampler(),
                 &state.materials.overlay_buffer,
-                height_curve_view,
+                &height_curve_view,
                 state.height_inputs.water_mask_view_uploaded.as_ref(),
                 sky_view,
+                atmosphere_scattering_view,
                 height_ao_computed,
                 sun_vis_computed,
                 &state.decoded,
                 shadow_setup.height_min,
                 shadow_setup.height_exag,
-                eye.y,
+                if is_zup_camera_mode(&state.params.camera_mode) {
+                    eye.z
+                } else {
+                    eye.y
+                },
                 material_vt_ready,
             )?;
 
@@ -777,7 +801,7 @@ impl TerrainScene {
                 state.materials.colormap_view(),
                 state.materials.colormap_sampler(),
                 &state.materials.overlay_buffer,
-                height_curve_view,
+                &height_curve_view,
                 state.height_inputs.water_mask_view_uploaded.as_ref(),
                 height_ao_computed,
                 sun_vis_computed,
@@ -787,13 +811,38 @@ impl TerrainScene {
                 &pass_bind_groups.material_layer,
             )?;
 
-            if let Some((_, background_view)) = sky_texture.as_ref() {
-                self.blit_background_texture_with_pipeline(
-                    &mut encoder,
-                    render_targets,
-                    background_view,
-                    &state.hdr_background_blit_pipeline,
-                )?;
+            if let Some(sky) = sky_texture.as_ref() {
+                if sky.linear_hdr {
+                    // Both textures are exact-resolution RGBA16F. A direct
+                    // copy preserves linear HDR radiance and avoids a filtered
+                    // fullscreen presentation pass before accumulation.
+                    encoder.copy_texture_to_texture(
+                        wgpu::ImageCopyTexture {
+                            texture: &sky.texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::ImageCopyTexture {
+                            texture: &render_targets.internal_texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::Extent3d {
+                            width: render_targets.internal_width,
+                            height: render_targets.internal_height,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                } else {
+                    self.blit_background_texture_with_pipeline(
+                        &mut encoder,
+                        render_targets,
+                        &sky.view,
+                        &state.hdr_background_blit_pipeline,
+                    )?;
+                }
             }
 
             self.run_main_pass_with_aov_pipeline(
@@ -814,7 +863,7 @@ impl TerrainScene {
             if state.total_samples == 0 {
                 self.dispatch_offline_depth_extract_pass(
                     &mut encoder,
-                    &aov_targets.depth.internal_view,
+                    &aov_targets.required_depth()?.internal_view,
                     &state.depth_reference_view,
                     state.internal_width,
                     state.internal_height,
@@ -830,13 +879,13 @@ impl TerrainScene {
         )?;
         self.dispatch_offline_accumulation_pass(
             &mut encoder,
-            &state.aov_targets.albedo.internal_view,
+            &state.aov_targets.required_albedo()?.internal_view,
             &mut state.albedo_accumulation,
             state.total_samples,
         )?;
         self.dispatch_offline_accumulation_pass(
             &mut encoder,
-            &state.aov_targets.normal.internal_view,
+            &state.aov_targets.required_normal()?.internal_view,
             &mut state.normal_accumulation,
             state.total_samples,
         )?;
@@ -1016,33 +1065,24 @@ impl TerrainScene {
             .bind_group()
             .expect("LightBuffer should always provide a bind group");
 
-        let albedo_view = aov_targets
-            .albedo
-            .msaa_view
-            .as_ref()
-            .unwrap_or(&aov_targets.albedo.internal_view);
-        let albedo_resolve = if aov_targets.albedo.msaa_view.is_some() {
-            Some(&aov_targets.albedo.internal_view)
+        let albedo = aov_targets.required_albedo()?;
+        let normal = aov_targets.required_normal()?;
+        let depth = aov_targets.required_depth()?;
+        let albedo_view = albedo.msaa_view.as_ref().unwrap_or(&albedo.internal_view);
+        let albedo_resolve = if albedo.msaa_view.is_some() {
+            Some(&albedo.internal_view)
         } else {
             None
         };
-        let normal_view = aov_targets
-            .normal
-            .msaa_view
-            .as_ref()
-            .unwrap_or(&aov_targets.normal.internal_view);
-        let normal_resolve = if aov_targets.normal.msaa_view.is_some() {
-            Some(&aov_targets.normal.internal_view)
+        let normal_view = normal.msaa_view.as_ref().unwrap_or(&normal.internal_view);
+        let normal_resolve = if normal.msaa_view.is_some() {
+            Some(&normal.internal_view)
         } else {
             None
         };
-        let depth_view = aov_targets
-            .depth
-            .msaa_view
-            .as_ref()
-            .unwrap_or(&aov_targets.depth.internal_view);
-        let depth_resolve = if aov_targets.depth.msaa_view.is_some() {
-            Some(&aov_targets.depth.internal_view)
+        let depth_view = depth.msaa_view.as_ref().unwrap_or(&depth.internal_view);
+        let depth_resolve = if depth.msaa_view.is_some() {
+            Some(&depth.internal_view)
         } else {
             None
         };
@@ -1097,11 +1137,11 @@ impl TerrainScene {
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &render_targets.depth_view,
                 depth_ops: Some(wgpu::Operations {
-                    load: if preserve_background {
-                        wgpu::LoadOp::Load
-                    } else {
-                        wgpu::LoadOp::Clear(1.0)
-                    },
+                    // Background may arrive through an AETHER texture copy,
+                    // which never initializes depth. Clear explicitly for
+                    // every offline terrain pass; color preservation is an
+                    // independent concern.
+                    load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
@@ -1120,8 +1160,14 @@ impl TerrainScene {
         pass.set_bind_group(5, water_reflection_bind_group, &[]);
         pass.set_bind_group(6, material_layer_bind_group, &[]);
 
+        if params.culling == "hzb_two_phase" {
+            crate::core::degradation::record_degradation(
+                "rendering_fallback",
+                "terrain_hzb_two_phase_offline_aov",
+                "offline AOV rendering uses the direct clipmap path; two-phase HZB applies to the beauty pass",
+            );
+        }
         self.geometry_provider()?.draw(&mut pass);
-        let _ = params;
         Ok(())
     }
 
@@ -1518,6 +1564,17 @@ impl TerrainRenderer {
                 "An offline accumulation session is already active.",
             ));
         }
+
+        // Keep missing or malformed VT family requests fail-before-mutation:
+        // build_offline_state allocates the complete offline graph and the
+        // returned state is installed as an active session below.
+        self.scene
+            .validate_material_vt_request(params, material_set.materials().len() as u32)
+            .map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "Failed to begin offline accumulation during material VT preflight: {error:#}"
+                ))
+            })?;
 
         let jitter_sequence_samples =
             resolve_offline_jitter_sequence_samples(params.aa_samples, jitter_sequence_samples)

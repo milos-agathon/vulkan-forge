@@ -23,10 +23,6 @@ if not NATIVE_AVAILABLE:
 
 _native = get_native_module()
 
-# Re-export canonical settings tests so they run under this file too.
-from tests.test_api_contracts import TestBloomSettingsWiring  # noqa: F401
-
-
 # ---------------------------------------------------------------------------
 # Bloom disabled-passthrough semantics (no GPU needed)
 # ---------------------------------------------------------------------------

@@ -23,10 +23,6 @@ if not NATIVE_AVAILABLE:
 
 _native = get_native_module()
 
-# Re-export canonical settings-object tests so they run under this file too.
-from tests.test_api_contracts import TestSsgiSsrSettingsWiring  # noqa: F401
-
-
 # ---------------------------------------------------------------------------
 # Behavioral state-change proof (no GPU needed)
 # ---------------------------------------------------------------------------

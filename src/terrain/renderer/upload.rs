@@ -74,7 +74,15 @@ impl TerrainScene {
         let detail_albedo_noise = detail.albedo_noise.clamp(0.0, 0.5);
         let detail_fade_start = detail.fade_start.max(0.0);
         let detail_fade_end = detail.fade_end.max(detail_fade_start + 1.0);
-        let output_srgb_eotf = if params.output_srgb_eotf { 1.0 } else { 0.0 };
+        // AETHER's sky blit uses the exact IEC sRGB transfer. Force the same
+        // presentation contract for terrain whenever the spectral sky is
+        // active so a single frame cannot mix exact sRGB and legacy gamma 2.2.
+        let output_srgb_eotf =
+            if params.output_srgb_eotf || (decoded.sky.enabled && decoded.sky.model == 3) {
+                1.0
+            } else {
+                0.0
+            };
         let offline_hdr_flag = if offline_hdr_output { 1.0 } else { 0.0 };
 
         let mut binding = OverlayBinding {

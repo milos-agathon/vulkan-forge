@@ -1,5 +1,7 @@
 impl Scene {
     pub(super) fn render_png_impl(&mut self, path: &PathBuf) -> PyResult<()> {
+        #[cfg(feature = "extension-module")]
+        self.ensure_legacy_scene_atmosphere_unconfigured()?;
         let (certificate_capture, _allocation_scope) =
             self.begin_certificate_capture("scene.render_png");
         let mut timing = self.take_render_timing();
@@ -310,4 +312,3 @@ impl Scene {
         Ok(())
     }
 }
-

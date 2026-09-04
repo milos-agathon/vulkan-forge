@@ -319,8 +319,10 @@ def _main(argv: Optional[list] = None) -> int:
         "name": probe.get("name"),
         "backend": probe.get("backend"),
         "device_type": probe.get("device_type"),
+        "vendor": probe.get("vendor"),
+        "device": probe.get("device"),
         "software_fallback": probe.get("software_fallback"),
-}
+    }
     print(
         json.dumps(
             {

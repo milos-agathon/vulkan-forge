@@ -99,7 +99,8 @@ The required CI job is `M-06 Full Geospatial Viewer (NVIDIA Vulkan)` in
 fresh release `interactive_viewer`, requires a real hardware terrain probe, and
 runs the source gates plus `tests/test_m06_full_geospatial_viewer.py`. A standard
 JUnit parser fails the job for zero collected tests, any failure/error, or any
-skip. `ci-success` requires this job.
+skip. `Full Acceptance Summary` requires this job whenever M-06 is selected;
+`PR Core Success` deliberately makes no physical-hardware claim.
 
 The live file records backend, images, frame metrics, resource counts, and viewer
 logs under `tests/artifacts/m06`. It measures:
@@ -205,7 +206,7 @@ and locally admissible proof are complete. NVIDIA/Vulkan-only rows remain
 | A34 | Live translated/rebased terrain equivalence on NVIDIA/Vulkan | NOT_PROVEN | Required test is wired fail closed. | The exact published remediation head must complete the required external job green. |
 | A35 | Live effects, full orbit, CSM/fog/temporal no-flash on NVIDIA/Vulkan | NOT_PROVEN | Required assertions and artifacts are wired. | The exact published remediation head must complete the required external job green. |
 | A36 | Live 500k points, 1 mm separation, resource stability, and rollback on NVIDIA/Vulkan | NOT_PROVEN | Required assertions and negative controls are wired. | The exact published remediation head must complete the required external job green. |
-| A37 | Exact-head required CI: zero skips/failures/errors and uploaded evidence | NOT_PROVEN | `ci-success` depends on `test-m06-full-geospatial-viewer`; JUnit and evidence validators are fail closed. | Refresh the required exact-head job after publication; local evidence is not release proof. |
+| A37 | Exact-head required CI: zero skips/failures/errors and uploaded evidence | NOT_PROVEN | `Full Acceptance Summary` depends on `test-m06-full-geospatial-viewer` whenever selected; JUnit and evidence validators are fail closed. | Refresh the selected exact-head job after publication; local evidence is not release proof. |
 
 | Specification task | Status | Local closure | Remaining deficiency |
 |---|---|---|---|

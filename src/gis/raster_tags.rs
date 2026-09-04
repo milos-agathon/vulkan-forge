@@ -271,7 +271,15 @@ pub(crate) fn read_crs<R: std::io::Read + std::io::Seek>(
             .map_err(|err| GisError::InvalidCrs(err.to_string()))?,
         None => {
             return Ok(match geo_ascii.as_deref() {
-                Some(ascii) => validated_wkt_from_ascii(ascii)?.map(|wkt| (Some(wkt), None)),
+                Some(ascii) => {
+                    let authority = iau_authority_from_ascii(ascii)?;
+                    let wkt = validated_wkt_from_ascii(ascii)?;
+                    if authority.is_some() || wkt.is_some() {
+                        Some((wkt, authority))
+                    } else {
+                        None
+                    }
+                }
                 None => None,
             })
         }
@@ -290,6 +298,8 @@ pub(crate) fn read_crs<R: std::io::Read + std::io::Seek>(
 
     let mut geographic_epsg = None;
     let mut projected_epsg = None;
+    let mut iau_geographic_authority = None;
+    let mut iau_projected_authority = None;
     let mut wkt = match geo_ascii.as_deref() {
         Some(ascii) => validated_wkt_from_ascii(ascii)?,
         None => None,
@@ -305,6 +315,13 @@ pub(crate) fn read_crs<R: std::io::Read + std::io::Seek>(
                     if let Some(value) = extract_ascii_range(ascii, value_offset, count) {
                         if looks_like_wkt(&value) {
                             wkt = Some(validate_wkt_literal(&value)?);
+                        }
+                        if let Some(authority) = iau_authority_from_ascii(&value)? {
+                            if key == 2049 {
+                                iau_geographic_authority = Some(authority);
+                            } else {
+                                iau_projected_authority = Some(authority);
+                            }
                         }
                     }
                 }
@@ -335,8 +352,148 @@ pub(crate) fn read_crs<R: std::io::Read + std::io::Seek>(
         authority.insert("code".to_string(), code.to_string());
         return Ok(Some((wkt, Some(authority))));
     }
+    if let Some(authority) = iau_projected_authority.or(iau_geographic_authority) {
+        return Ok(Some((wkt, Some(authority))));
+    }
+    if let Some(authority) = geo_ascii
+        .as_deref()
+        .map(iau_authority_from_ascii)
+        .transpose()?
+        .flatten()
+    {
+        return Ok(Some((wkt, Some(authority))));
+    }
 
     Ok(wkt.map(|wkt| (Some(wkt), None)))
+}
+
+fn iau_authority_from_ascii(ascii: &str) -> GisResult<Option<HashMap<String, String>>> {
+    let cleaned = ascii.trim_matches(char::from(0)).trim();
+    let segments = cleaned
+        .split('|')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    for segment in &segments {
+        if let Some((authority, code)) = segment.split_once(':') {
+            if authority.eq_ignore_ascii_case("IAU")
+                && !code.is_empty()
+                && code.chars().all(|ch| ch.is_ascii_digit())
+            {
+                let mut result = HashMap::new();
+                result.insert("name".to_string(), "IAU".to_string());
+                result.insert("code".to_string(), code.to_string());
+                return Ok(Some(result));
+            }
+        }
+    }
+    let prefix = segments
+        .into_iter()
+        .find(|segment| {
+            let upper = segment.to_ascii_uppercase();
+            (upper.contains("MOON (2015)") || upper.contains("MARS (2015)"))
+                && (upper.contains("/ OCENTRIC") || upper.contains("/ OGRAPHIC"))
+        })
+        .unwrap_or_default();
+    let Some((authority, code)) = prefix.split_once(':') else {
+        let upper = prefix.to_ascii_uppercase();
+        let mars = upper.contains("MARS (2015)");
+        let moon = upper.contains("MOON (2015)");
+        if !mars && !moon {
+            return Ok(None);
+        }
+        if upper.contains("/ OGRAPHIC") {
+            let code = if upper.contains("EQUIRECTANGULAR, CLON = 180") {
+                49916
+            } else if upper.contains("EQUIRECTANGULAR") {
+                49911
+            } else if upper.contains("NORTH POLAR") {
+                49931
+            } else if upper.contains("SOUTH POLAR") {
+                49936
+            } else if upper.starts_with("GCS NAME =") {
+                49901
+            } else {
+                return Err(GisError::InvalidCrs(format!(
+                    "unsupported IAU planetary citation {prefix:?}"
+                )));
+            };
+            let mut result = HashMap::new();
+            result.insert("name".to_string(), "IAU".to_string());
+            result.insert("code".to_string(), code.to_string());
+            return Ok(Some(result));
+        }
+        if !upper.contains("/ OCENTRIC") {
+            return Ok(None);
+        }
+        let sphere = upper.contains(" - SPHERE");
+        let code = if moon {
+            if upper.contains("EQUIRECTANGULAR, CLON = 180") {
+                30115
+            } else if upper.contains("EQUIRECTANGULAR") {
+                30110
+            } else if upper.contains("NORTH POLAR") {
+                30130
+            } else if upper.contains("SOUTH POLAR") {
+                30135
+            } else if upper.starts_with("GCS NAME =") {
+                30100
+            } else {
+                return Err(GisError::InvalidCrs(format!(
+                    "unsupported IAU planetary citation {prefix:?}"
+                )));
+            }
+        } else if mars {
+            if upper.contains("EQUIRECTANGULAR, CLON = 180") {
+                if sphere {
+                    49915
+                } else {
+                    49917
+                }
+            } else if upper.contains("EQUIRECTANGULAR") {
+                if sphere {
+                    49910
+                } else {
+                    49912
+                }
+            } else if upper.contains("NORTH POLAR") {
+                if sphere {
+                    49930
+                } else {
+                    49932
+                }
+            } else if upper.contains("SOUTH POLAR") {
+                if sphere {
+                    49935
+                } else {
+                    49937
+                }
+            } else if upper.starts_with("GCS NAME =") {
+                if sphere {
+                    49900
+                } else {
+                    49902
+                }
+            } else {
+                return Err(GisError::InvalidCrs(format!(
+                    "unsupported IAU planetary citation {prefix:?}"
+                )));
+            }
+        } else {
+            return Ok(None);
+        };
+        let mut result = HashMap::new();
+        result.insert("name".to_string(), "IAU".to_string());
+        result.insert("code".to_string(), code.to_string());
+        return Ok(Some(result));
+    };
+    if !authority.eq_ignore_ascii_case("IAU") || !code.chars().all(|ch| ch.is_ascii_digit()) {
+        return Ok(None);
+    }
+    let mut result = HashMap::new();
+    result.insert("name".to_string(), "IAU".to_string());
+    result.insert("code".to_string(), code.to_string());
+    Ok(Some(result))
 }
 
 fn extract_ascii_range(ascii: &str, offset: u16, count: u16) -> Option<String> {
@@ -408,11 +565,140 @@ fn looks_like_wkt(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_crs, read_transform};
+    use super::{iau_authority_from_ascii, read_crs, read_transform};
     use std::io::Cursor;
     use tiff::decoder::Decoder;
     use tiff::encoder::{colortype, TiffEncoder};
     use tiff::tags::Tag;
+
+    #[test]
+    fn unsupported_iau_citation_is_preserved_for_metadata_only_reads() {
+        let authority = iau_authority_from_ascii(
+            "IAU:30199|GCS Name = IAU:30199|Ellipsoid = Moon_2000_IAU_IAG|",
+        )
+        .unwrap()
+        .expect("numeric IAU citation");
+        assert_eq!(authority.get("name").map(String::as_str), Some("IAU"));
+        assert_eq!(authority.get("code").map(String::as_str), Some("30199"));
+    }
+
+    #[test]
+    fn gdal_iau_2015_citations_resolve_to_curated_codes() {
+        let cases = [
+            ("GCS Name = Moon (2015) - Sphere / Ocentric|", "30100"),
+            (
+                "Moon (2015) - Sphere / Ocentric / Equirectangular, clon = 180|",
+                "30115",
+            ),
+            (
+                "Mars (2015) / Ocentric / Equirectangular, clon = 0|",
+                "49912",
+            ),
+            ("Mars (2015) - Sphere / Ocentric / North Polar|", "49930"),
+            ("Mars (2015) / Ocentric / South Polar|", "49937"),
+            ("Mars (2015) / Ographic / North Polar|", "49931"),
+        ];
+        for (citation, expected) in cases {
+            let authority = iau_authority_from_ascii(citation).unwrap().unwrap();
+            assert_eq!(authority.get("code").map(String::as_str), Some(expected));
+        }
+        assert!(iau_authority_from_ascii("Mars (2015) / Ocentric / Orthographic|").is_err());
+    }
+
+    #[test]
+    fn iau_citation_uses_geokey_ascii_offset() {
+        let mut bytes = Cursor::new(Vec::new());
+        {
+            let mut encoder = TiffEncoder::new(&mut bytes).unwrap();
+            let mut image = encoder.new_image::<colortype::Gray8>(1, 1).unwrap();
+            image
+                .encoder()
+                .write_tag(Tag::GeoAsciiParamsTag, "unrelated|IAU:30115|")
+                .unwrap();
+            let geokeys = [1_u16, 1, 0, 1, 3073, 34737, 10, 10];
+            image
+                .encoder()
+                .write_tag(Tag::GeoKeyDirectoryTag, &geokeys[..])
+                .unwrap();
+            image.write_data(&[0]).unwrap();
+        }
+        bytes.set_position(0);
+        let mut decoder = Decoder::new(bytes).unwrap();
+        let (_, authority) = read_crs(&mut decoder).unwrap().unwrap();
+        let authority = authority.unwrap();
+        assert_eq!(authority.get("name").map(String::as_str), Some("IAU"));
+        assert_eq!(authority.get("code").map(String::as_str), Some("30115"));
+    }
+
+    #[test]
+    fn geoascii_only_iau_preserves_defining_wkt() {
+        let mut bytes = Cursor::new(Vec::new());
+        {
+            let mut encoder = TiffEncoder::new(&mut bytes).unwrap();
+            let mut image = encoder.new_image::<colortype::Gray8>(1, 1).unwrap();
+            image
+                .encoder()
+                .write_tag(
+                    Tag::GeoAsciiParamsTag,
+                    "PROJCRS[\"Unknown lunar projection\"]|IAU:30199|",
+                )
+                .unwrap();
+            image.write_data(&[0]).unwrap();
+        }
+        bytes.set_position(0);
+        let mut decoder = Decoder::new(bytes).unwrap();
+        let (wkt, authority) = read_crs(&mut decoder).unwrap().unwrap();
+        assert_eq!(
+            wkt.as_deref(),
+            Some("PROJCRS[\"Unknown lunar projection\"]")
+        );
+        assert_eq!(
+            authority.unwrap().get("code").map(String::as_str),
+            Some("30199")
+        );
+    }
+
+    #[test]
+    fn projected_iau_citation_wins_over_base_geodetic_citation() {
+        let projected = "Mars (2015) / Ocentric / Equirectangular, clon = 0|";
+        let geographic = "GCS Name = Mars (2015) / Ocentric|";
+        let ascii = format!("{projected}{geographic}");
+        let projected_count = u16::try_from(projected.len()).unwrap();
+        let geographic_count = u16::try_from(geographic.len()).unwrap();
+        let geokeys = [
+            1_u16,
+            1,
+            0,
+            2,
+            1026,
+            34737,
+            projected_count,
+            0,
+            2049,
+            34737,
+            geographic_count,
+            projected_count,
+        ];
+        let mut bytes = Cursor::new(Vec::new());
+        {
+            let mut encoder = TiffEncoder::new(&mut bytes).unwrap();
+            let mut image = encoder.new_image::<colortype::Gray8>(1, 1).unwrap();
+            image
+                .encoder()
+                .write_tag(Tag::GeoAsciiParamsTag, ascii.as_str())
+                .unwrap();
+            image
+                .encoder()
+                .write_tag(Tag::GeoKeyDirectoryTag, &geokeys[..])
+                .unwrap();
+            image.write_data(&[0]).unwrap();
+        }
+        bytes.set_position(0);
+        let mut decoder = Decoder::new(bytes).unwrap();
+        let (_, authority) = read_crs(&mut decoder).unwrap().unwrap();
+        let authority = authority.unwrap();
+        assert_eq!(authority.get("code").map(String::as_str), Some("49912"));
+    }
 
     fn decoder_with_tags(
         pixel_scale: Option<&[f64]>,

@@ -16,13 +16,25 @@ FIXTURES = {
         236_168,
         "b640e9dcefd1040f0b184a101e1eab2740486a85680a560080ec091eab796fe4",
     ),
+    "assets/geoid/mars_areoid_n179.bin": (
+        260_664,
+        "a36346d659c4533ab8a3280069b9011e3e4ce650a23fa7070a3d6cadcda510b9",
+    ),
+    "assets/geoid/mars_areoid_n179.manifest.json": (
+        1_461,
+        "40a1f3ce1daace6bfddff75bdc6db3e1f4451c6241f7d00387644165855b215b",
+    ),
     "tests/data/geodtest_subset.dat": (
-        9_909,
-        "f460ba6571072074abc2e0027709ea70ee7293c6882266d3e38da2479f47f752",
+        9_854,
+        "8dbea72eabe48c0da21497e1f140090a234382ad9ba298ed111b9566feebcdf3",
     ),
     "tests/data/egm96_test_values.txt": (
-        2_004,
-        "c9a04bb2ab01941598591b0af919c8b65e6b98b85b901424e68193ceb80db6f6",
+        1_980,
+        "b7a6f64b2f6ea17918b82efdc19bb2b8dd3941e6c58d28fb134b158b14e4958b",
+    ),
+    "tests/data/mars_areoid_reference.txt": (
+        1_839,
+        "8e321576ed85712a31f4ed22012f2cad14133af31ad927b98dcc9fcd969bd3d7",
     ),
 }
 
@@ -89,10 +101,11 @@ def main() -> None:
     for relative, (expected_size, expected_sha256) in FIXTURES.items():
         path = ROOT / relative
         data = path.read_bytes()
-        digest = hashlib.sha256(data).hexdigest()
-        assert len(data) == expected_size, (relative, len(data), expected_size)
+        canonical = data if path.suffix == ".bin" else data.replace(b"\r\n", b"\n")
+        digest = hashlib.sha256(canonical).hexdigest()
+        assert len(canonical) == expected_size, (relative, len(canonical), expected_size)
         assert digest == expected_sha256, (relative, digest, expected_sha256)
-        print(f"verified {relative}: {len(data)} bytes sha256={digest}")
+        print(f"verified {relative}: {len(canonical)} bytes sha256={digest}")
     if args.geodtest_short:
         verify_geodtest_source(args.geodtest_short)
     if args.egm96_spherical:

@@ -221,7 +221,7 @@ def test_cog_unwrap_ablation_fails_module_and_source_allowlist_without_rewriting
     source_offenders = _allowlist_offenders(
         _source_counts(source_overrides=overrides), ratchet
     )
-    assert "terrain.unwrap: 26 > ratchet 25" in module_offenders
+    assert "terrain.unwrap: 32 > ratchet 31" in module_offenders
     assert any(
         rel in offender and ("missing=" in offender or ".unwrap: 1 > allowlist 0" in offender)
         for offender in source_offenders

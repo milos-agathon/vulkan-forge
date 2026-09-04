@@ -12,3 +12,5 @@ pub use helpers::{
 pub use pool::{global_pools, init_global_pools, MemoryPoolManager, PoolBlock};
 pub use registry::{global_tracker, ResourceRegistry};
 pub use types::{DefragStats, MemoryMetrics, MemoryPoolStats};
+
+pub(crate) const MEMORY_BUDGET_LIMIT: u64 = 512 * 1024 * 1024;

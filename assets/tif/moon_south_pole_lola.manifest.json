@@ -1,0 +1,38 @@
+{
+  "asset": "assets/tif/moon_south_pole_lola.tif",
+  "asset_sha256": "575e4b57d69d5db1bc16d5cd7edc8c83c570e280717e9e7ca225c060fd0aeb3d",
+  "body": "Moon",
+  "bounds_degrees": {
+    "east": 60.0,
+    "north": -60.0,
+    "south": -90.0,
+    "west": 30.0
+  },
+  "crs": "IAU:30110",
+  "dimensions": {
+    "height": 480,
+    "width": 480
+  },
+  "height_reference": {
+    "surface": "IAU mean-Earth/polar-axis sphere",
+    "units": "metres",
+    "value": 1737400.0
+  },
+  "license": {
+    "notice": "NASA content generally is not subject to copyright in the United States; NASA must be acknowledged and use must not imply endorsement.",
+    "url": "https://www.nasa.gov/nasa-brand-center/images-and-media/"
+  },
+  "processing": [
+    "Read the NASA float32 TIFF whose elevations are kilometres relative to the 1737.4 km lunar sphere.",
+    "Crop source rows 2400:2880 and columns 3360:3840 (30E to 60E, 90S to 60S).",
+    "Multiply elevation values by 1000 to metres.",
+    "Write float32 GeoTIFF with 1895.2094015093426 metre pixels and IAU:30110 authority metadata."
+  ],
+  "source": {
+    "description": "NASA Scientific Visualization Studio CGI Moon Kit LOLA LDEM_16 displacement map, 16 pixels per degree",
+    "landing_page": "https://svs.gsfc.nasa.gov/4720/",
+    "retrieved_utc": "2026-07-26",
+    "sha256": "1ea42bf44f7e9d694f79c3afa7145f97fbf06cc67372067d9fe73dce43bad796",
+    "url": "https://svs.gsfc.nasa.gov/vis/a000000/a004700/a004720/ldem_16.tif"
+  }
+}

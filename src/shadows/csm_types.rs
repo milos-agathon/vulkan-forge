@@ -88,7 +88,7 @@ pub struct CsmUniforms {
     pub technique_flags: u32,
     /// Padding to align technique_params to 16-byte boundary
     pub _padding1: [f32; 3],
-    /// Primary technique parameters (pcss radius/filter, moment bias, light size)
+    /// PCSS blocker/max-filter texel radii, moment bias, and texel-space light radius.
     pub technique_params: [f32; 4],
     /// Reserved for future expansions (e.g., MSM tuning)
     pub technique_reserved: [f32; 4],
@@ -117,8 +117,8 @@ impl Default for CsmUniforms {
             slope_bias: 0.01,
             shadow_map_size: 2048.0,
             debug_mode: 0,
-            evsm_positive_exp: 40.0,
-            evsm_negative_exp: 5.0,
+            evsm_positive_exp: crate::shadows::EVSM_MAX_EXPONENT_RGBA16F,
+            evsm_negative_exp: crate::shadows::EVSM_MAX_EXPONENT_RGBA16F,
             peter_panning_offset: 0.001,
             enable_unclipped_depth: 0,
             depth_clip_factor: 1.0,
@@ -154,9 +154,9 @@ pub struct CsmConfig {
     pub peter_panning_offset: f32,
     /// Enable EVSM filtering
     pub enable_evsm: bool,
-    /// EVSM positive exponent (typical: 20-80)
+    /// EVSM positive exponent
     pub evsm_positive_exp: f32,
-    /// EVSM negative exponent (typical: 20-80)
+    /// EVSM negative exponent
     pub evsm_negative_exp: f32,
     /// Debug visualization mode
     pub debug_mode: u32,
@@ -182,14 +182,40 @@ impl Default for CsmConfig {
             slope_bias: 0.01,
             peter_panning_offset: 0.001,
             enable_evsm: false,
-            evsm_positive_exp: 40.0,
-            evsm_negative_exp: 40.0,
+            evsm_positive_exp: crate::shadows::EVSM_MAX_EXPONENT_RGBA16F,
+            evsm_negative_exp: crate::shadows::EVSM_MAX_EXPONENT_RGBA16F,
             debug_mode: 0,
             enable_unclipped_depth: false,
             depth_clip_factor: 1.0,
             stabilize_cascades: true,
             cascade_blend_range: 0.0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rgba16f_evsm_defaults_match_the_supported_exponent() {
+        let config = CsmConfig::default();
+        let uniforms = CsmUniforms::default();
+
+        assert_eq!(
+            (config.evsm_positive_exp, config.evsm_negative_exp),
+            (
+                crate::shadows::EVSM_MAX_EXPONENT_RGBA16F,
+                crate::shadows::EVSM_MAX_EXPONENT_RGBA16F,
+            )
+        );
+        assert_eq!(
+            (uniforms.evsm_positive_exp, uniforms.evsm_negative_exp),
+            (
+                crate::shadows::EVSM_MAX_EXPONENT_RGBA16F,
+                crate::shadows::EVSM_MAX_EXPONENT_RGBA16F,
+            )
+        );
     }
 }
 

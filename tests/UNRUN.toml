@@ -1,6 +1,8 @@
 # tests/UNRUN.toml
-# CENSOR Task 13: files the default CI Python lane (scripts/ci_pytest_lane.py)
-# must NOT collect, each with an honest, owner-attributed, expiring reason.
+# CENSOR Task 13: files the explicit full acceptance profile
+# (`scripts/ci_pytest_lane.py --profile full`) must NOT collect, each with an
+# honest, owner-attributed, expiring reason. Routine pull requests use the
+# focused `--profile fast` list and do not add every unselected test here.
 # A file belongs here ONLY if it fails or errors on a stock GitHub-hosted CI
 # runner (no discrete GPU, no optional pip extras, only tracked files present)
 # AND does not already self-skip. This list may only shrink.
@@ -9,9 +11,9 @@
 #   1. Full suite collected cleanly locally: 2936 tests, 0 collection errors.
 #   2. Faithful CI simulation: a detached `git worktree` of HEAD, the built
 #      _forge3d.pyd copied in, run with GITHUB_ACTIONS=true so the
-#      hosted-CI terrain/GPU guards fire like a real runner. That single
-#      `pytest tests/` invocation is authoritative because the CI lane runs the
-#      whole tree at once (per-file/isolated runs disagree due to global GPU
+#      hosted-CI terrain/GPU guards fire like a real runner. That single full
+#      acceptance invocation is authoritative for the complete profile
+#      (per-file/isolated runs disagree due to global GPU
 #      and lighting state -- e.g. test_lighting_alignment passes in-suite).
 #   3. Every paired example used by a collected test is committed; the root
 #      conftest has no collection bypass for absent local files.
@@ -57,10 +59,3 @@ file = "tests/test_mapscene_sutura_integrity.py"
 reason = "requires_hardware_adapter: save/load re-render SSIM needs native terrain adapter; raises MapSceneNativeUnavailable with no CPU skip on GPU-less runners"
 owner = "milos"
 expires = "2026-10-10"
-
-# --- CI-only decode divergence under investigation ----------------------------
-[[entries]]
-file = "tests/test_cog_streaming.py"
-reason = "ci_only_lzw_divergence: tile reads fail on hosted runners with LZW 'code out of range' while the identical LFS object decodes cleanly across every tile locally (verified 2026-07-11); needs on-runner debugging of the fetched bytes/decoder"
-owner = "milos"
-expires = "2026-08-15"

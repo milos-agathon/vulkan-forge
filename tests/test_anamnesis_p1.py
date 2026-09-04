@@ -85,6 +85,14 @@ def test_p1_rejecting_controls_cover_recompute_and_complete_disk_bound():
     assert "cache=None" not in native_acceptance
     assert '"incremental_native_invocations": 600' in native_acceptance
     assert '"graph_command_submissions"' in native_acceptance
+    assert "expected_seed_misses = list(_NATIVE_PASSES) * 600" in native_acceptance
+    assert 'seed_report["misses"] != expected_seed_misses' in native_acceptance
+    assert 'or seed_report["hits"]' in native_acceptance
+    assert 'seed_report["graph_command_submissions"] != 3600' in native_acceptance
+    assert 'result["matching_frames"] != 600' in native_acceptance
+    assert 'result["speedup"] < 20.0' in native_acceptance
+    assert "1801" not in native_acceptance
+    assert "2402" not in native_acceptance
     assert "changed_report[\"misses\"] != list(_NATIVE_PASSES)" in native_acceptance
 
 
@@ -101,6 +109,9 @@ def test_p1_portability_and_production_lanes_fail_closed():
         assert "probe_status" in job
         assert 'exit "$probe_status"' in job
         assert "grep -Eq" not in job
+    assert hosted_seed.index("Classify the hosted Vulkan adapter") < hosted_seed.index(
+        "Gate ANAMNESIS incrementality"
+    )
 
     physical_seed = _job(
         ci, "test-anamnesis-portability-seed", "test-anamnesis-portability"
@@ -108,7 +119,7 @@ def test_p1_portability_and_production_lanes_fail_closed():
     physical_consumer = _job(
         ci, "test-anamnesis-portability", "test-anamnesis-production"
     )
-    production = _job(ci, "test-anamnesis-production", "build-docs")
+    production = _job(ci, "test-anamnesis-production", "determinism-render")
     physical_runner = (
         "runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]"
     )

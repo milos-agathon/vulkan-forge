@@ -1,0 +1,17 @@
+format_version = 2
+path = "horizons_vectors.dat"
+source = "NASA/JPL Horizons API"
+source_url = "https://ssd-api.jpl.nasa.gov/doc/horizons.html"
+license = "NASA/JPL public ephemeris data"
+generation_command = "python tools/generate_sidera_assets.py --horizons"
+settings = "coord@399, GEODETIC, ICRF, AIRLESS, DE441, quantities 4/10/13/20/24/30/49"
+generated_utc = "2026-08-05"
+ephemeris = "DE441"
+eop_files = "eop.260804.p261031"
+combinations = 40
+unique_epochs = 8
+vectors = 280
+moon_phase_vectors = 8
+moon_window_vectors = 621
+delta_t_midmonth_vectors = 612
+sha256 = "ef8811f5a62d2e449de8d9efe8f4147b8573075e49cbe2f262ca80c158ba1b8a"

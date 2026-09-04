@@ -13,6 +13,30 @@ owner = "render-quality"
 expiry = "2027-01-17"
 
 [[unproven]]
+path = "src/shaders/atmosphere/evaluation_core.wgsl"
+reason = "atmosphere/evaluation_core.wgsl: the shared quadrilinear 3D texture dimension and packed height-by-nu coordinate relations are not yet modeled standalone; its loop-free 16-sample segment integral is proven transitively through the terrain AETHER lemmas, and all three assembled consumers are Naga-validated"
+owner = "atmosphere"
+expiry = "2027-08-06"
+
+[[unproven]]
+path = "src/shaders/atmosphere/prometheus_aerial.wgsl"
+reason = "atmosphere/prometheus_aerial.wgsl: fixed spectral-array loops together with 3D LUT coordinate and dimension relations are not yet modeled; dedicated physical Metal closure and AOV-preservation acceptance tests exercise the shipped path"
+owner = "atmosphere"
+expiry = "2027-08-06"
+
+[[unproven]]
+path = "src/shaders/atmosphere/prometheus_spectral_reference.wgsl"
+reason = "atmosphere/prometheus_spectral_reference.wgsl: stochastic delta tracking, RNG, spectral-loop, pointer, and hybrid traversal relations are not yet modeled; deterministic estimator contracts plus seed, variance, terrain-hit, and physical Metal colorimetric tests exercise the shipped path"
+owner = "atmosphere"
+expiry = "2027-08-06"
+
+[[unproven]]
+path = "src/shaders/atmosphere/scattering.wgsl"
+reason = "atmosphere/scattering.wgsl: 3D LUT sampling plus Cornette-Shanks and nonlinear horizon-coordinate envelopes are not yet modeled; Rust bake convergence and physical colorimetric acceptance tests provide executable coverage"
+owner = "atmosphere"
+expiry = "2027-08-06"
+
+[[unproven]]
 path = "src/shaders/bloom_blur_h.wgsl"
 reason = "bloom_blur_h.wgsl: texture/resource dimension and sampling relations are not yet modeled"
 owner = "render-quality"
@@ -53,6 +77,12 @@ path = "src/shaders/includes/dd.wgsl"
 reason = "includes/dd.wgsl: paired-f32 error-free transformation precision is proven by backend bounds but not yet modeled"
 owner = "precision"
 expiry = "2027-07-18"
+
+[[unproven]]
+path = "src/shaders/includes/shadow_moments.wgsl"
+reason = "includes/shadow_moments.wgsl: EVSM and MSM helper domains, fp16 rounding, and negative-lobe monotonicity are not yet modeled"
+owner = "render-quality"
+expiry = "2027-07-30"
 
 [[unproven]]
 path = "src/shaders/brdf/ashikhmin_shirley.wgsl"
@@ -145,12 +175,6 @@ owner = "render-quality"
 expiry = "2027-01-17"
 
 [[unproven]]
-path = "src/shaders/csm.wgsl"
-reason = "csm.wgsl: texture/resource dimension and sampling relations are not yet modeled"
-owner = "render-quality"
-expiry = "2027-01-17"
-
-[[unproven]]
 path = "src/shaders/culling_compute.wgsl"
 reason = "culling_compute.wgsl: storage-buffer index and count relations are not yet modeled"
 owner = "render-quality"
@@ -223,6 +247,24 @@ owner = "render-quality"
 expiry = "2027-01-17"
 
 [[unproven]]
+path = "src/shaders/terrain_visbuffer_resolve.wgsl"
+reason = "terrain_visbuffer_resolve.wgsl: the single relation not yet modeled is the fixed-index read of frame_counters[0..3] from a runtime-sized array<u32>. The shader never queries arrayLength, and validate_contract_semantics rejects a fixed length on a runtime array, so a contract would have to bound that buffer with a length symbol or an invariant. The gid >= textureDimensions early return and the atomic accounting stores are already inside the prover vocabulary, so this waiver covers one clause, not the pass"
+owner = "terrain-streaming"
+expiry = "2027-01-28"
+
+[[unproven]]
+path = "src/shaders/terrain_visbuffer_write.wgsl"
+reason = "terrain_visbuffer_write.wgsl: no verifier imprecision applies - the pass is pure bit packing over a flat-interpolated u32 and primitive_index, with no indexing, division or sampling, so nothing in it is unsupported by ir::prove_wgsl. It is unproven only because it has no PROVEN_TARGETS row and contract yet; promote it in src/verify/mod.rs instead of renewing this waiver"
+owner = "terrain-streaming"
+expiry = "2027-01-28"
+
+[[unproven]]
+path = "src/shaders/terrain_visibility_fullscreen.wgsl"
+reason = "terrain_visibility_fullscreen.wgsl: four texel-derived storage indices are not yet modeled because no comparison binds them to an arrayLength - terrain_visibility_templates[tile_index * variant_count + selected_lod], the three terrain_visibility_indices[first + k] loads, and terrain_visibility_vertices[index] inside visibility_reconstruct_vertex, which additionally crosses a helper-function boundary and adds a signed base_vertex. The perspective divides are guarded now (visibility_safe_w), so discharge needs only bounds guards on those four indices plus a PROVEN_TARGETS row, measured against the 300 s verdict budget because it re-proves a second full terrain assembly"
+owner = "terrain-streaming"
+expiry = "2027-01-28"
+
+[[unproven]]
 path = "src/shaders/hybrid_kernel.wgsl"
 reason = "hybrid_kernel.wgsl: texture/resource dimension and sampling relations are not yet modeled"
 owner = "render-quality"
@@ -237,6 +279,12 @@ expiry = "2027-01-17"
 [[unproven]]
 path = "src/shaders/hzb_build.wgsl"
 reason = "hzb_build.wgsl: texture/resource dimension and sampling relations are not yet modeled"
+owner = "render-quality"
+expiry = "2027-01-17"
+
+[[unproven]]
+path = "src/shaders/hzb_cull.wgsl"
+reason = "hzb_cull.wgsl: the projected-AABB and HZB relations are ordinary clamp/min/max and textureLoad forms; what is not yet modeled in cs_main is four storage indices that no comparison binds to an arrayLength - output_args[out_index] and output_instances[out_index] from an unbounded atomicAdd on output_header.draw_count, rejected_indices[rejected_index] from the same pattern on rejected_count, and input_tiles/input_args/input_instances[source_index] where source_index comes from rejected_indices[i] in phase 2. Discharge needs those bounded plus a PROVEN_TARGETS row"
 owner = "render-quality"
 expiry = "2027-01-17"
 
@@ -577,6 +625,12 @@ owner = "render-quality"
 expiry = "2027-01-17"
 
 [[unproven]]
+path = "src/shaders/stars.wgsl"
+reason = "stars.wgsl: texture/resource dimension and sampling relations are not yet modeled"
+owner = "render-quality"
+expiry = "2027-01-17"
+
+[[unproven]]
 path = "src/shaders/taa.wgsl"
 reason = "taa.wgsl: texture/resource dimension and sampling relations are not yet modeled"
 owner = "render-quality"
@@ -587,6 +641,12 @@ path = "src/shaders/temporal/resolve_ao.wgsl"
 reason = "temporal/resolve_ao.wgsl: texture/resource dimension and sampling relations are not yet modeled"
 owner = "render-quality"
 expiry = "2027-01-17"
+
+[[unproven]]
+path = "src/shaders/terrain_aether_blit.wgsl"
+reason = "terrain_aether_blit.wgsl: the display-only pass has no PROVEN_TARGETS contract yet and its sampled-texture coordinate relation is not yet modeled; source contracts and physical render acceptance tests lock linear-HDR ordering"
+owner = "atmosphere"
+expiry = "2027-08-06"
 
 [[unproven]]
 path = "src/shaders/terrain_blit.wgsl"
@@ -621,6 +681,12 @@ expiry = "2027-01-17"
 [[unproven]]
 path = "src/shaders/terrain_shadow_depth.wgsl"
 reason = "terrain_shadow_depth.wgsl: texture/resource dimension and sampling relations are not yet modeled"
+owner = "render-quality"
+expiry = "2027-01-17"
+
+[[unproven]]
+path = "src/shaders/terrain_viewshed.wgsl"
+reason = "terrain_viewshed.wgsl: storage-buffer dimensions and line-of-sight loop relations are not yet modeled"
 owner = "render-quality"
 expiry = "2027-01-17"
 

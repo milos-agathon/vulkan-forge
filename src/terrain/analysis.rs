@@ -6,6 +6,9 @@
 
 use std::f32::consts::PI;
 
+#[path = "analysis/viewshed.rs"]
+pub mod viewshed;
+
 /// Slope and aspect data for a single point
 #[derive(Debug, Clone)]
 pub struct SlopeAspect {

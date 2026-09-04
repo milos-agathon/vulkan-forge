@@ -328,7 +328,19 @@ def test_mapscene_routes_virtual_texture_metadata_to_renderer(tmp_path, monkeypa
                             "virtual_size_px": [512, 512],
                             "tile_size": 120,
                             "tile_border": 4,
-                        }
+                        },
+                        {
+                            "family": "normal",
+                            "virtual_size_px": [512, 512],
+                            "tile_size": 120,
+                            "tile_border": 4,
+                        },
+                        {
+                            "family": "mask",
+                            "virtual_size_px": [512, 512],
+                            "tile_size": 120,
+                            "tile_border": 4,
+                        },
                     ],
                     "atlas_size": 1024,
                     "residency_budget_mb": 16.0,
@@ -361,6 +373,16 @@ def test_mapscene_routes_virtual_texture_metadata_to_renderer(tmp_path, monkeypa
         @staticmethod
         def from_hdr(_path, intensity=1.0, rotate_deg=0.0, quality="auto"):
             return "ibl"
+
+    class FakeColormap:
+        @staticmethod
+        def from_stops(*, stops, domain):
+            return (stops, domain)
+
+    class FakeOverlay:
+        @staticmethod
+        def from_colormap1d(*_args, **_kwargs):
+            return "overlay"
 
     class FakeParams:
         def __init__(self, config):
@@ -399,8 +421,11 @@ def test_mapscene_routes_virtual_texture_metadata_to_renderer(tmp_path, monkeypa
     monkeypatch.setattr(f3d, "Session", FakeSession)
     monkeypatch.setattr(f3d, "MaterialSet", FakeMaterialSet)
     monkeypatch.setattr(f3d, "IBL", FakeIbl)
+    monkeypatch.setattr(f3d, "Colormap1D", FakeColormap)
+    monkeypatch.setattr(f3d, "OverlayLayer", FakeOverlay)
     monkeypatch.setattr(f3d, "TerrainRenderParams", FakeParams)
     monkeypatch.setattr(f3d, "TerrainRenderer", FakeTerrainRenderer)
+    monkeypatch.setattr(map_scene, "_terrain_renderer_runtime_available", lambda: True)
 
     scene.render(str(tmp_path / "vt-metadata.png"))
 
@@ -408,10 +433,14 @@ def test_mapscene_routes_virtual_texture_metadata_to_renderer(tmp_path, monkeypa
     assert captured["vt"].enabled is True
     assert captured["vt"].atlas_size == 1024
     assert captured["vt"].layers[0].virtual_size_px == (512, 512)
-    assert len(captured["sources"]) == 2
-    assert captured["sources"][0]["family"] == "albedo"
+    assert len(captured["sources"]) == 6
+    assert {source["family"] for source in captured["sources"]} == {
+        "albedo",
+        "normal",
+        "mask",
+    }
     assert captured["sources"][0]["shape"] == (512, 512, 4)
-    assert scene.last_render_metadata["material_vt_stats"]["source_count"] == 2.0
+    assert scene.last_render_metadata["material_vt_stats"]["source_count"] == 6.0
 
 
 def test_derive_water_mask_detects_low_flat_regions():

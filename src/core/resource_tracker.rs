@@ -62,9 +62,9 @@ fn register_buffer_with_ledger(
     is_host_visible: bool,
     label: String,
     call_site: String,
-) -> ResourceHandle {
+) -> Result<ResourceHandle, RenderError> {
     let tracker = global_tracker();
-    tracker.track_buffer_allocation(size, is_host_visible);
+    tracker.track_buffer_allocation_labeled(size, is_host_visible, &label)?;
     tracker.track_ledger_allocation(size, is_host_visible);
     let ledger_id = ledger().insert(
         label,
@@ -73,11 +73,11 @@ fn register_buffer_with_ledger(
         LedgerCategory::Buffer,
         call_site,
     );
-    ResourceHandle::Buffer {
+    Ok(ResourceHandle::Buffer {
         size,
         is_host_visible,
         ledger_id,
-    }
+    })
 }
 
 fn register_texture_with_ledger(size: u64, label: String, call_site: String) -> ResourceHandle {
@@ -90,7 +90,7 @@ fn register_texture_with_ledger(size: u64, label: String, call_site: String) -> 
 
 /// Register a buffer allocation and return a handle that will unregister on drop
 #[track_caller]
-pub fn register_buffer(size: u64, usage: BufferUsages) -> ResourceHandle {
+pub fn register_buffer(size: u64, usage: BufferUsages) -> Result<ResourceHandle, RenderError> {
     let is_host_visible = is_host_visible_usage(usage);
     let call_site = caller_label();
     register_buffer_with_ledger(size, is_host_visible, call_site.clone(), call_site)
@@ -111,9 +111,21 @@ pub fn register_texture_bytes(size: u64) -> ResourceHandle {
 
 /// Register a buffer allocation with explicit host-visible flag
 #[track_caller]
-pub fn register_buffer_explicit(size: u64, is_host_visible: bool) -> ResourceHandle {
+pub fn register_buffer_explicit(
+    size: u64,
+    is_host_visible: bool,
+) -> Result<ResourceHandle, RenderError> {
     let call_site = caller_label();
     register_buffer_with_ledger(size, is_host_visible, call_site.clone(), call_site)
+}
+
+/// Register a scoped non-wgpu host allocation after enforcing the global
+/// host-visible budget. This is used for transient upload encodings whose
+/// backing `Vec` is otherwise invisible to the GPU resource wrappers.
+#[track_caller]
+pub fn tracked_host_allocation(size: u64, label: &str) -> Result<ResourceHandle, RenderError> {
+    let call_site = caller_label();
+    register_buffer_with_ledger(size, true, label.to_owned(), call_site)
 }
 
 // ---------------------------------------------------------------------------
@@ -739,11 +751,8 @@ pub fn tracked_create_buffer(
         .label
         .map(|s| s.to_string())
         .unwrap_or_else(|| call_site.clone());
-    if host_visible {
-        global_tracker().check_budget_labeled(desc.size, &label)?;
-    }
+    let registry = register_buffer_with_ledger(desc.size, host_visible, label, call_site)?;
     let buffer = device.create_buffer(desc);
-    let registry = register_buffer_with_ledger(desc.size, host_visible, label, call_site);
     Ok(TrackedBuffer {
         inner: buffer,
         _registry: registry,
@@ -767,11 +776,8 @@ pub fn tracked_create_buffer_init(
     let unpadded = desc.contents.len() as u64;
     let align_mask = wgpu::COPY_BUFFER_ALIGNMENT - 1;
     let size = ((unpadded + align_mask) & !align_mask).max(wgpu::COPY_BUFFER_ALIGNMENT);
-    if host_visible {
-        global_tracker().check_budget_labeled(size, &label)?;
-    }
+    let registry = register_buffer_with_ledger(size, host_visible, label, call_site)?;
     let buffer = device.create_buffer_init(desc);
-    let registry = register_buffer_with_ledger(size, host_visible, label, call_site);
     Ok(TrackedBuffer {
         inner: buffer,
         _registry: registry,
@@ -840,7 +846,9 @@ mod tests {
 
         // Test buffer handle
         {
-            global_tracker().track_buffer_allocation(1024, true);
+            global_tracker()
+                .track_buffer_allocation(1024, true)
+                .expect("test allocation fits budget");
             global_tracker().track_ledger_allocation(1024, true);
             let handle = ResourceHandle::Buffer {
                 size: 1024,
@@ -855,7 +863,9 @@ mod tests {
             };
 
             // Manually track allocation to simulate what register_buffer does
-            registry.track_buffer_allocation(1024, true);
+            registry
+                .track_buffer_allocation(1024, true)
+                .expect("test allocation fits budget");
 
             let metrics = registry.get_metrics();
             assert_eq!(metrics.buffer_count, 1);
@@ -873,7 +883,7 @@ mod tests {
         let initial_metrics = global_tracker().get_metrics();
 
         {
-            let _handle = register_buffer(2048, usage);
+            let _handle = register_buffer(2048, usage).expect("test allocation fits budget");
             let after_alloc_metrics = global_tracker().get_metrics();
 
             // Should have increased by our allocation
@@ -1413,7 +1423,7 @@ mod tests {
     fn global_ledger_registry_cross_check_matches_both_axes() {
         let before_ledger = ledger_snapshot();
         let before_registry = global_tracker().ledger_totals();
-        let _handle = register_buffer_explicit(4096, true);
+        let _handle = register_buffer_explicit(4096, true).expect("test allocation fits budget");
         let ledger = ledger_snapshot();
         let registry = global_tracker().ledger_totals();
         assert_eq!(ledger.current_host_visible_bytes, registry.0);
@@ -1424,6 +1434,48 @@ mod tests {
         );
         assert_eq!(registry.0, before_registry.0 + 4096);
         assert!(ledger_registry_cross_check().is_ok());
+    }
+
+    #[test]
+    fn mixed_host_visible_paths_atomically_enforce_aggregate_budget() {
+        let _policy_guard = save_policy();
+        global_tracker()
+            .set_budget_policy("enforce")
+            .expect("valid policy");
+        let tracker = global_tracker();
+        let before = tracker.get_metrics().host_visible_bytes;
+        let available = tracker
+            .get_budget_limit()
+            .checked_sub(before)
+            .expect("tracker starts within budget");
+        let request = available / 2 + 1;
+        let start = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let scoped_start = std::sync::Arc::clone(&start);
+        let scoped = std::thread::spawn(move || {
+            scoped_start.wait();
+            tracked_host_allocation(request, "mixed.atomic.scoped")
+        });
+        let ordinary_start = std::sync::Arc::clone(&start);
+        let ordinary = std::thread::spawn(move || {
+            ordinary_start.wait();
+            register_buffer_explicit(request, true)
+        });
+        start.wait();
+        let scoped_result = scoped.join().expect("scoped path completes");
+        let ordinary_result = ordinary.join().expect("ordinary path completes");
+        let success_count =
+            usize::from(scoped_result.is_ok()) + usize::from(ordinary_result.is_ok());
+        assert_eq!(success_count, 1, "exactly one racing reservation must fit");
+        let failure_count = usize::from(matches!(&scoped_result, Err(RenderError::Budget(_))))
+            + usize::from(matches!(&ordinary_result, Err(RenderError::Budget(_))));
+        assert_eq!(
+            failure_count, 1,
+            "the losing path returns a typed budget error"
+        );
+        assert_eq!(tracker.get_metrics().host_visible_bytes, before + request);
+        drop(scoped_result);
+        drop(ordinary_result);
+        assert_eq!(tracker.get_metrics().host_visible_bytes, before);
     }
 
     #[test]

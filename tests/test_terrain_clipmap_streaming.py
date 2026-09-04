@@ -26,6 +26,7 @@ from _terrain_runtime import (
     _write_test_hdr,
     terrain_rendering_available,
 )
+from forge3d.diagnostics import render_certificate
 from forge3d.terrain_params import PomSettings, make_terrain_params_config
 
 requires_terrain = pytest.mark.skipif(
@@ -59,12 +60,17 @@ def _make_params(
     phi_deg: float = 28.0,
     cam_radius: float = 1.0,
     z_scale: float = 1.2,
+    culling: str = "frustum",
+    shading: str = "forward",
+    vt=None,
+    terrain_span: float = TERRAIN_SPAN_M,
+    cam_target: tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> "f3d.TerrainRenderParams":
     return f3d.TerrainRenderParams(
         make_terrain_params_config(
             size_px=size_px,
             render_scale=1.0,
-            terrain_span=TERRAIN_SPAN_M,
+            terrain_span=terrain_span,
             msaa_samples=1,
             z_scale=z_scale,
             exposure=1.0,
@@ -78,9 +84,13 @@ def _make_params(
             cam_radius=cam_radius,
             cam_phi_deg=phi_deg,
             cam_theta_deg=theta_deg,
+            cam_target=list(cam_target),
             fov_y_deg=45.0,
             camera_mode=camera_mode,
-            clip=(0.1, TERRAIN_SPAN_M * 1.5),
+            culling=culling,
+            shading=shading,
+            vt=vt,
+            clip=(0.1, terrain_span * 1.5),
             overlays=[_build_overlay()],
             pom=PomSettings(False, "Occlusion", 0.0, 1, 1, 0, False, False),
         )
@@ -131,6 +141,15 @@ def test_terrain_renderer_exposes_height_streaming_api():
 
 @requires_terrain
 class TestClipmapGeometryProvider:
+    def test_clipmap_render_uses_gpu_lod_indirect_draws(self, terrain_ibl):
+        renderer = f3d.TerrainRenderer(f3d.Session(window=False))
+        _render_rgba(renderer, _make_params(), _steep_dem(64), terrain_ibl)
+
+        certificate = render_certificate(sign=False)
+        main_pass = next(p for p in certificate["passes"] if p["label"] == "terrain.main")
+        assert main_pass["draw_calls"] >= 1
+        assert "clipmap_lod_select" in certificate["engine"]["wgsl_module_hashes"]
+
     def test_clipmap_render_is_deterministic(self, terrain_ibl):
         session = f3d.Session(window=False)
         renderer = f3d.TerrainRenderer(session)
@@ -172,6 +191,33 @@ class TestClipmapGeometryProvider:
 class TestHeightStreamingFlyThrough:
     LOD = 2
     TILE_RES = 64
+
+    def test_disable_height_streaming_clears_public_family_stats(self):
+        session = f3d.Session(window=False)
+        renderer = f3d.TerrainRenderer(session)
+        renderer.enable_height_streaming(
+            terrain_extent_m=TERRAIN_SPAN_M,
+            ring_count=2,
+            ring_resolution=16,
+            lod=1,
+            tile_resolution=32,
+            max_in_flight=4,
+            pool_size=1,
+            dem=_steep_dem(64),
+            coarse_prefill=False,
+            max_resident_bytes=1024 * 1024,
+        )
+        renderer.stream_height_tiles((0.0, 500.0, 0.0), max_uploads=1)
+        active_stats = f3d.terrain_vt_stats()
+        assert active_stats["budget_bytes_height"] > 0
+        assert active_stats["height_pending_requests"] > 0
+
+        renderer.disable_height_streaming()
+        disabled_stats = f3d.terrain_vt_stats()
+        assert disabled_stats["resident_tiles_height"] == 0
+        assert disabled_stats["resident_bytes_height"] == 0
+        assert disabled_stats["budget_bytes_height"] == 0
+        assert disabled_stats["height_pending_requests"] == 0
 
     def test_fly_through_streams_tiles_without_holes_and_bounded_memory(self, terrain_ibl):
         session = f3d.Session(window=False)
@@ -243,5 +289,10 @@ class TestHeightStreamingFlyThrough:
         assert abs(last_stats["center"][0] - float(waypoints[-1])) < TERRAIN_SPAN_M * 0.05
 
         renderer.disable_height_streaming()
+        disabled_stats = f3d.terrain_vt_stats()
+        assert disabled_stats["resident_tiles_height"] == 0
+        assert disabled_stats["resident_bytes_height"] == 0
+        assert disabled_stats["budget_bytes_height"] == 0
+        assert disabled_stats["height_pending_requests"] == 0
         with pytest.raises(RuntimeError, match="height streaming not enabled"):
             renderer.height_streaming_stats()

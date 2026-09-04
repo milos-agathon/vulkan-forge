@@ -225,6 +225,16 @@ impl HybridPathTracer {
                 usage: wgpu::BufferUsages::UNIFORM,
             },
         )?;
+        let earth_curvature =
+            <super::terrain_heightfield::EarthCurvatureUniforms as bytemuck::Zeroable>::zeroed();
+        let earth_curvature_ubo = tracked_create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("hybrid-pt-earth-curvature-ubo"),
+                contents: bytemuck::bytes_of(&earth_curvature),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        )?;
         let dummy_welford = tracked_create_buffer(
             device,
             &wgpu::BufferDescriptor {
@@ -292,6 +302,10 @@ impl HybridPathTracer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 10,
+                    resource: earth_curvature_ubo.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
                     resource: wgpu::BindingResource::TextureView(&albedo_view),
                 },
             ],

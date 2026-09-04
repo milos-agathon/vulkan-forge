@@ -836,11 +836,11 @@ fn build_hlod_cache(
         let vertex_handle = register_buffer(
             vertex_buffer_bytes,
             wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        );
+        )?;
         let index_handle = register_buffer(
             index_buffer_bytes,
             wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        );
+        )?;
 
         let vbuf = tracked_create_buffer(
             device,
@@ -1080,11 +1080,11 @@ fn build_gpu_level(
     let vertex_handle = register_buffer(
         vertex_buffer_bytes,
         wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-    );
+    )?;
     let index_handle = register_buffer(
         index_buffer_bytes,
         wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-    );
+    )?;
 
     let vbuf = tracked_create_buffer(
         device,
@@ -1143,7 +1143,7 @@ fn ensure_instance_capacity(
     let handle = register_buffer(
         bytes,
         wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-    );
+    )?;
     let buffer = tracked_create_buffer(
         device,
         &wgpu::BufferDescriptor {

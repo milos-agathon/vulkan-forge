@@ -9,6 +9,54 @@ fn py_codec_error(error: crate::codec::f3dz::F3dzError) -> PyErr {
 }
 
 #[pyfunction]
+pub(crate) fn encode_bc7_rgba8<'py>(
+    py: Python<'py>,
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let encoded = crate::core::compressed_textures::encode_bc7_rgba8(rgba, width, height)
+        .map_err(PyValueError::new_err)?;
+    Ok(PyBytes::new_bound(py, &encoded))
+}
+
+#[pyfunction]
+pub(crate) fn decode_bc7_rgba8<'py>(
+    py: Python<'py>,
+    blocks: &[u8],
+    width: u32,
+    height: u32,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let decoded = crate::core::compressed_textures::decode_bc7_rgba8(blocks, width, height)
+        .map_err(PyValueError::new_err)?;
+    Ok(PyBytes::new_bound(py, &decoded))
+}
+
+#[pyfunction]
+pub(crate) fn encode_bc5_rg8<'py>(
+    py: Python<'py>,
+    rg: &[u8],
+    width: u32,
+    height: u32,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let encoded = crate::core::compressed_textures::encode_bc5_rg8(rg, width, height)
+        .map_err(PyValueError::new_err)?;
+    Ok(PyBytes::new_bound(py, &encoded))
+}
+
+#[pyfunction]
+pub(crate) fn decode_bc5_rg8<'py>(
+    py: Python<'py>,
+    blocks: &[u8],
+    width: u32,
+    height: u32,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let decoded = crate::core::compressed_textures::decode_bc5_rg8(blocks, width, height)
+        .map_err(PyValueError::new_err)?;
+    Ok(PyBytes::new_bound(py, &decoded))
+}
+
+#[pyfunction]
 #[pyo3(signature = (dem, eps, progressive=true))]
 pub(crate) fn compress_dem<'py>(
     py: Python<'py>,

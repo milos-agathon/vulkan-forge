@@ -178,6 +178,10 @@ def pytest_configure(config):
     """Register custom markers for Workstream I tasks and P5.7."""
 
     config.addinivalue_line(
+        "markers",
+        "gpu_lane: TESSELLA physical-GPU acceptance gate",
+    )
+    config.addinivalue_line(
         "markers", "viewer: tests for interactive viewer functionality (Workstream I1)"
     )
     config.addinivalue_line(

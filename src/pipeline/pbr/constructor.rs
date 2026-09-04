@@ -63,7 +63,6 @@ impl PbrPipelineWithShadows {
             layout: &ibl_bind_group_layout,
             entries: &[
                 // @group(2) @binding(0) envSpecular : texture_cube<f32>
-                // Use 2D views until cubemap sampling is wired.
                 BindGroupEntry {
                     binding: 0,
                     resource: BindingResource::TextureView(&ibl_resources.prefilter_view),

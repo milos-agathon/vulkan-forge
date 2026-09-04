@@ -7,9 +7,11 @@ Tests the Plan 3 picking functionality including:
 - BVH-based picking
 """
 
-import pytest
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "python"))
 
@@ -25,21 +27,36 @@ from forge3d.viewer_ipc import (
 )
 
 
+RUN_REQUIRED = os.environ.get("RUN_M06_VIEWER_CI") == "1"
+pytestmark = [
+    pytest.mark.interactive_viewer,
+    pytest.mark.skipif(
+        not RUN_REQUIRED,
+        reason="required M-06 NVIDIA/Vulkan viewer lane only",
+    ),
+]
+
+
+def _required_dem_path() -> Path:
+    configured = os.environ.get("FORGE3D_TEST_DEM")
+    path = (
+        Path(configured)
+        if configured
+        else Path(__file__).parent.parent / "assets" / "tif" / "Mount_Fuji_30m.tif"
+    )
+    if not path.is_file():
+        pytest.fail(f"required M-06 viewer DEM does not exist: {path}")
+    return path
+
+
 @pytest.fixture(scope="module")
 def viewer_connection():
-    """Launch viewer and provide connection for tests."""
+    """Launch the exact required-lane viewer and provide its IPC connection."""
+    process, _, sock = launch_viewer(width=800, height=600, print_output=True)
     try:
-        process, port, sock = launch_viewer(width=800, height=600, print_output=False)
         yield sock, process
-    except FileNotFoundError:
-        pytest.skip("interactive_viewer binary not found - build with cargo build --release")
-    except Exception as e:
-        pytest.skip(f"Could not launch viewer: {e}")
     finally:
-        try:
-            close_viewer(sock, process)
-        except:
-            pass
+        close_viewer(sock, process)
 
 
 class TestVectorOverlayFeatureIds:
@@ -50,10 +67,8 @@ class TestVectorOverlayFeatureIds:
         sock, _ = viewer_connection
         
         # First load a terrain (required for vector overlays)
-        dem_path = Path(__file__).parent.parent / "assets" / "tif" / "Mount_Fuji_30m.tif"
-        if not dem_path.exists():
-            pytest.skip("Test DEM not found")
-        
+        dem_path = _required_dem_path()
+
         resp = send_ipc(sock, {"cmd": "load_terrain", "path": str(dem_path)})
         assert resp.get("ok", False), f"Failed to load terrain: {resp}"
         
@@ -139,11 +154,10 @@ class TestVertexFormat:
         """Test that vertices with 8 components (including feature_id) are accepted."""
         sock, _ = viewer_connection
         
-        # Load terrain first
-        dem_path = Path(__file__).parent.parent / "assets" / "tif" / "Mount_Fuji_30m.tif"
-        if not dem_path.exists():
-            pytest.skip("Test DEM not found")
-        
+        dem_path = _required_dem_path()
+        resp = send_ipc(sock, {"cmd": "load_terrain", "path": str(dem_path)})
+        assert resp.get("ok", False), f"Failed to load terrain: {resp}"
+
         # Try adding overlay - should not fail with parse error
         vertices = [
             [138.72, 4000.0, 35.36, 1.0, 0.0, 0.0, 1.0, 42.0],  # feature_id = 42
@@ -166,11 +180,6 @@ class TestVertexFormat:
     def test_7_component_vertices_should_fail(self, viewer_connection):
         """Test that vertices with only 7 components are rejected."""
         sock, _ = viewer_connection
-        
-        # Load terrain first
-        dem_path = Path(__file__).parent.parent / "assets" / "tif" / "Mount_Fuji_30m.tif"
-        if not dem_path.exists():
-            pytest.skip("Test DEM not found")
         
         # Try adding overlay with 7-component vertices - should fail
         vertices = [

@@ -31,6 +31,13 @@ impl ViewerTerrainScene {
         if self.motion_blur_pass.is_none() {
             self.init_motion_blur_pass();
         }
+        if self.motion_blur_depth_pass.is_none() {
+            self.motion_blur_depth_pass = Some(
+                super::super::motion_blur_depth::MotionBlurDepthAccumulator::new(
+                    self.device.clone(),
+                ),
+            );
+        }
 
         // Store original camera params
         let terrain = self.terrain.as_ref().unwrap();
@@ -72,6 +79,36 @@ impl ViewerTerrainScene {
             }
         };
         let accum_view = accum_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let coverage_depth = match tracked_create_texture(
+            &self.device,
+            &wgpu::TextureDescriptor {
+                label: Some("terrain_viewer.motion_blur_coverage_depth"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            },
+        ) {
+            Ok(texture) => texture,
+            Err(error) => {
+                eprintln!("[terrain] failed to allocate motion blur coverage: {error}");
+                crate::core::degradation::record_degradation(
+                    "allocation_fallback",
+                    "viewer.motion_blur",
+                    "motion blur disabled; conservative celestial coverage unavailable",
+                );
+                return None;
+            }
+        };
+        let coverage_depth_view =
+            coverage_depth.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Clear accumulation buffer
         {
@@ -91,6 +128,20 @@ impl ViewerTerrainScene {
                     },
                 })],
                 depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("terrain_viewer.motion_blur_coverage_clear_pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &coverage_depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
@@ -149,6 +200,18 @@ impl ViewerTerrainScene {
                 let frame_view = frame.create_view(&wgpu::TextureViewDescriptor::default());
                 self.accumulate_frame(&frame_view, &accum_view, width, height);
             }
+            if let (Some(depth_pass), Some(sample_depth)) = (
+                self.motion_blur_depth_pass.as_ref(),
+                self.snapshot_depth_view(),
+            ) {
+                let mut depth_encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("terrain_viewer.motion_blur_depth_union"),
+                        });
+                depth_pass.encode(&mut depth_encoder, &sample_depth, &coverage_depth_view);
+                self.queue.submit(std::iter::once(depth_encoder.finish()));
+            }
         }
 
         self.pbr_config.lens_effects.distortion = orig_distortion;
@@ -161,6 +224,7 @@ impl ViewerTerrainScene {
             terrain.cam_radius = base_radius;
             terrain.cam_target = base_target;
         }
+        self.snapshot_depth_texture = Some(coverage_depth);
 
         // Resolve: create final output and divide by sample count
         let output_tex = match tracked_create_texture(

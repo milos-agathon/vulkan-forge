@@ -6,13 +6,53 @@
 # RELEVANT FILES: src/geo/geoid.rs, assets/geoid/egm96_n120.bin,
 #                 tests/data/egm96_test_values.txt
 
+import hashlib
 import math
+import platform
 from pathlib import Path
+import struct
+import sys
 
 import numpy as np
 import pytest
 
 import forge3d
+
+
+_BYTE_LOCK_POINTS = [
+    (-89.5, 0.5),
+    (-75.25, 42.75),
+    (-60.0, -120.0),
+    (-45.5, 179.5),
+    (-30.25, -179.75),
+    (-15.0, 90.0),
+    (0.0, 0.0),
+    (0.5, 179.5),
+    (12.345, 67.89),
+    (23.5, -45.5),
+    (35.0, 120.0),
+    (46.87, 102.45),
+    (51.5074, -0.1278),
+    (60.0, 10.0),
+    (70.25, -135.0),
+    (80.0, 179.0),
+    (89.5, 359.5),
+    (-33.8688, 151.2093),
+    (27.9881, 86.925),
+    (-22.9068, -43.1729),
+]
+
+# Rust's f64 trigonometric operations use the target platform's libm, so an
+# optimized payload is byte-stable per target rather than portable across
+# targets. These release-build hashes lock the exact pre-SELENE EGM96 payload
+# on the three targets that run this gate. The macOS arm64 value was reproduced
+# directly from pre-refactor commit 7fa1b984 with the same release toolchain;
+# the Linux x86_64 and Windows AMD64 values are stable hosted-wheel payloads.
+_BYTE_LOCK_SHA256 = {
+    ("darwin", "arm64"): "86291cb905156dabb987bf57c53b42f124e2cf1047dc5b9145e4e46c0a856a17",
+    ("linux", "x86_64"): "5deafb3b0a40962cd947c714bead4c5e86a038793723d9fd252dfb90e751ee61",
+    ("win32", "amd64"): "ab9469d5e078dbfaa5df9b02219733c482ee21ed1f872fa251ed7056da27a639",
+}
 
 
 def _reference_points():
@@ -45,6 +85,21 @@ def test_egm96_degree_120_matches_nga_published_values():
         "EGM96 degree-120 worst residual vs published degree-360 values: "
         f"{worst:.4f} m at {worst_at}"
     )
+
+
+def test_egm96_refactor_is_byte_identical():
+    payload = b"".join(
+        struct.pack("<d", forge3d.geoid_undulation(lat, lon))
+        for lat, lon in _BYTE_LOCK_POINTS
+    )
+    target = (sys.platform, platform.machine().lower())
+    actual = hashlib.sha256(payload).hexdigest()
+    expected = _BYTE_LOCK_SHA256.get(target)
+    assert expected is not None, (
+        f"no reviewed EGM96 release baseline for {target}; "
+        f"measured release payload sha256={actual}"
+    )
+    assert actual == expected
 
 
 def test_known_undulation_signs_and_magnitudes():

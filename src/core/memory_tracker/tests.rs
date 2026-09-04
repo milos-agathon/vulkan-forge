@@ -10,7 +10,9 @@ fn registry_basic_operations() {
     assert_eq!(metrics.buffer_bytes, 0);
     assert!(metrics.within_budget);
 
-    registry.track_buffer_allocation(1024, true);
+    registry
+        .track_buffer_allocation(1024, true)
+        .expect("test allocation fits budget");
     let metrics = registry.get_metrics();
     assert_eq!(metrics.buffer_count, 1);
     assert_eq!(metrics.buffer_bytes, 1024);
@@ -23,6 +25,25 @@ fn registry_basic_operations() {
     assert_eq!(metrics.host_visible_bytes, 0);
     assert_eq!(metrics.peak_host_visible_bytes, 1024);
     assert_eq!(metrics.peak_total_bytes, 1024);
+}
+
+#[test]
+fn registry_reports_logical_residency_per_vt_family() {
+    let registry = ResourceRegistry::new();
+    let material_owner = registry.allocate_resident_owner();
+    let second_renderer = registry.allocate_resident_owner();
+    registry.set_resident_family_for_owner(material_owner, 0, 2, 512);
+    registry.set_resident_family_for_owner(material_owner, 1, 3, 768);
+    registry.set_resident_family_for_owner(second_renderer, 2, 1, 256);
+    let metrics = registry.get_metrics();
+    assert_eq!(metrics.resident_tiles_by_family, [2, 3, 1, 0]);
+    assert_eq!(metrics.resident_tile_bytes_by_family, [512, 768, 256, 0]);
+    assert_eq!(metrics.resident_tiles, 6);
+    assert_eq!(metrics.resident_tile_bytes, 1536);
+    registry.clear_resident_owner(material_owner);
+    let metrics = registry.get_metrics();
+    assert_eq!(metrics.resident_tiles_by_family, [0, 0, 1, 0]);
+    assert_eq!(metrics.resident_tile_bytes, 256);
 }
 
 #[test]

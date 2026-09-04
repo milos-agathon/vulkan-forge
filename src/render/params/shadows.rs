@@ -58,10 +58,13 @@ pub struct ShadowParams {
     pub cascades: u32,
     #[serde(default = "ShadowParams::default_contact_hardening")]
     pub contact_hardening: bool,
+    /// Blocker-search radius in shadow-map texels.
     #[serde(default = "ShadowParams::default_pcss_blocker_radius")]
     pub pcss_blocker_radius: f32,
+    /// Maximum adaptive PCSS filter radius in shadow-map texels.
     #[serde(default = "ShadowParams::default_pcss_filter_radius")]
     pub pcss_filter_radius: f32,
+    /// Area-light radius in shadow-map texels used by the PCSS penumbra estimate.
     #[serde(default = "ShadowParams::default_light_size")]
     pub light_size: f32,
     #[serde(default = "ShadowParams::default_moment_bias")]
@@ -90,15 +93,15 @@ impl ShadowParams {
     }
 
     const fn default_pcss_blocker_radius() -> f32 {
-        0.03
+        crate::shadows::DEFAULT_PCSS_BLOCKER_RADIUS_TEXELS
     }
 
     const fn default_pcss_filter_radius() -> f32 {
-        0.06
+        crate::shadows::DEFAULT_PCSS_FILTER_RADIUS_TEXELS
     }
 
     const fn default_light_size() -> f32 {
-        0.25
+        crate::shadows::DEFAULT_PCSS_LIGHT_SIZE
     }
 
     const fn default_moment_bias() -> f32 {
@@ -116,10 +119,12 @@ impl ShadowParams {
         let cascades = self.cascades.max(1) as u64;
         let resolution = self.map_size.max(1) as u64;
         let depth_bytes = cascades * resolution * resolution * 4;
-        let moment_bytes = match self.technique {
-            ShadowTechnique::Vsm => cascades * resolution * resolution * 8,
-            ShadowTechnique::Evsm | ShadowTechnique::Msm => cascades * resolution * resolution * 16,
-            _ => 0,
+        // All moment techniques use one Rgba16Float atlas plus one persistent
+        // Rgba16Float intermediate for the separable blur.
+        let moment_bytes = if self.requires_moments() {
+            cascades * resolution * resolution * 16
+        } else {
+            0
         };
         depth_bytes + moment_bytes
     }
@@ -142,8 +147,8 @@ impl ShadowParams {
             slope_bias: 0.001,
             peter_panning_offset: 0.002,
             enable_evsm: matches!(self.technique, ShadowTechnique::Evsm),
-            evsm_positive_exp: 40.0,
-            evsm_negative_exp: 40.0,
+            evsm_positive_exp: crate::shadows::EVSM_MAX_EXPONENT_RGBA16F,
+            evsm_negative_exp: crate::shadows::EVSM_MAX_EXPONENT_RGBA16F,
             debug_mode: 0,
             enable_unclipped_depth: false,
             depth_clip_factor: 1.0,
@@ -169,7 +174,7 @@ impl ShadowParams {
             pcss_filter_radius: self.pcss_filter_radius,
             light_size: self.light_size,
             moment_bias: self.moment_bias,
-            blur_kernel_radius: 3, // P0.2/M3: Default blur radius for VSM/EVSM/MSM
+            blur_kernel_radius: crate::shadows::DEFAULT_MOMENT_BLUR_RADIUS,
             max_memory_bytes: 256 * 1024 * 1024, // 256 MiB budget
         }
     }
@@ -188,5 +193,58 @@ impl Default for ShadowParams {
             light_size: Self::default_light_size(),
             moment_bias: Self::default_moment_bias(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_pcss_texel_radii_reach_shadow_manager_unchanged() {
+        let mut params = ShadowParams::default();
+        let manager = params.to_shadow_manager_config();
+
+        assert_eq!(
+            (
+                params.pcss_blocker_radius,
+                params.pcss_filter_radius,
+                params.light_size,
+            ),
+            (6.0, 4.0, 1.0)
+        );
+        assert_eq!(
+            (
+                manager.pcss_blocker_radius,
+                manager.pcss_filter_radius,
+                manager.light_size,
+            ),
+            (6.0, 4.0, 1.0)
+        );
+
+        params.pcss_blocker_radius = 7.5;
+        params.pcss_filter_radius = 3.25;
+        params.light_size = 1.5;
+        let manager = params.to_shadow_manager_config();
+        assert_eq!(
+            (
+                manager.pcss_blocker_radius,
+                manager.pcss_filter_radius,
+                manager.light_size,
+            ),
+            (7.5, 3.25, 1.5)
+        );
+    }
+
+    #[test]
+    fn vsm_memory_includes_persistent_blur_intermediate() {
+        let params = ShadowParams {
+            technique: ShadowTechnique::Vsm,
+            map_size: 4096,
+            cascades: 2,
+            ..Default::default()
+        };
+
+        assert_eq!(params.atlas_memory_bytes(), 640 * 1024 * 1024);
     }
 }

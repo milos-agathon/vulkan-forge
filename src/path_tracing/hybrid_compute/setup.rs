@@ -52,6 +52,22 @@ impl HybridPathTracer {
                 entry_point: "main_terrain",
             },
         );
+        let aether_reference_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("hybrid-pt-aether-spectral-reference-layout"),
+                bind_group_layouts: &[&layouts.uniforms, &layouts.scene, &layouts.accum],
+                push_constant_ranges: &[],
+            });
+        let pipeline_aether_reference =
+            crate::core::shader_registry::create_compute_pipeline_scoped(
+                device,
+                &wgpu::ComputePipelineDescriptor {
+                    label: Some("hybrid-pt-aether-spectral-reference-compute"),
+                    layout: Some(&aether_reference_layout),
+                    module: &shader,
+                    entry_point: "main_aether_spectral_reference",
+                },
+            );
 
         // ReSTIR G-buffer entry: its group-2 variant carries the G-buffer
         // storage bindings so the main kernels stay within 8 storage buffers
@@ -121,6 +137,7 @@ impl HybridPathTracer {
             layouts,
             pipeline,
             pipeline_terrain,
+            pipeline_aether_reference,
             pipeline_terrain_gbuffer,
             pipeline_restir_temporal,
             pipeline_restir_spatial,

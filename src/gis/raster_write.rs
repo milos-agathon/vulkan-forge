@@ -140,7 +140,24 @@ impl CrsSpec {
         code: Option<String>,
         wkt: Option<String>,
     ) -> GisResult<Self> {
+        let iau_with_wkt = authority
+            .as_deref()
+            .is_some_and(|name| name.trim().eq_ignore_ascii_case("IAU"))
+            && wkt.is_some();
         let authority_pair = match (authority, code) {
+            (Some(_), Some(code)) if iau_with_wkt => {
+                let code = code.trim().to_string();
+                let numeric = code.parse::<u32>().map_err(|_| {
+                    GisError::InvalidCrs("CRS authority code must be numeric".to_string())
+                })?;
+                if crate::geo::projections::iau_is_mars_ographic(numeric) {
+                    return Err(GisError::InvalidCrs(format!(
+                        "unsupported IAU:{code} Mars planetographic/ographic west-positive CRS; \
+                         SELENE supports planetocentric +East only"
+                    )));
+                }
+                Some(("IAU".to_string(), code))
+            }
             (Some(authority), Some(code)) => Some(validate_authority_code(&authority, &code)?),
             (None, None) => None,
             _ => {
@@ -152,7 +169,9 @@ impl CrsSpec {
         let wkt = wkt
             .map(|value| {
                 let trimmed = value.trim();
-                if looks_like_wkt(trimmed) {
+                if iau_with_wkt {
+                    validate_wkt_structure(trimmed)
+                } else if looks_like_wkt(trimmed) {
                     validate_wkt_literal(trimmed)
                 } else {
                     Err(GisError::InvalidCrs(
@@ -161,12 +180,21 @@ impl CrsSpec {
                 }
             })
             .transpose()?;
+        if iau_with_wkt {
+            let (Some(authority_pair), Some(wkt)) = (authority_pair.as_ref(), wkt.as_deref())
+            else {
+                return Err(GisError::InvalidCrs(
+                    "IAU CRS dict must include both name/code and WKT".to_string(),
+                ));
+            };
+            validate_iau_wkt_body(authority_pair, wkt)?;
+        }
         if authority_pair.is_none() && wkt.is_none() {
             return Err(GisError::InvalidCrs(
                 "CRS dict must include name/code or WKT".to_string(),
             ));
         }
-        if authority_pair.is_some() && wkt.is_some() {
+        if authority_pair.is_some() && wkt.is_some() && !iau_with_wkt {
             return Err(GisError::InvalidCrs(
                 "CRS dict must use either name/code or WKT, not both".to_string(),
             ));
@@ -214,8 +242,24 @@ impl CrsSpec {
 
     pub(crate) fn equivalent_to(&self, other: &Self) -> bool {
         self == other
+            || self.same_supported_iau_authority(other)
             || (self.has_epsg_4326_authority() && other.has_wgs84_wkt())
             || (other.has_epsg_4326_authority() && self.has_wgs84_wkt())
+    }
+
+    fn same_supported_iau_authority(&self, other: &Self) -> bool {
+        let (Some((left_name, left_code)), Some((right_name, right_code))) =
+            (&self.authority, &other.authority)
+        else {
+            return false;
+        };
+        left_name.eq_ignore_ascii_case("IAU")
+            && right_name.eq_ignore_ascii_case("IAU")
+            && left_code == right_code
+            && left_code
+                .parse()
+                .ok()
+                .is_some_and(|code| crate::geo::projections::iau_body(code).is_some())
     }
 
     fn has_epsg_4326_authority(&self) -> bool {
@@ -747,16 +791,21 @@ where
     }
 
     if let Some(crs) = &options.crs {
-        let wkt_ascii = crs.wkt.as_ref().map(|wkt| format!("{wkt}|"));
-        if let Some(wkt_ascii) = &wkt_ascii {
+        let crs_ascii = crs_ascii_for_crs(crs);
+        if let Some(crs_ascii) = &crs_ascii {
             directory
-                .write_tag(Tag::GeoAsciiParamsTag, wkt_ascii.as_str())
+                .write_tag(Tag::GeoAsciiParamsTag, crs_ascii.as_str())
                 .map_err(|err| GisError::WriteFailed(err.to_string()))?;
         }
-        let keys = geokeys_for_crs(crs, wkt_ascii.as_ref().map(String::len))?;
-        if let Some(keys) = keys {
+        let tags = geokeys_for_crs(crs)?;
+        if let Some(tags) = tags {
+            if !tags.doubles.is_empty() {
+                directory
+                    .write_tag(Tag::GeoDoubleParamsTag, &tags.doubles[..])
+                    .map_err(|err| GisError::WriteFailed(err.to_string()))?;
+            }
             directory
-                .write_tag(Tag::GeoKeyDirectoryTag, &keys[..])
+                .write_tag(Tag::GeoKeyDirectoryTag, &tags.directory[..])
                 .map_err(|err| GisError::WriteFailed(err.to_string()))?;
         }
     }
@@ -809,17 +858,207 @@ fn transform_requires_matrix(transform: AffineTransform) -> bool {
     transform.is_rotated_or_sheared() || transform.a < 0.0 || transform.e > 0.0
 }
 
-fn geokeys_for_crs(crs: &CrsSpec, wkt_len: Option<usize>) -> GisResult<Option<Vec<u16>>> {
-    let wkt_count = wkt_len
+struct GeoKeyTags {
+    directory: Vec<u16>,
+    doubles: Vec<f64>,
+}
+
+fn crs_ascii_for_crs(crs: &CrsSpec) -> Option<String> {
+    let iau = crs
+        .authority
+        .as_ref()
+        .filter(|(authority, _)| authority.eq_ignore_ascii_case("IAU"))
+        .map(|(_, code)| format!("IAU:{code}|"));
+    match (iau, crs.wkt.as_ref()) {
+        (Some(iau), Some(wkt)) => Some(format!("{iau}{wkt}|")),
+        (Some(iau), None) => Some(iau),
+        (None, Some(wkt)) => Some(format!("{wkt}|")),
+        (None, None) => None,
+    }
+}
+
+fn geokeys_for_crs(crs: &CrsSpec) -> GisResult<Option<GeoKeyTags>> {
+    let iau_count = crs
+        .authority
+        .as_ref()
+        .filter(|(authority, _)| authority.eq_ignore_ascii_case("IAU"))
+        .map(|(_, code)| format!("IAU:{code}|").len())
+        .map(|value| {
+            u16::try_from(value).map_err(|_| {
+                GisError::InvalidCrs("IAU citation is too large for GeoTIFF ASCII key".to_string())
+            })
+        })
+        .transpose()?;
+    let wkt_count = crs
+        .wkt
+        .as_ref()
+        .map(|wkt| wkt.len() + 1)
         .map(|value| {
             u16::try_from(value).map_err(|_| {
                 GisError::InvalidCrs("CRS WKT is too large for GeoTIFF ASCII key".to_string())
             })
         })
         .transpose()?;
+    let wkt_offset = iau_count.unwrap_or(0);
 
     if let Some((authority, code)) = &crs.authority {
-        let (_authority, code) = validate_authority_code(authority, code)?;
+        let normalized_authority = authority.trim().to_ascii_uppercase();
+        if normalized_authority == "IAU" {
+            let numeric: u32 = code
+                .parse()
+                .map_err(|_| GisError::InvalidCrs(format!("invalid IAU code {code:?}")))?;
+            let Some(body) = crate::geo::projections::iau_body(numeric) else {
+                let wkt = crs.wkt.as_deref().ok_or_else(|| {
+                    GisError::InvalidCrs(format!(
+                        "unsupported IAU code {code} cannot be written without a defining WKT"
+                    ))
+                })?;
+                let upper = wkt.trim_start().to_ascii_uppercase();
+                let model_type = if upper.starts_with("PROJCRS[") || upper.starts_with("PROJCS[") {
+                    1
+                } else if upper.starts_with("GEOGCRS[") || upper.starts_with("GEOGCS[") {
+                    2
+                } else {
+                    return Err(GisError::InvalidCrs(format!(
+                        "unsupported IAU code {code} has an unclassifiable WKT"
+                    )));
+                };
+                let mut entries = vec![1024, 0, 1, model_type, 1025, 0, 1, 1];
+                if let Some(count) = wkt_count {
+                    entries.extend([1026, Tag::GeoAsciiParamsTag.to_u16(), count, wkt_offset]);
+                }
+                let citation_key = if model_type == 1 { 3073 } else { 2049 };
+                let crs_key = if model_type == 1 { 3072 } else { 2048 };
+                entries.extend([crs_key, 0, 1, 32767]);
+                entries.extend([
+                    citation_key,
+                    Tag::GeoAsciiParamsTag.to_u16(),
+                    iau_count.unwrap_or(0),
+                    0,
+                ]);
+                return Ok(Some(GeoKeyTags {
+                    directory: geokey_directory(entries),
+                    doubles: Vec::new(),
+                }));
+            };
+            let ellipsoid = crate::geo::projections::iau_ellipsoid(body, numeric)
+                .ok_or_else(|| GisError::InvalidCrs(format!("unsupported IAU code {code}")))?;
+            let geographic = matches!(numeric, 30100 | 49900 | 49902);
+            let double_tag = Tag::GeoDoubleParamsTag.to_u16();
+            let mut doubles = vec![ellipsoid.a, ellipsoid.b()];
+            let mut entries = vec![1024, 0, 1, if geographic { 2 } else { 1 }, 1025, 0, 1, 1];
+            if let Some(count) = wkt_count {
+                entries.extend([1026, Tag::GeoAsciiParamsTag.to_u16(), count, wkt_offset]);
+            }
+            entries.extend([
+                2048,
+                0,
+                1,
+                32767,
+                2049,
+                Tag::GeoAsciiParamsTag.to_u16(),
+                iau_count.unwrap_or(0),
+                0,
+                2050,
+                0,
+                1,
+                32767,
+                2051,
+                0,
+                1,
+                8901,
+                2054,
+                0,
+                1,
+                9102,
+                2056,
+                0,
+                1,
+                32767,
+                2057,
+                double_tag,
+                1,
+                0,
+                2058,
+                double_tag,
+                1,
+                1,
+            ]);
+            if !geographic {
+                entries.extend([3072, 0, 1, 32767]);
+                entries.extend([
+                    3073,
+                    Tag::GeoAsciiParamsTag.to_u16(),
+                    iau_count.unwrap_or(0),
+                    0,
+                ]);
+                entries.extend([
+                    3074,
+                    0,
+                    1,
+                    32767,
+                    3075,
+                    0,
+                    1,
+                    if matches!(numeric, 30110 | 30115 | 49910 | 49912 | 49915 | 49917) {
+                        17
+                    } else {
+                        15
+                    },
+                    3076,
+                    0,
+                    1,
+                    9001,
+                ]);
+                let lon0 = if matches!(numeric, 30115 | 49915 | 49917) {
+                    180.0
+                } else {
+                    0.0
+                };
+                let projection_parameters =
+                    if matches!(numeric, 30110 | 30115 | 49910 | 49912 | 49915 | 49917) {
+                        vec![
+                            (3078, 0.0),
+                            (3082, 0.0),
+                            (3083, 0.0),
+                            (3088, lon0),
+                            (3089, 0.0),
+                        ]
+                    } else {
+                        let lat0 = if matches!(numeric, 30130 | 49930 | 49932) {
+                            90.0
+                        } else {
+                            -90.0
+                        };
+                        vec![
+                            (3081, lat0),
+                            (3082, 0.0),
+                            (3083, 0.0),
+                            (3092, 1.0),
+                            (3095, lon0),
+                        ]
+                    };
+                for (key, value) in projection_parameters {
+                    let offset = u16::try_from(doubles.len()).map_err(|_| {
+                        GisError::InvalidCrs(
+                            "too many GeoTIFF double parameters for planetary CRS".to_string(),
+                        )
+                    })?;
+                    doubles.push(value);
+                    entries.extend([key, double_tag, 1, offset]);
+                }
+            }
+            return Ok(Some(GeoKeyTags {
+                directory: geokey_directory(entries),
+                doubles,
+            }));
+        }
+        let (authority, code) = validate_authority_code(authority, code)?;
+        if authority == "FORGE3D" {
+            return Err(GisError::InvalidCrs(
+                "FORGE3D body-fixed 3D frames cannot label a 2D raster".to_string(),
+            ));
+        }
         let code: u16 = code
             .parse()
             .map_err(|_| GisError::InvalidCrs(format!("invalid EPSG code {code:?}")))?;
@@ -835,7 +1074,10 @@ fn geokeys_for_crs(crs: &CrsSpec, wkt_len: Option<usize>) -> GisResult<Option<Ve
         if let Some(count) = wkt_count {
             entries.extend([1026, Tag::GeoAsciiParamsTag.to_u16(), count, 0]);
         }
-        return Ok(Some(geokey_directory(entries)));
+        return Ok(Some(GeoKeyTags {
+            directory: geokey_directory(entries),
+            doubles: Vec::new(),
+        }));
     }
 
     let Some(count) = wkt_count else {
@@ -850,20 +1092,23 @@ fn geokeys_for_crs(crs: &CrsSpec, wkt_len: Option<usize>) -> GisResult<Option<Ve
     } else {
         2
     };
-    Ok(Some(geokey_directory(vec![
-        1024,
-        0,
-        1,
-        model_type,
-        1025,
-        0,
-        1,
-        1,
-        1026,
-        Tag::GeoAsciiParamsTag.to_u16(),
-        count,
-        0,
-    ])))
+    Ok(Some(GeoKeyTags {
+        directory: geokey_directory(vec![
+            1024,
+            0,
+            1,
+            model_type,
+            1025,
+            0,
+            1,
+            1,
+            1026,
+            Tag::GeoAsciiParamsTag.to_u16(),
+            count,
+            0,
+        ]),
+        doubles: Vec::new(),
+    }))
 }
 
 fn geokey_directory(entries: Vec<u16>) -> Vec<u16> {
@@ -885,9 +1130,37 @@ fn parse_authority_code(crs: &str) -> Option<(&str, &str)> {
 fn validate_authority_code(authority: &str, code: &str) -> GisResult<(String, String)> {
     let authority = authority.trim().to_ascii_uppercase();
     let code = code.trim().to_string();
-    if authority != "EPSG" || code.is_empty() || !code.chars().all(|ch| ch.is_ascii_digit()) {
+    if code.is_empty() || !code.chars().all(|ch| ch.is_ascii_digit()) {
         return Err(GisError::InvalidCrs(
-            "CRS authority must be EPSG with a numeric code".to_string(),
+            "CRS authority code must be numeric".to_string(),
+        ));
+    }
+    if authority == "IAU" {
+        let numeric: u32 = code
+            .parse()
+            .map_err(|_| GisError::InvalidCrs(format!("IAU code {code} is not a valid number")))?;
+        if crate::geo::projections::iau_is_mars_ographic(numeric) {
+            return Err(GisError::InvalidCrs(format!(
+                "unsupported IAU:{code} Mars planetographic/ographic west-positive CRS; \
+                 SELENE supports planetocentric +East only"
+            )));
+        }
+        if crate::geo::projections::iau_body(numeric).is_some() {
+            return Ok((authority, code));
+        }
+        return Err(GisError::InvalidCrs(format!("unsupported IAU code {code}")));
+    }
+    if authority == "FORGE3D" {
+        return match code.as_str() {
+            "301" | "499" => Ok((authority, code)),
+            _ => Err(GisError::InvalidCrs(format!(
+                "unsupported FORGE3D body-fixed code {code}"
+            ))),
+        };
+    }
+    if authority != "EPSG" {
+        return Err(GisError::InvalidCrs(
+            "CRS authority must be EPSG, IAU, or FORGE3D with a numeric code".to_string(),
         ));
     }
     // MENSURA: projected-CRS support is defined by the one authoritative
@@ -912,6 +1185,21 @@ fn validate_authority_code(authority: &str, code: &str) -> GisResult<(String, St
 }
 
 fn validate_wkt_literal(value: &str) -> GisResult<String> {
+    let trimmed = validate_wkt_structure(value)?;
+    let upper = trimmed.to_ascii_uppercase();
+    // G-002a1 has no general Earth CRS parser; validate only the WGS84-style WKT subset used here.
+    if !(upper.contains("WGS 84") || upper.contains("WGS_1984"))
+        || !(upper.contains("DATUM[") || upper.contains("ENSEMBLE["))
+    {
+        return Err(GisError::InvalidCrs(
+            "G-002a1 only validates WGS 84 WKT; use EPSG:4326 or EPSG:3857 for authority CRS"
+                .to_string(),
+        ));
+    }
+    Ok(trimmed)
+}
+
+fn validate_wkt_structure(value: &str) -> GisResult<String> {
     let trimmed = value.trim();
     if !looks_like_wkt(trimmed) {
         return Err(GisError::InvalidCrs(
@@ -938,17 +1226,58 @@ fn validate_wkt_literal(value: &str) -> GisResult<String> {
             "CRS WKT has unbalanced brackets".to_string(),
         ));
     }
-    let upper = trimmed.to_ascii_uppercase();
-    // G-002a1 has no general CRS parser; validate only the WGS84-style WKT subset used here.
-    if !(upper.contains("WGS 84") || upper.contains("WGS_1984"))
-        || !(upper.contains("DATUM[") || upper.contains("ENSEMBLE["))
-    {
-        return Err(GisError::InvalidCrs(
-            "G-002a1 only validates WGS 84 WKT; use EPSG:4326 or EPSG:3857 for authority CRS"
-                .to_string(),
-        ));
-    }
     Ok(trimmed.to_string())
+}
+
+fn validate_iau_wkt_body(authority: &(String, String), wkt: &str) -> GisResult<()> {
+    let code = authority
+        .1
+        .parse::<u32>()
+        .map_err(|_| GisError::InvalidCrs("IAU authority code must be numeric".to_string()))?;
+    let expected = crate::geo::projections::iau_body(code).or(match code / 100 {
+        301 => Some(&crate::geo::body::MOON),
+        499 => Some(&crate::geo::body::MARS),
+        _ => None,
+    });
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let upper = wkt.to_ascii_uppercase();
+    let names_moon = upper.contains("MOON") || upper.contains("LUNAR");
+    let names_mars = upper.contains("MARS") || upper.contains("MARTIAN");
+    let names_earth =
+        upper.contains("EARTH") || upper.contains("WGS 84") || upper.contains("WGS_1984");
+    let names_expected = if expected == &crate::geo::body::MOON {
+        names_moon
+    } else {
+        names_mars
+    };
+    let names_other = if expected == &crate::geo::body::MOON {
+        names_mars
+    } else {
+        names_moon
+    };
+    if !names_expected || names_other || names_earth {
+        return Err(GisError::InvalidCrs(format!(
+            "IAU:{} WKT names a different planetary body than {}",
+            authority.1, expected.name
+        )));
+    }
+    if crate::geo::projections::iau_body(code).is_some() {
+        let projected = crate::geo::projections::iau_projection(expected, code).is_some();
+        let geographic = crate::geo::projections::iau_geographic(expected, code);
+        let wkt_projected =
+            upper.trim_start().starts_with("PROJCRS[") || upper.trim_start().starts_with("PROJCS[");
+        let wkt_geographic =
+            upper.trim_start().starts_with("GEOGCRS[") || upper.trim_start().starts_with("GEOGCS[");
+        if (projected && !wkt_projected) || (geographic && !wkt_geographic) {
+            return Err(GisError::InvalidCrs(format!(
+                "IAU:{} WKT kind does not match the authority code",
+                authority.1
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn looks_like_wkt(value: &str) -> bool {
@@ -1178,4 +1507,71 @@ fn replace_file_impl(source: &Path, target: &Path) -> GisResult<()> {
 #[cfg(not(windows))]
 fn replace_file_impl(source: &Path, target: &Path) -> GisResult<()> {
     fs::rename(source, target).map_err(|err| GisError::WriteFailed(err.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn contains_key(directory: &[u16], key: u16, value: u16) -> bool {
+        directory[4..]
+            .chunks_exact(4)
+            .any(|entry| entry[0] == key && entry[1] == 0 && entry[3] == value)
+    }
+
+    #[test]
+    fn iau_geokeys_declare_angular_and_projected_units() {
+        let geographic = CrsSpec::from_string("IAU:30100".to_string()).unwrap();
+        let projected = CrsSpec::from_string("IAU:30115".to_string()).unwrap();
+        let polar = CrsSpec::from_string("IAU:30130".to_string()).unwrap();
+        let geographic_tags = geokeys_for_crs(&geographic).unwrap().unwrap();
+        let projected_tags = geokeys_for_crs(&projected).unwrap().unwrap();
+        let polar_tags = geokeys_for_crs(&polar).unwrap().unwrap();
+        assert!(contains_key(&geographic_tags.directory, 2054, 9102));
+        assert!(contains_key(&geographic_tags.directory, 2056, 32767));
+        assert!(contains_key(&projected_tags.directory, 3075, 17));
+        assert!(contains_key(&projected_tags.directory, 3076, 9001));
+        assert!(polar_tags.directory[4..]
+            .chunks_exact(4)
+            .any(|entry| entry[0] == 3095 && entry[1] == 34736));
+        assert_eq!(geographic_tags.doubles, [1_737_400.0, 1_737_400.0]);
+        assert_eq!(
+            projected_tags.doubles,
+            [1_737_400.0, 1_737_400.0, 0.0, 0.0, 0.0, 180.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn iau_ascii_keeps_authority_before_optional_wkt() {
+        let mut supported = CrsSpec::from_string("IAU:30115".to_string()).unwrap();
+        supported.wkt = Some("PROJCRS[\"Moon\"]".to_string());
+        assert_eq!(
+            crs_ascii_for_crs(&supported).as_deref(),
+            Some("IAU:30115|PROJCRS[\"Moon\"]|")
+        );
+        let tags = geokeys_for_crs(&supported).unwrap().unwrap();
+        let entries = tags.directory[4..].chunks_exact(4).collect::<Vec<_>>();
+        assert!(entries
+            .iter()
+            .any(|entry| entry[0] == 2049 && entry[2] == 10 && entry[3] == 0));
+        assert!(entries
+            .iter()
+            .any(|entry| entry[0] == 1026 && entry[3] == 10));
+
+        let unknown = CrsSpec {
+            authority: Some(("IAU".to_string(), "30199".to_string())),
+            wkt: None,
+            projection: None,
+        };
+        assert!(geokeys_for_crs(&unknown).is_err());
+        let unknown_with_wkt = CrsSpec {
+            wkt: Some("PROJCRS[\"Unknown lunar projection\"]".to_string()),
+            ..unknown
+        };
+        let tags = geokeys_for_crs(&unknown_with_wkt).unwrap().unwrap();
+        assert!(contains_key(&tags.directory, 3072, 32767));
+        assert!(tags.directory[4..]
+            .chunks_exact(4)
+            .any(|entry| entry[0] == 3073 && entry[1] == 34737 && entry[3] == 0));
+    }
 }

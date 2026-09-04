@@ -118,13 +118,23 @@ pub enum CsmQualityPreset {
     Ultra,
 }
 
-/// Get WGSL source for CSM integration.
-/// csm.wgsl calls the pinned det_* helpers, so the determinism include must
-/// lead any module built from this source.
+/// Return the complete shared CSM WGSL module.
 pub fn csm_shader_source() -> &'static str {
-    concat!(
-        include_str!("../../shaders/includes/determinism.wgsl"),
-        "\n",
-        include_str!("../../shaders/csm.wgsl")
-    )
+    crate::shadows::CsmRenderer::shader_source()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn public_csm_shader_source_returns_valid_wgsl() {
+        let source = super::csm_shader_source();
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
+    }
 }

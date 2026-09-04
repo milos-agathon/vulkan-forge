@@ -34,33 +34,25 @@ impl TerrainSpike {
                 )));
             }
         };
-        let loader = if let Some(tmpl) = template {
-            let s = scale.unwrap_or(1.0);
-            let o = offset.unwrap_or(0.0);
-            let rdr = std::sync::Arc::new(crate::terrain::page_table::FileHeightReader::new(
-                tmpl, s, o,
-            ));
-            crate::terrain::page_table::AsyncTileLoader::new_with_reader(
-                tiling_system.root_bounds.clone(),
-                tiling_system.tile_size,
-                res,
-                inflight,
-                pool,
-                rdr,
-                policy,
+        let tmpl = template.ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "template is required; synthetic height I/O is test-only",
             )
-        } else {
-            let rdr = std::sync::Arc::new(crate::terrain::page_table::SyntheticHeightReader);
-            crate::terrain::page_table::AsyncTileLoader::new_with_reader(
-                tiling_system.root_bounds.clone(),
-                tiling_system.tile_size,
-                res,
-                inflight,
-                pool,
-                rdr,
-                policy,
-            )
-        };
+        })?;
+        let s = scale.unwrap_or(1.0);
+        let o = offset.unwrap_or(0.0);
+        let rdr = std::sync::Arc::new(crate::terrain::page_table::FileHeightReader::new(
+            tmpl, s, o,
+        ));
+        let loader = crate::terrain::page_table::AsyncTileLoader::new_with_reader(
+            tiling_system.root_bounds.clone(),
+            tiling_system.tile_size,
+            res,
+            inflight,
+            pool,
+            rdr,
+            policy,
+        );
         self.async_loader = Some(loader);
         Ok(())
     }
@@ -189,29 +181,21 @@ impl TerrainSpike {
                 )));
             }
         };
-        let loader = if let Some(tmpl) = template {
-            let rdr = std::sync::Arc::new(crate::terrain::page_table::FileOverlayReader::new(tmpl));
-            crate::terrain::page_table::AsyncOverlayLoader::new_with_reader(
-                tiling_system.root_bounds.clone(),
-                tiling_system.tile_size,
-                res,
-                inflight,
-                pool,
-                rdr,
-                policy,
+        let tmpl = template.ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "template is required; synthetic overlay I/O is test-only",
             )
-        } else {
-            let rdr = std::sync::Arc::new(crate::terrain::page_table::SyntheticOverlayReader);
-            crate::terrain::page_table::AsyncOverlayLoader::new_with_reader(
-                tiling_system.root_bounds.clone(),
-                tiling_system.tile_size,
-                res,
-                inflight,
-                pool,
-                rdr,
-                policy,
-            )
-        };
+        })?;
+        let rdr = std::sync::Arc::new(crate::terrain::page_table::FileOverlayReader::new(tmpl));
+        let loader = crate::terrain::page_table::AsyncOverlayLoader::new_with_reader(
+            tiling_system.root_bounds.clone(),
+            tiling_system.tile_size,
+            res,
+            inflight,
+            pool,
+            rdr,
+            policy,
+        );
         self.async_overlay_loader = Some(loader);
         Ok(())
     }

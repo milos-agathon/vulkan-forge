@@ -32,6 +32,15 @@ const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 // Keep in sync with src/shaders/ssao.wgsl SsaoSettings.ao_min default comment.
 const SSAO_AO_MIN_DEFAULT: f32 = 0.35;
 
+#[cfg(feature = "extension-module")]
+#[derive(Debug)]
+struct SceneAtmosphereState {
+    config: crate::core::atmosphere::AtmosphereConfig,
+    precomputed_turbidity_bracket: Option<[f32; 2]>,
+    byte_size: u64,
+    deterministic_sha256: String,
+}
+
 #[cfg_attr(
     feature = "extension-module",
     pyclass(module = "forge3d._forge3d", name = "Scene")
@@ -88,6 +97,12 @@ pub struct Scene {
     ssgi_settings: crate::lighting::screen_space::SSGISettings,
     ssr_enabled: bool,
     ssr_settings: crate::lighting::screen_space::SSRSettings,
+
+    // AETHER settings are provenance-resolved here, but this legacy Scene
+    // renderer has no spectral-atmosphere consumer. Its pixel entry points
+    // fail closed while configured; active rendering lives on TerrainRenderer.
+    #[cfg(feature = "extension-module")]
+    atmosphere_state: Option<SceneAtmosphereState>,
 
     // Bloom state tracking (P1.2)
     bloom_enabled: bool,

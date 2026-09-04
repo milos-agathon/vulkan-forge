@@ -80,6 +80,43 @@
 //! let _ = c.lon() as f32; // ERROR: `Angle<Degree>` is not a primitive
 //! ```
 //!
+//! Earth and Mars coordinates cannot be differenced:
+//!
+//! ```compile_fail
+//! use forge3d::geo::units::{
+//!     Angle, Coord, EllipsoidalOf, Height, Itrf2014, Mars, MarsIau2000, Wgs84,
+//! };
+//! let earth = Coord::<Wgs84, Itrf2014>::try_geographic(
+//!     Angle::new(0.0), Angle::new(0.0), Height::new(0.0)).unwrap();
+//! let mars = Coord::<MarsIau2000, Itrf2014>::try_geographic(
+//!     Angle::new(0.0), Angle::new(0.0),
+//!     Height::<EllipsoidalOf<Mars>>::new(0.0)).unwrap();
+//! let _ = earth - mars; // ERROR: body-bearing CRS tags differ
+//! ```
+//!
+//! EGM96 cannot be applied to a Mars ellipsoidal height:
+//!
+//! ```compile_fail
+//! use forge3d::geo::geoid::ellipsoidal_to_orthometric;
+//! use forge3d::geo::units::{Angle, EllipsoidalOf, Height, Mars};
+//! let mars_height = Height::<EllipsoidalOf<Mars>>::new(21_900.0);
+//! let _ = ellipsoidal_to_orthometric(
+//!     mars_height, Angle::new(18.65), Angle::new(226.2));
+//! // ERROR: EGM96 conversion requires an Earth ellipsoidal height
+//! ```
+//!
+//! An Earth EPSG-tagged raster cannot be passed where a lunar raster is
+//! expected (or vice versa):
+//!
+//! ```compile_fail
+//! use core::marker::PhantomData;
+//! use forge3d::geo::units::{CrsTag, MoonMe2000, Wgs84};
+//! struct Raster<C: CrsTag>(PhantomData<C>);
+//! fn open_earth_raster(_: Raster<Wgs84>) {}
+//! let lunar = Raster::<MoonMe2000>(PhantomData);
+//! open_earth_raster(lunar); // ERROR: lunar and Earth CRS tags differ
+//! ```
+//!
 //! The unchecked `geographic`/`ecef` fast paths are crate-private, so a
 //! downstream crate cannot bypass validation to construct a non-finite or
 //! otherwise invalid typed coordinate — the only public path is `try_geographic`
@@ -95,6 +132,8 @@ use core::marker::PhantomData;
 use core::ops::{Add, Div, Mul, Neg, Sub};
 
 use glam::DVec3;
+
+pub use super::body::{BodyTag, Earth, Mars, Moon};
 
 mod sealed {
     pub trait Sealed {}
@@ -296,6 +335,7 @@ impl<U: AngleUnit> Div<f64> for Angle<U> {
 
 /// Marker trait for geoid models a height can be referenced to.
 pub trait GeoidModel: Sealed + Copy + core::fmt::Debug + 'static {
+    type Body: BodyTag;
     const NAME: &'static str;
 }
 
@@ -304,21 +344,37 @@ pub trait GeoidModel: Sealed + Copy + core::fmt::Debug + 'static {
 pub enum Egm96 {}
 impl Sealed for Egm96 {}
 impl GeoidModel for Egm96 {
+    type Body = Earth;
     const NAME: &'static str = "EGM96";
+}
+
+/// The GMM3-derived Mars areoid (see `crate::geo::geoid`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarsAreoid {}
+impl Sealed for MarsAreoid {}
+impl GeoidModel for MarsAreoid {
+    type Body = Mars;
+    const NAME: &'static str = "Mars areoid";
 }
 
 /// Marker trait for vertical reference systems.
 pub trait HeightSystem: Sealed + Copy + core::fmt::Debug + 'static {
+    type Body: BodyTag;
     const NAME: &'static str;
 }
 
-/// Height above the reference ellipsoid.
+/// Height above body `B`'s reference ellipsoid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Ellipsoidal {}
-impl Sealed for Ellipsoidal {}
-impl HeightSystem for Ellipsoidal {
+pub struct EllipsoidalOf<B: BodyTag> {
+    _body: PhantomData<B>,
+}
+impl<B: BodyTag> Sealed for EllipsoidalOf<B> {}
+impl<B: BodyTag> HeightSystem for EllipsoidalOf<B> {
+    type Body = B;
     const NAME: &'static str = "ellipsoidal";
 }
+/// Backward-compatible WGS84 ellipsoidal height.
+pub type Ellipsoidal = EllipsoidalOf<Earth>;
 
 /// Height above the geoid `G` (what a DEM usually encodes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -327,16 +383,21 @@ pub struct Orthometric<G: GeoidModel> {
 }
 impl<G: GeoidModel> Sealed for Orthometric<G> {}
 impl<G: GeoidModel> HeightSystem for Orthometric<G> {
+    type Body = G::Body;
     const NAME: &'static str = "orthometric";
 }
 
 /// Height above a nautical chart datum (type slot only; no conversions shipped).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChartDatum {}
-impl Sealed for ChartDatum {}
-impl HeightSystem for ChartDatum {
+pub struct ChartDatumOf<B: BodyTag> {
+    _body: PhantomData<B>,
+}
+impl<B: BodyTag> Sealed for ChartDatumOf<B> {}
+impl<B: BodyTag> HeightSystem for ChartDatumOf<B> {
+    type Body = B;
     const NAME: &'static str = "chart_datum";
 }
+pub type ChartDatum = ChartDatumOf<Earth>;
 
 /// A height in metres referenced to system `S`. Heights in different systems
 /// cannot be mixed; convert via `crate::geo::geoid`.
@@ -385,7 +446,9 @@ impl<S: HeightSystem> Sub for Height<S> {
 
 /// Marker trait for coordinate reference systems a `Coord` can be tagged with.
 pub trait CrsTag: Sealed + Copy + core::fmt::Debug + 'static {
-    const EPSG: u32;
+    type Body: BodyTag;
+    const AUTHORITY: &'static str;
+    const CODE: u32;
     const NAME: &'static str;
 }
 
@@ -395,24 +458,56 @@ pub enum Wgs84 {}
 /// Spherical Web Mercator (EPSG:3857), metres.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WebMercator {}
-/// Earth-centred earth-fixed geocentric (EPSG:4978), metres.
+/// Moon ME2000 planetocentric longitude/latitude, positive east.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Ecef {}
+pub enum MoonMe2000 {}
+/// Mars IAU2000 planetocentric longitude/latitude, positive east.
+///
+/// Planetographic latitude is deliberately unsupported in SELENE v1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarsIau2000 {}
+/// Body-centred, body-fixed geocentric metres for body `B`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EcefOf<B: BodyTag> {
+    _body: PhantomData<B>,
+}
+/// Backward-compatible Earth-centred earth-fixed geocentric frame.
+pub type Ecef = EcefOf<Earth>;
 
 impl Sealed for Wgs84 {}
 impl Sealed for WebMercator {}
-impl Sealed for Ecef {}
+impl Sealed for MoonMe2000 {}
+impl Sealed for MarsIau2000 {}
+impl<B: BodyTag> Sealed for EcefOf<B> {}
 impl CrsTag for Wgs84 {
-    const EPSG: u32 = 4326;
+    type Body = Earth;
+    const AUTHORITY: &'static str = "EPSG";
+    const CODE: u32 = 4326;
     const NAME: &'static str = "WGS 84";
 }
 impl CrsTag for WebMercator {
-    const EPSG: u32 = 3857;
+    type Body = Earth;
+    const AUTHORITY: &'static str = "EPSG";
+    const CODE: u32 = 3857;
     const NAME: &'static str = "WGS 84 / Pseudo-Mercator";
 }
-impl CrsTag for Ecef {
-    const EPSG: u32 = 4978;
-    const NAME: &'static str = "WGS 84 (geocentric)";
+impl CrsTag for MoonMe2000 {
+    type Body = Moon;
+    const AUTHORITY: &'static str = "IAU";
+    const CODE: u32 = 30100;
+    const NAME: &'static str = "Moon (2015) planetocentric +East";
+}
+impl CrsTag for MarsIau2000 {
+    type Body = Mars;
+    const AUTHORITY: &'static str = "IAU";
+    const CODE: u32 = 49902;
+    const NAME: &'static str = "Mars (2015) planetocentric +East";
+}
+impl<B: BodyTag> CrsTag for EcefOf<B> {
+    type Body = B;
+    const AUTHORITY: &'static str = B::BODY_FIXED_AUTHORITY;
+    const CODE: u32 = B::BODY_FIXED_CODE;
+    const NAME: &'static str = B::BODY_FIXED_NAME;
 }
 
 /// Marker trait for reference-frame realization epochs (ITRF sense).
@@ -450,11 +545,13 @@ impl EpochTag for Itrf2000 {
 /// Marker for CRSs whose axes are geographic lon/lat degrees.
 pub trait GeographicCrs: CrsTag {}
 impl GeographicCrs for Wgs84 {}
+impl GeographicCrs for MoonMe2000 {}
+impl GeographicCrs for MarsIau2000 {}
 
 /// Marker for CRSs whose axes are projected/geocentric metres.
 pub trait MetricCrs: CrsTag {}
 impl MetricCrs for WebMercator {}
-impl MetricCrs for Ecef {}
+impl<B: BodyTag> MetricCrs for EcefOf<B> {}
 
 /// A position tagged with its CRS and its reference epoch. Coordinates from
 /// different CRSs or epochs cannot be differenced; convert first.
@@ -479,7 +576,7 @@ impl<C: GeographicCrs, E: EpochTag> Coord<C, E> {
     pub(crate) fn geographic(
         lon: Angle<Degree>,
         lat: Angle<Degree>,
-        h: Height<Ellipsoidal>,
+        h: Height<EllipsoidalOf<C::Body>>,
     ) -> Self {
         Self {
             x: lon.value(),
@@ -497,7 +594,7 @@ impl<C: GeographicCrs, E: EpochTag> Coord<C, E> {
     pub fn try_geographic(
         lon: Angle<Degree>,
         lat: Angle<Degree>,
-        h: Height<Ellipsoidal>,
+        h: Height<EllipsoidalOf<C::Body>>,
     ) -> Result<Self, GeoInputError> {
         if !lon.value().is_finite() {
             return Err(GeoInputError::NotFinite("longitude"));
@@ -519,12 +616,12 @@ impl<C: GeographicCrs, E: EpochTag> Coord<C, E> {
     pub fn lat(&self) -> Angle<Degree> {
         Angle::new(self.y)
     }
-    pub fn height(&self) -> Height<Ellipsoidal> {
+    pub fn height(&self) -> Height<EllipsoidalOf<C::Body>> {
         Height::new(self.z)
     }
 }
 
-impl<E: EpochTag> Coord<Ecef, E> {
+impl<B: BodyTag, E: EpochTag> Coord<EcefOf<B>, E> {
     /// Build a geocentric coordinate from raw ECEF metres.
     ///
     /// **Crate-private** unchecked fast path: every public trust boundary must go
@@ -818,6 +915,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn planetary_geographic_tags_use_iau_without_body_fixed_impersonation() {
+        assert_eq!(Wgs84::AUTHORITY, "EPSG");
+        assert_eq!(Wgs84::CODE, 4326);
+        assert_eq!(MoonMe2000::AUTHORITY, "IAU");
+        assert_eq!(MoonMe2000::CODE, 30100);
+        assert_eq!(MarsIau2000::AUTHORITY, "IAU");
+        assert_eq!(MarsIau2000::CODE, 49902);
+        assert_eq!(EcefOf::<Moon>::AUTHORITY, "FORGE3D");
+        assert_eq!(EcefOf::<Moon>::CODE, 301);
+        assert_eq!(EcefOf::<Mars>::AUTHORITY, "FORGE3D");
+        assert_eq!(EcefOf::<Mars>::CODE, 499);
+    }
 
     #[test]
     fn length_unit_conversions_are_exact() {

@@ -3,6 +3,8 @@ impl Scene {
         &mut self,
         py: pyo3::Python<'py>,
     ) -> PyResult<Bound<'py, numpy::PyArray3<u8>>> {
+        #[cfg(feature = "extension-module")]
+        self.ensure_legacy_scene_atmosphere_unconfigured()?;
         let (certificate_capture, _allocation_scope) =
             self.begin_certificate_capture("scene.render_rgba");
         let mut timing = self.take_render_timing();
@@ -444,4 +446,3 @@ impl Scene {
         Ok(())
     }
 }
-

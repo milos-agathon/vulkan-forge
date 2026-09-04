@@ -7,6 +7,7 @@
 //                 python/forge3d/path_tracing.py
 
 use super::super::super::*;
+use pyo3::types::PyMapping;
 
 #[cfg(feature = "extension-module")]
 fn extract_sun_color(obj: &Bound<'_, PyAny>) -> PyResult<[f32; 3]> {
@@ -39,6 +40,172 @@ fn extract_sun_color(obj: &Bound<'_, PyAny>) -> PyResult<[f32; 3]> {
         return Err(reject());
     }
     Ok(out)
+}
+
+#[cfg(feature = "extension-module")]
+fn extract_atmosphere_lut_handle(
+    obj: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Option<crate::core::atmosphere::AtmosphereLutHandle>> {
+    let Some(obj) = obj else {
+        return Ok(None);
+    };
+    if obj.is_none() {
+        return Ok(None);
+    }
+
+    let extract_handle = |value: &Bound<'_, PyAny>| {
+        value
+            .extract::<PyRef<'_, crate::py_types::PyAtmosphereLutHandle>>()
+            .map(|handle| handle.core_handle().clone())
+            .map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "atmosphere.lut_handle must be an AtmosphereLutHandle returned by atmosphere_bake_luts()",
+                )
+            })
+    };
+    if let Ok(handle) = obj.extract::<PyRef<'_, crate::py_types::PyAtmosphereLutHandle>>() {
+        return Ok(Some(handle.core_handle().clone()));
+    }
+
+    let mapping = obj.downcast::<PyMapping>().ok();
+    let is_mapping = mapping.is_some();
+    if let Some(mapping) = mapping {
+        const ALLOWED_KEYS: [&str; 7] = [
+            "enabled",
+            "lut_handle",
+            "turbidity",
+            "ozone_du",
+            "mie_g",
+            "ground_albedo",
+            "scattering_orders",
+        ];
+        for key in mapping.keys()?.iter()? {
+            let key = key?;
+            let key = key.extract::<String>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("atmosphere mapping keys must be strings")
+            })?;
+            if !ALLOWED_KEYS.contains(&key.as_str()) {
+                return Err(PyValueError::new_err(format!(
+                    "unknown atmosphere setting {key:?}; expected one of {}",
+                    ALLOWED_KEYS.join(", ")
+                )));
+            }
+        }
+    }
+    let item = |name: &str| -> PyResult<Option<Bound<'_, PyAny>>> {
+        if let Ok(mapping) = obj.downcast::<PyMapping>() {
+            match mapping.get_item(name) {
+                Ok(value) => Ok(Some(value)),
+                Err(error) if error.is_instance_of::<pyo3::exceptions::PyKeyError>(obj.py()) => {
+                    Ok(None)
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            match obj.getattr(name) {
+                Ok(value) => Ok(Some(value)),
+                Err(error)
+                    if error.is_instance_of::<pyo3::exceptions::PyAttributeError>(obj.py()) =>
+                {
+                    Ok(None)
+                }
+                Err(error) => Err(error),
+            }
+        }
+    };
+    let enabled_value = item("enabled")?;
+    let lut_handle_value = item("lut_handle")?;
+    let turbidity_value = item("turbidity")?;
+    let ozone_du_value = item("ozone_du")?;
+    let mie_g_value = item("mie_g")?;
+    let ground_albedo_value = item("ground_albedo")?;
+    let scattering_orders_value = item("scattering_orders")?;
+    if !is_mapping
+        && [
+            enabled_value.as_ref(),
+            lut_handle_value.as_ref(),
+            turbidity_value.as_ref(),
+            ozone_du_value.as_ref(),
+            mie_g_value.as_ref(),
+            ground_albedo_value.as_ref(),
+            scattering_orders_value.as_ref(),
+        ]
+        .iter()
+        .all(|value| value.is_none())
+    {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "atmosphere must be an AtmosphereLutHandle, a mapping, or an object with recognized AETHER settings",
+        ));
+    }
+    if enabled_value
+        .map(|value| value.extract::<bool>())
+        .transpose()?
+        == Some(false)
+    {
+        return Ok(None);
+    }
+
+    if let Some(value) = lut_handle_value.filter(|value| !value.is_none()) {
+        let handle = extract_handle(&value)?;
+        let config = handle.config();
+        let float_fields = [
+            ("turbidity", turbidity_value.as_ref(), config.turbidity),
+            ("ozone_du", ozone_du_value.as_ref(), config.ozone_du),
+            ("mie_g", mie_g_value.as_ref(), config.mie_g),
+            (
+                "ground_albedo",
+                ground_albedo_value.as_ref(),
+                config.ground_albedo,
+            ),
+        ];
+        for (name, value, expected) in float_fields {
+            if let Some(value) = value {
+                let supplied = value.extract::<f32>()?;
+                if supplied.to_bits() != expected.to_bits() {
+                    return Err(PyValueError::new_err(format!(
+                        "atmosphere.{name}={supplied} does not match the exact LUT handle value {expected}; refusing to substitute or relabel transport"
+                    )));
+                }
+            }
+        }
+        if let Some(value) = scattering_orders_value {
+            let supplied = value.extract::<u32>()?;
+            if supplied != config.scattering_orders {
+                return Err(PyValueError::new_err(format!(
+                    "atmosphere.scattering_orders={supplied} does not match the exact LUT handle value {}; refusing to substitute or relabel transport",
+                    config.scattering_orders
+                )));
+            }
+        }
+        return Ok(Some(handle));
+    }
+
+    let mut config = crate::core::atmosphere::AtmosphereConfig::default();
+    if let Some(value) = turbidity_value {
+        config.turbidity = value.extract()?;
+    }
+    if let Some(value) = ozone_du_value {
+        config.ozone_du = value.extract()?;
+    }
+    if let Some(value) = mie_g_value {
+        config.mie_g = value.extract()?;
+    }
+    if let Some(value) = ground_albedo_value {
+        config.ground_albedo = value.extract()?;
+    }
+    if let Some(value) = scattering_orders_value {
+        config.scattering_orders = value.extract()?;
+    }
+    config
+        .validate()
+        .map_err(|error| PyValueError::new_err(format!("invalid AETHER settings: {error}")))?;
+    crate::core::atmosphere::AtmosphereLutHandle::load_shipped(config)
+        .map(Some)
+        .map_err(|error| {
+            PyRuntimeError::new_err(format!(
+                "PROMETHEUS AETHER could not resolve the shipped LUT bank: {error}. Custom physical inputs require lut_handle=atmosphere_bake_luts(...) from an atmosphere-bake build; no nearby or default LUT was substituted."
+            ))
+        })
 }
 
 /// Render a converged path-traced reference of a real DEM under sun + IBL,
@@ -84,6 +251,15 @@ fn extract_sun_color(obj: &Bound<'_, PyAny>) -> PyResult<[f32; 3]> {
     pixel_offset = None,
     albedo_map = None,
     albedo_sampling = "nearest",
+    observer_latitude_deg = 0.0,
+    observer_longitude_deg = 0.0,
+    earth_model = "ellipsoid",
+    sphere_radius_m = 6371008.8,
+    refraction_model = "bennett",
+    refraction_k = 0.13,
+    pressure_mbar = 1013.25,
+    temperature_c = 15.0,
+    atmosphere = None,
 ))]
 pub(crate) fn hybrid_render_terrain_reference(
     py: Python<'_>,
@@ -116,6 +292,15 @@ pub(crate) fn hybrid_render_terrain_reference(
     pixel_offset: Option<(u32, u32)>,
     albedo_map: Option<numpy::PyReadonlyArray3<'_, f32>>,
     albedo_sampling: &str,
+    observer_latitude_deg: f64,
+    observer_longitude_deg: f64,
+    earth_model: &str,
+    sphere_radius_m: f64,
+    refraction_model: &str,
+    refraction_k: f64,
+    pressure_mbar: f64,
+    temperature_c: f64,
+    atmosphere: Option<Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let _ = cache;
     use crate::path_tracing::hybrid_compute::{
@@ -127,6 +312,20 @@ pub(crate) fn hybrid_render_terrain_reference(
         None => [1.0, 0.97, 0.92],
         Some(obj) => extract_sun_color(obj)?,
     };
+    let earth_model = crate::geo::refraction::EarthModel::from_name(
+        earth_model,
+        observer_latitude_deg,
+        sphere_radius_m,
+    )
+    .map_err(PyValueError::new_err)?;
+    let refraction_model = crate::geo::refraction::RefractionModel::from_name(
+        refraction_model,
+        pressure_mbar,
+        temperature_c,
+        refraction_k,
+    )
+    .map_err(PyValueError::new_err)?;
+    let atmosphere = extract_atmosphere_lut_handle(atmosphere.as_ref())?;
 
     let certificate_capture =
         crate::core::certificate::begin_render_capture("hybrid_render_terrain_reference");
@@ -341,8 +540,12 @@ pub(crate) fn hybrid_render_terrain_reference(
         sun_elevation_deg,
         sun_intensity,
         sun_color,
+        observer_geodetic_deg: [observer_latitude_deg, observer_longitude_deg],
+        earth_model,
+        refraction_model,
         env_map: env,
         env_intensity,
+        atmosphere,
         mesh,
         width,
         height,
@@ -440,6 +643,11 @@ pub(crate) fn hybrid_render_terrain_reference(
     d.set_item("reservoir_m_max", out.reservoir_m_max)?;
     d.set_item("minmax_pyramid_bytes", out.minmax_pyramid_bytes)?;
     d.set_item("gpu_resource_bytes", out.gpu_resource_bytes)?;
+    // This low-level native seam only accepts resolved angles. The public
+    // Python SolarTime wrapper replaces this diagnostic after resolution.
+    d.set_item("sun_source", "manual_angles")?;
+    d.set_item("solar_azimuth_deg", sun_azimuth_deg)?;
+    d.set_item("solar_elevation_deg", sun_elevation_deg)?;
     // The hybrid_pt.* passes (live gpu_ms when timestamps are granted) are
     // recorded inside HybridPathTracer::render_terrain_reference.
     certificate_capture.finish();

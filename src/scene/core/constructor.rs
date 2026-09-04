@@ -191,6 +191,8 @@ impl Scene {
             ssgi_settings: crate::lighting::screen_space::SSGISettings::default(),
             ssr_enabled: false,
             ssr_settings: crate::lighting::screen_space::SSRSettings::default(),
+            #[cfg(feature = "extension-module")]
+            atmosphere_state: None,
             bloom_enabled: false,
             bloom_config: crate::core::bloom::BloomConfig::default(),
             terrain_enabled: true,

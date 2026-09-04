@@ -31,4 +31,3 @@ var source_sampler : sampler;
 fn fs_main(input : VertexOutput) -> @location(0) vec4<f32> {
     return textureSample(source_tex, source_sampler, input.uv);
 }
-

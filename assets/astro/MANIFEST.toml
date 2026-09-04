@@ -1,0 +1,91 @@
+format_version = 1
+validity = "2000-01-01 through 2050-12-31 UTC"
+# Required upstream copyright/permission notices for everything redistributed
+# from this directory (moon_terms.bin is MIT and needs its notice shipped).
+third_party_notices = "THIRD_PARTY_NOTICES.md"
+
+[[asset]]
+path = "delta_t_fit.dat"
+source = "JPL Horizons DE441 observer table quantity 49 (IERS EOP eop.260804.p261031), monthly nodes"
+source_url = "https://ssd.jpl.nasa.gov/horizons/"
+license = "NASA/JPL public ephemeris data"
+model = "piecewise-linear TT-UT1 fit; future EOP follows Horizons' declared frozen-EOP assumption"
+max_validated_midmonth_residual_seconds = 0.0066
+sha256 = "d570a9b05388a19a39f0d2c74d62572ac3db913567676823be239aff37c2f347"
+
+[[asset]]
+path = "leap_seconds.dat"
+source = "IERS Bulletin C leap-second history through Bulletin C 52"
+source_url = "https://hpiers.obspm.fr/iers/bul/bulc/bulletinc.dat"
+license = "IERS public data"
+model = "TAI-UTC offsets; the last published offset is held constant through 2050"
+sha256 = "04c99602d83e104a56b55a3a184425804676eab83bc731238b989be560e0e336"
+
+[[asset]]
+path = "vsop87d.bin"
+source = "IMCCE VSOP87D heliocentric ecliptic theory, bounded truncation for Earth and Mercury through Saturn"
+source_url = "https://ftp.imcce.fr/pub/ephem/planets/vsop87/"
+license = "IMCCE public astronomical theory data"
+model = "14,793 retained of 25,659 VSOP87D terms; smallest bounded contributions omitted per body/coordinate over abs(t) <= 0.051"
+truncation_max_abs_t = 0.051
+max_omitted_longitude_radians_per_body = 5.0e-8
+max_omitted_latitude_radians_per_body = 5.0e-8
+max_omitted_radius_au_per_body = 2.0e-8
+max_horizons_position_error_arcsec = 3.0
+sha256 = "5f5cc2b1661861269bb4ed00a5b562587ed5912915584040411871b51f6ffb95"
+
+[asset.term_counts.mercury]
+longitude = [986, 174, 10, 2, 1, 1]
+latitude = [517, 55, 8, 1, 1, 1]
+radius = [746, 106, 8, 1, 1, 1]
+
+[asset.term_counts.venus]
+longitude = [342, 39, 3, 1, 1, 1]
+latitude = [167, 21, 3, 1, 1, 1]
+radius = [299, 27, 2, 1, 1, 1]
+
+[asset.term_counts.earth]
+longitude = [540, 73, 3, 1, 1, 1]
+latitude = [140, 4, 1, 1, 1]
+radius = [519, 58, 2, 1, 1, 1]
+
+[asset.term_counts.mars]
+longitude = [1214, 231, 21, 2, 1, 1]
+latitude = [396, 60, 4, 1, 1, 1]
+radius = [1118, 280, 21, 3, 1, 1]
+
+[asset.term_counts.jupiter]
+longitude = [760, 181, 38, 4, 1, 1]
+latitude = [232, 52, 6, 1, 1, 1]
+radius = [745, 333, 57, 6, 1, 1]
+
+[asset.term_counts.saturn]
+longitude = [1152, 366, 50, 8, 1, 1]
+latitude = [498, 89, 15, 2, 1, 1]
+radius = [1205, 639, 93, 12, 1, 1]
+
+[[asset]]
+path = "moon_terms.bin"
+source = "Meeus Astronomical Algorithms tables 47.A/47.B, via astronomia's MIT-licensed transcription"
+source_url = "https://github.com/commenthol/astronomia/blob/master/src/moonposition.js"
+license = "MIT (notice reproduced in THIRD_PARTY_NOTICES.md)"
+model = "60 longitude/radius terms and 60 latitude terms"
+max_horizons_topocentric_position_error_arcsec = 14.10
+sha256 = "4242e9c3d0c2f30d7f7864555160e88ec3cb01d0ffb6333bd945706dcae5d685"
+
+[[asset]]
+path = "bright_stars.bin"
+source = "Yale Bright Star Catalogue, 5th Revised Edition (Hoffleit & Warren 1991), CDS V/50/catalog"
+source_url = "https://cdsarc.cds.unistra.fr/viz-bin/cat/V/50"
+license = "public-domain astronomical catalog data"
+model = "9,096 valid FK5/J2000 epoch-2000 records; RA, Dec, Johnson V, and B-V; no proper motion"
+nominal_limiting_magnitude = 6.5
+sha256 = "72e4ac8502ac0ce21b3c1f2f679ea3f8e08f17a443240dd944984c87064d2ba8"
+
+[[asset]]
+path = "moon_albedo.bin"
+source = "NASA Scientific Visualization Studio CGI Moon Kit 2025 color map, LRO WAC/LOLA"
+source_url = "https://svs.gsfc.nasa.gov/4720/"
+license = "NASA public data; credit NASA Scientific Visualization Studio"
+model = "128x64 8-bit luminance, Lanczos downsampled from lroc_color_2k.jpg for display texturing"
+sha256 = "1cff7fd23c1af7fc1ecb3c26cdc7b110d16b74e20f876eda4218ddf7f7e6fe6c"

@@ -6,3 +6,4 @@ mod core;
 mod gi;
 mod ibl;
 mod readback;
+mod snapshot_sky;

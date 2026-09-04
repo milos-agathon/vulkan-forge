@@ -38,7 +38,8 @@ pytestmark = pytest.mark.interactive_viewer
 def find_viewer_binary() -> Path:
     """Find the interactive_viewer binary."""
     override = os.environ.get("FORGE3D_VIEWER_BINARY")
-    if override:
+    if override is not None:
+        assert override.strip(), "FORGE3D_VIEWER_BINARY must not be empty"
         binary = Path(override)
         assert binary.is_file(), f"FORGE3D_VIEWER_BINARY does not exist: {binary}"
         return binary
@@ -95,6 +96,12 @@ def send_ipc(sock: socket.socket, cmd: dict, timeout: float = 10.0) -> dict:
     return {"ok": False, "error": "Empty response"}
 
 
+def _drain_viewer_stdout(stream) -> None:
+    """Keep the viewer pipe flowing while retaining post-READY crash evidence."""
+    for line in iter(stream.readline, ""):
+        print(f"[forge3d-viewer] {line}", end="", flush=True)
+
+
 def start_viewer_with_ipc(binary: Path, width: int = 640, height: int = 480) -> tuple:
     """Start viewer with IPC and return (process, port)."""
     cmd = [str(binary), "--ipc-port", "0", "--size", f"{width}x{height}"]
@@ -120,11 +127,9 @@ def start_viewer_with_ipc(binary: Path, width: int = 640, height: int = 480) -> 
         process.terminate()
         raise RuntimeError("Timeout waiting for viewer READY signal")
 
-    def drain_stdout(stream) -> None:
-        for _ in iter(stream.readline, ""):
-            pass
-
-    threading.Thread(target=drain_stdout, args=(process.stdout,), daemon=True).start()
+    threading.Thread(
+        target=_drain_viewer_stdout, args=(process.stdout,), daemon=True
+    ).start()
     
     return process, port
 
@@ -943,6 +948,7 @@ class TestTerrainViewerPbr:
                     "msaa": 4,
                     "ibl_intensity": 0.15,
                     "normal_strength": 3.8,
+                    "sky": {"enabled": False},
                     "height_ao": {"enabled": False},
                     "sun_visibility": {
                         "enabled": True,

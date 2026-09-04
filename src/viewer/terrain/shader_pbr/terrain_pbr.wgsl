@@ -74,6 +74,7 @@ struct CsmUniforms {
     _pad1a: f32,
     _pad1b: f32,
     _pad1c: f32,
+    // [blocker radius (texels), max filter radius (texels), moment bias, light radius (texels)]
     technique_params: vec4<f32>,
     technique_reserved: vec4<f32>,
     cascade_blend_range: f32,
@@ -366,64 +367,101 @@ fn sample_shadow_evsm(shadow_coords: vec2<f32>, receiver_depth: f32, cascade_idx
     let c_pos = csm_uniforms.evsm_positive_exp;
     let c_neg = csm_uniforms.evsm_negative_exp;
     
-    // Warp receiver depth
-    let warp_depth_pos = exp(c_pos * receiver_depth);
-    let warp_depth_neg = exp(-c_neg * receiver_depth);
-    
-    // Positive warp moments
-    let pos_mean = moments.r;
-    let pos_mean_sq = moments.g;
-    let pos_variance = max(pos_mean_sq - pos_mean * pos_mean, moment_bias);
-    let pos_d = warp_depth_pos - pos_mean;
-    let p_max_pos = pos_variance / (pos_variance + pos_d * pos_d);
-    
-    // Negative warp moments
-    let neg_mean = moments.b;
-    let neg_mean_sq = moments.a;
-    let neg_variance = max(neg_mean_sq - neg_mean * neg_mean, moment_bias);
-    let neg_d = warp_depth_neg - neg_mean;
-    let p_max_neg = neg_variance / (neg_variance + neg_d * neg_d);
-    
-    // Combine: take minimum (most shadow)
-    var shadow = min(p_max_pos, p_max_neg);
-    if (warp_depth_pos <= pos_mean) { shadow = max(shadow, 1.0); }
-    if (warp_depth_neg <= neg_mean) { shadow = max(shadow, 1.0); }
-    
-    return clamp(shadow, 0.0, 1.0);
+    // Warp receiver depth. The negative lobe is negated to match the moment
+    // atlas (moment_generation.wgsl) so both warps increase with depth.
+    let warp_depth_pos = exp(c_pos * (receiver_depth - 1.0));
+    let warp_depth_neg = -exp(-c_neg * receiver_depth);
+    let variance_floor = evsm_minimum_variance(
+        vec2<f32>(warp_depth_pos, warp_depth_neg),
+        vec2<f32>(c_pos, c_neg)
+    );
+
+    let variance_visibility = clamp(
+        evsm_visibility_from_moments(
+            moments,
+            warp_depth_pos,
+            warp_depth_neg,
+            variance_floor
+        ),
+        0.0,
+        1.0
+    );
+    let moment_visibility = min(
+        variance_visibility,
+        evsm_moment_leak_control(
+            moments.rg,
+            warp_depth_pos,
+            c_pos,
+            variance_floor.x
+        )
+    );
+    return moment_visibility;
 }
 
 // MSM: Moment shadow maps (4 moments)
 fn sample_shadow_msm(shadow_coords: vec2<f32>, receiver_depth: f32, cascade_idx: u32, moment_bias: f32) -> f32 {
     let moments = textureSample(moment_maps, moment_sampler, shadow_coords, i32(cascade_idx));
-    
-    let z = receiver_depth;
-    let b1 = moments.r;
-    let b2 = moments.g;
-    let b3 = moments.b;
-    let b4 = moments.a;
-    
-    // Hamburger 4MSM approximation
-    let det = b2 * b4 - b3 * b3;
-    if (abs(det) < 0.00001) {
-        return select(1.0, 0.0, z > b1);
+    return msm_visibility_from_moments(moments, receiver_depth, moment_bias);
+}
+
+fn pcss_blocker_search(
+    shadow_coords: vec2<f32>,
+    receiver_depth: f32,
+    cascade_idx: u32,
+    search_radius: f32,
+) -> f32 {
+    var poisson_disk = array<vec2<f32>, 12>(
+        vec2<f32>(-0.94201624, -0.39906216),
+        vec2<f32>(0.94558609, -0.76890725),
+        vec2<f32>(-0.094184101, -0.92938870),
+        vec2<f32>(0.34495938, 0.29387760),
+        vec2<f32>(-0.91588581, 0.45771432),
+        vec2<f32>(-0.81544232, -0.87912464),
+        vec2<f32>(-0.38277543, 0.27676845),
+        vec2<f32>(0.97484398, 0.75648379),
+        vec2<f32>(0.44323325, -0.97511554),
+        vec2<f32>(0.53742981, -0.47373420),
+        vec2<f32>(-0.26496911, -0.41893023),
+        vec2<f32>(0.79197514, 0.19090188)
+    );
+    let texel_size = 1.0 / max(csm_uniforms.shadow_map_size, 1.0);
+    let scaled_search_radius = search_radius * texel_size;
+    let dimensions = textureDimensions(shadow_maps);
+    var blocker_sum = 0.0;
+    var blocker_count = 0.0;
+
+    for (var i = 0; i < 12; i++) {
+        let sample_coords = shadow_coords + poisson_disk[i] * scaled_search_radius;
+        if (sample_coords.x >= 0.0 && sample_coords.x <= 1.0 &&
+            sample_coords.y >= 0.0 && sample_coords.y <= 1.0) {
+            let texel_coords = vec2<i32>(clamp(
+                sample_coords * vec2<f32>(dimensions),
+                vec2<f32>(0.0),
+                vec2<f32>(dimensions) - vec2<f32>(1.0)
+            ));
+            let shadow_depth =
+                textureLoad(shadow_maps, texel_coords, i32(cascade_idx), 0);
+            if (shadow_depth < receiver_depth) {
+                blocker_sum += shadow_depth;
+                blocker_count += 1.0;
+            }
+        }
     }
-    
-    let c1 = (b4 * b1 - b3 * b2) / det;
-    let c2 = (b2 * b2 - b1 * b3) / det;
-    
-    // Quadratic: z^2 + c1*z + c2 = 0
-    let discriminant = c1 * c1 - 4.0 * c2;
-    if (discriminant < 0.0) {
-        return select(1.0, 0.0, z > b1);
+
+    if (blocker_count > 0.0) {
+        return blocker_sum / blocker_count;
     }
-    
-    let sqrt_d = sqrt(discriminant);
-    let z1 = (-c1 - sqrt_d) * 0.5;
-    let z2 = (-c1 + sqrt_d) * 0.5;
-    
-    if (z <= z1) { return 1.0; }
-    if (z <= z2) { return 0.5; }
-    return 0.0;
+    return -1.0;
+}
+
+fn pcss_penumbra_size(
+    receiver_depth: f32,
+    blocker_depth: f32,
+    light_size: f32,
+) -> f32 {
+    let depth_diff = max(receiver_depth - blocker_depth, 0.0);
+    let penumbra = (depth_diff * light_size) / max(blocker_depth, 0.001);
+    return clamp(penumbra, 0.0, 100.0);
 }
 
 // Main CSM shadow sampling with technique dispatch
@@ -460,7 +498,6 @@ fn sample_csm_shadow(world_pos: vec3<f32>, normal: vec3<f32>, cascade_idx: u32) 
     
     let technique = csm_uniforms.technique;
     let moment_bias = csm_uniforms.technique_params.z;
-    let light_size = csm_uniforms.technique_params.w;
     
     // HARD shadows (technique=0)
     if (technique == 0u) {
@@ -480,18 +517,65 @@ fn sample_csm_shadow(world_pos: vec3<f32>, normal: vec3<f32>, cascade_idx: u32) 
         return shadow_sum / 9.0;
     }
     
-    // PCSS (technique=2): larger kernel with light size scaling
+    // PCSS (technique=2): blocker-dependent penumbra and adaptive PCF
     if (technique == 2u) {
-        let filter_scale = max(light_size, 1.0);
-        let texel_size = (1.0 / max(csm_uniforms.shadow_map_size, 1.0)) * filter_scale;
+        let avg_blocker_depth = pcss_blocker_search(
+            shadow_coords,
+            compare_depth,
+            cascade_idx,
+            min(csm_uniforms.technique_params.x, 50.0)
+        );
+        if (avg_blocker_depth < 0.0) {
+            return 1.0;
+        }
+
+        let penumbra = pcss_penumbra_size(
+            compare_depth,
+            avg_blocker_depth,
+            csm_uniforms.technique_params.w
+        );
+        let max_filter_radius = min(csm_uniforms.technique_params.y, 100.0);
+        let filter_radius = min(
+            max(penumbra, min(max_filter_radius, 1.0)),
+            max_filter_radius
+        );
+        var poisson_disk = array<vec2<f32>, 16>(
+            vec2<f32>(-0.94201624, -0.39906216),
+            vec2<f32>(0.94558609, -0.76890725),
+            vec2<f32>(-0.094184101, -0.92938870),
+            vec2<f32>(0.34495938, 0.29387760),
+            vec2<f32>(-0.91588581, 0.45771432),
+            vec2<f32>(-0.81544232, -0.87912464),
+            vec2<f32>(-0.38277543, 0.27676845),
+            vec2<f32>(0.97484398, 0.75648379),
+            vec2<f32>(0.44323325, -0.97511554),
+            vec2<f32>(0.53742981, -0.47373420),
+            vec2<f32>(-0.26496911, -0.41893023),
+            vec2<f32>(0.79197514, 0.19090188),
+            vec2<f32>(-0.24188840, 0.99706507),
+            vec2<f32>(-0.81409955, 0.91437590),
+            vec2<f32>(0.19984126, 0.78641367),
+            vec2<f32>(0.14383161, -0.14100790)
+        );
+        let scaled_filter_radius =
+            filter_radius / max(csm_uniforms.shadow_map_size, 1.0);
         var shadow_sum = 0.0;
-        for (var y = -2; y <= 2; y = y + 1) {
-            for (var x = -2; x <= 2; x = x + 1) {
-                let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-                shadow_sum += textureSampleCompare(shadow_maps, shadow_sampler, shadow_coords + offset, i32(cascade_idx), compare_depth);
+        for (var i = 0; i < 16; i++) {
+            let sample_coords = shadow_coords + poisson_disk[i] * scaled_filter_radius;
+            if (sample_coords.x >= 0.0 && sample_coords.x <= 1.0 &&
+                sample_coords.y >= 0.0 && sample_coords.y <= 1.0) {
+                shadow_sum += textureSampleCompare(
+                    shadow_maps,
+                    shadow_sampler,
+                    sample_coords,
+                    i32(cascade_idx),
+                    clamp(compare_depth, 0.0, 1.0)
+                );
+            } else {
+                shadow_sum += 1.0;
             }
         }
-        return shadow_sum / 25.0;
+        return shadow_sum / 16.0;
     }
     
     // VSM (technique=3)

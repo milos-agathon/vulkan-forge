@@ -78,6 +78,14 @@ def _fallback_metrics() -> Dict[str, float]:
         "utilization_ratio": float(utilization),
         "resident_tiles": 0,
         "resident_tile_bytes": 0,
+        "resident_tiles_albedo": 0,
+        "resident_tiles_normal": 0,
+        "resident_tiles_mask": 0,
+        "resident_tiles_height": 0,
+        "resident_bytes_albedo": 0,
+        "resident_bytes_normal": 0,
+        "resident_bytes_mask": 0,
+        "resident_bytes_height": 0,
         "staging_bytes_in_flight": 0,
         "staging_ring_count": 0,
         "staging_buffer_size": 0,
@@ -114,6 +122,9 @@ def memory_metrics() -> Dict[str, float]:
             metrics.setdefault("utilization_ratio", 0.0)
             metrics.setdefault("resident_tiles", 0)
             metrics.setdefault("resident_tile_bytes", 0)
+            for family in ("albedo", "normal", "mask", "height"):
+                metrics.setdefault(f"resident_tiles_{family}", 0)
+                metrics.setdefault(f"resident_bytes_{family}", 0)
             metrics.setdefault("staging_bytes_in_flight", 0)
             metrics.setdefault("staging_ring_count", 0)
             metrics.setdefault("staging_buffer_size", 0)

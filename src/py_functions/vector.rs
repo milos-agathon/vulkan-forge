@@ -3,6 +3,7 @@ use super::super::*;
 mod basic;
 mod coverage;
 mod coverage_ablation;
+mod coverage_cache;
 mod demo;
 mod inputs;
 mod oit;

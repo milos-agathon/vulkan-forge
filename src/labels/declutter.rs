@@ -24,8 +24,8 @@ pub struct PlacementCandidate {
     pub cost: f32,
     /// Whether this candidate is currently selected.
     pub selected: bool,
-    /// Visibility gate: anchors occluded by terrain silhouettes are marked
-    /// `false` at compile time and contribute zero placements.
+    /// Caller-supplied eligibility gate. `false` candidates contribute no
+    /// placements; the bool does not encode why they were filtered.
     pub visible: bool,
 }
 
@@ -51,9 +51,10 @@ pub struct DeclutterConfig {
     /// Certified optimality gap tolerance for the optimal solver
     /// (fraction of the objective upper bound; 0.02 = 2%).
     pub gap_tolerance: f64,
-    /// Branch-and-bound node budget for the optimal solver; when exceeded
-    /// the solver returns its best incumbent with an honest (larger) gap.
-    pub node_budget: u64,
+    /// Optional deterministic branch-and-bound work budget. `None` means
+    /// unbounded work. A work budget is used instead of a wall-clock limit
+    /// because elapsed time is not a reproducible input to placement.
+    pub node_budget: Option<u64>,
 }
 
 impl Default for DeclutterConfig {
@@ -68,7 +69,7 @@ impl Default for DeclutterConfig {
             seed: 42,
             margin: 2.0,
             gap_tolerance: 0.02,
-            node_budget: 200_000,
+            node_budget: None,
         }
     }
 }
@@ -156,37 +157,57 @@ fn compute_energy(candidates: &[PlacementCandidate], config: &DeclutterConfig) -
 ///
 /// Places labels in priority order, skipping those that overlap
 /// with already-placed labels.
+fn apply_greedy_selection(candidates: &mut [PlacementCandidate], config: &DeclutterConfig) {
+    let mut order: Vec<usize> = (0..candidates.len()).collect();
+    order.sort_by(|&left, &right| {
+        candidates[right]
+            .priority
+            .cmp(&candidates[left].priority)
+            .then(candidates[left].label_id.cmp(&candidates[right].label_id))
+            .then(
+                candidates[left]
+                    .anchor_index
+                    .cmp(&candidates[right].anchor_index),
+            )
+    });
+    candidates
+        .iter_mut()
+        .for_each(|candidate| candidate.selected = false);
+    let mut selected_labels = HashSet::new();
+    let mut placed_bounds: Vec<[f32; 4]> = Vec::new();
+    for index in order {
+        let candidate = &candidates[index];
+        if !candidate.visible || selected_labels.contains(&candidate.label_id) {
+            continue;
+        }
+        if placed_bounds
+            .iter()
+            .any(|bounds| boxes_overlap(&candidate.bounds, bounds, config.margin))
+        {
+            continue;
+        }
+        candidates[index].selected = true;
+        selected_labels.insert(candidates[index].label_id);
+        placed_bounds.push(candidates[index].bounds);
+    }
+}
+
 pub fn declutter_greedy(
     mut candidates: Vec<PlacementCandidate>,
     config: &DeclutterConfig,
 ) -> DeclutterResult {
-    // Sort by priority (descending)
-    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.priority));
+    apply_greedy_selection(&mut candidates, config);
 
-    let mut visible_labels = Vec::new();
-    let mut positions = Vec::new();
-    let mut placed_bounds: Vec<[f32; 4]> = Vec::new();
-
-    for candidate in &mut candidates {
-        // Occluded anchors contribute zero placements.
-        if !candidate.visible {
-            candidate.selected = false;
-            continue;
-        }
-        // Check if this candidate overlaps with any placed label
-        let overlaps = placed_bounds
-            .iter()
-            .any(|b| boxes_overlap(&candidate.bounds, b, config.margin));
-
-        if !overlaps {
-            candidate.selected = true;
-            visible_labels.push(candidate.label_id);
-            positions.push((candidate.label_id, candidate.position));
-            placed_bounds.push(candidate.bounds);
-        } else {
-            candidate.selected = false;
-        }
-    }
+    let visible_labels = candidates
+        .iter()
+        .filter(|candidate| candidate.selected)
+        .map(|candidate| candidate.label_id)
+        .collect();
+    let positions = candidates
+        .iter()
+        .filter(|candidate| candidate.selected)
+        .map(|candidate| (candidate.label_id, candidate.position))
+        .collect();
 
     let total_energy = compute_energy(&candidates, config);
 
@@ -217,13 +238,8 @@ pub fn declutter_annealing(
 
     let mut rng = SimpleRng::new(config.seed);
 
-    // Start with greedy solution
-    let greedy = declutter_greedy(candidates.clone(), config);
-    let greedy_ids: HashSet<u64> = greedy.visible_labels.iter().copied().collect();
-
-    for c in &mut candidates {
-        c.selected = greedy_ids.contains(&c.label_id);
-    }
+    // Start with an identity-preserving greedy solution.
+    apply_greedy_selection(&mut candidates, config);
 
     let mut current_energy = compute_energy(&candidates, config);
     let mut best_energy = current_energy;
@@ -235,8 +251,21 @@ pub fn declutter_annealing(
         // Pick a random candidate to toggle
         let idx = rng.next_usize(candidates.len());
 
-        // Toggle selection
-        candidates[idx].selected = !candidates[idx].selected;
+        let previous_selection: Vec<bool> = candidates.iter().map(|c| c.selected).collect();
+        if candidates[idx].selected {
+            candidates[idx].selected = false;
+        } else {
+            if !candidates[idx].visible {
+                continue;
+            }
+            let selected_label = candidates[idx].label_id;
+            for candidate in &mut candidates {
+                if candidate.label_id == selected_label {
+                    candidate.selected = false;
+                }
+            }
+            candidates[idx].selected = true;
+        }
 
         let new_energy = compute_energy(&candidates, config);
         let delta = new_energy - current_energy;
@@ -256,8 +285,9 @@ pub fn declutter_annealing(
                 best_selection = candidates.iter().map(|c| c.selected).collect();
             }
         } else {
-            // Revert
-            candidates[idx].selected = !candidates[idx].selected;
+            for (candidate, selected) in candidates.iter_mut().zip(previous_selection) {
+                candidate.selected = selected;
+            }
         }
 
         // Cool down
@@ -311,10 +341,10 @@ pub fn declutter(
     candidates: Vec<PlacementCandidate>,
     config: &DeclutterConfig,
     algorithm: DeclutterAlgorithm,
-) -> DeclutterResult {
+) -> Result<DeclutterResult, super::optimal::CandidateError> {
     match algorithm {
-        DeclutterAlgorithm::Greedy => declutter_greedy(candidates, config),
-        DeclutterAlgorithm::Annealing => declutter_annealing(candidates, config),
+        DeclutterAlgorithm::Greedy => Ok(declutter_greedy(candidates, config)),
+        DeclutterAlgorithm::Annealing => Ok(declutter_annealing(candidates, config)),
         DeclutterAlgorithm::Optimal => super::optimal::declutter_optimal_result(candidates, config),
     }
 }
@@ -373,5 +403,57 @@ mod tests {
 
         let c = [20.0, 20.0, 30.0, 30.0];
         assert!(!boxes_overlap(&a, &c, 0.0));
+    }
+
+    #[test]
+    fn test_optimal_algorithm_dispatch() {
+        let candidates = vec![
+            make_candidate(1, 0.0, 0.0, 6),
+            make_candidate(2, 30.0, 0.0, 10),
+            make_candidate(3, 60.0, 0.0, 6),
+        ];
+        let config = DeclutterConfig {
+            margin: 0.0,
+            gap_tolerance: 0.0,
+            ..DeclutterConfig::default()
+        };
+        let result = declutter(candidates, &config, DeclutterAlgorithm::Optimal)
+            .expect("valid optimal dispatch");
+        assert_eq!(result.visible_labels, vec![1, 3]);
+    }
+
+    #[test]
+    fn test_greedy_selects_at_most_one_candidate_per_label() {
+        let mut first = make_candidate(1, 0.0, 0.0, 10);
+        first.anchor_index = 0;
+        let mut second = make_candidate(1, 100.0, 0.0, 9);
+        second.anchor_index = 1;
+        let result = declutter_greedy(vec![second, first], &DeclutterConfig::default());
+        assert_eq!(result.visible_labels, vec![1]);
+        assert_eq!(result.positions, vec![(1, [0.0, 0.0])]);
+    }
+
+    #[test]
+    fn test_annealing_preserves_candidate_identity_per_label() {
+        let mut candidates = Vec::new();
+        for (anchor_index, x) in [0.0, 100.0, 200.0].into_iter().enumerate() {
+            let mut candidate = make_candidate(1, x, 0.0, 10 - anchor_index as i32);
+            candidate.anchor_index = anchor_index as u32;
+            candidates.push(candidate);
+        }
+        candidates.push(make_candidate(2, 400.0, 0.0, 5));
+        let config = DeclutterConfig {
+            max_iterations: 200,
+            seed: 17,
+            ..DeclutterConfig::default()
+        };
+        let result = declutter_annealing(candidates, &config);
+        let label_one_count = result
+            .visible_labels
+            .iter()
+            .filter(|&&label_id| label_id == 1)
+            .count();
+        assert!(label_one_count <= 1);
+        assert_eq!(result.visible_labels.len(), result.positions.len());
     }
 }

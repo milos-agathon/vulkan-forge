@@ -250,6 +250,83 @@ impl StagingRing {
         true
     }
 
+    /// Upload a block-compressed texture region without expanding it in host
+    /// memory. `width`/`height` and `origin` are expressed in texels; buffer
+    /// rows are expressed in compression blocks as required by wgpu.
+    #[allow(clippy::too_many_arguments)]
+    pub fn upload_compressed_texture_region(
+        &mut self,
+        encoder: &mut CommandEncoder,
+        queue: &Queue,
+        texture: &Texture,
+        origin: wgpu::Origin3d,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        block_width: u32,
+        block_height: u32,
+        bytes_per_block: u32,
+    ) -> bool {
+        if width == 0
+            || height == 0
+            || block_width == 0
+            || block_height == 0
+            || bytes_per_block == 0
+            || !width.is_multiple_of(block_width)
+            || !height.is_multiple_of(block_height)
+            || !origin.x.is_multiple_of(block_width)
+            || !origin.y.is_multiple_of(block_height)
+        {
+            return false;
+        }
+        let block_rows = height / block_height;
+        let bytes_per_row = (width / block_width).saturating_mul(bytes_per_block);
+        if data.len() != bytes_per_row as usize * block_rows as usize {
+            return false;
+        }
+        let padded_bytes_per_row = align_to(bytes_per_row, COPY_BYTES_PER_ROW_ALIGNMENT);
+        let upload_size = padded_bytes_per_row as u64 * block_rows as u64;
+        let Some((buffer, offset)) = self.allocate(upload_size) else {
+            return false;
+        };
+        if padded_bytes_per_row == bytes_per_row {
+            queue.write_buffer(buffer, offset, data);
+        } else {
+            let mut padded = vec![0u8; upload_size as usize];
+            for row in 0..block_rows as usize {
+                let src_start = row * bytes_per_row as usize;
+                let dst_start = row * padded_bytes_per_row as usize;
+                padded[dst_start..dst_start + bytes_per_row as usize]
+                    .copy_from_slice(&data[src_start..src_start + bytes_per_row as usize]);
+            }
+            queue.write_buffer(buffer, offset, &padded);
+        }
+        encoder.copy_buffer_to_texture(
+            wgpu::ImageCopyBuffer {
+                buffer,
+                layout: wgpu::ImageDataLayout {
+                    offset,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    // ImageDataLayout uses compression-block rows for
+                    // block-compressed textures, not texel rows.
+                    rows_per_image: Some(block_rows),
+                },
+            },
+            wgpu::ImageCopyTexture {
+                texture,
+                mip_level: 0,
+                origin,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        true
+    }
+
     /// Advance to the next ring buffer with fence synchronization
     pub fn advance(&mut self, fence_value: u64) -> bool {
         // Submit fence for current buffer
@@ -334,7 +411,7 @@ mod tests {
         let instance = Instance::new(wgpu::InstanceDescriptor {
             backends: Backends::all(),
             dx12_shader_compiler: Default::default(),
-            flags: wgpu::InstanceFlags::default(),
+            flags: crate::core::gpu::instance_flags(),
             gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
         });
 

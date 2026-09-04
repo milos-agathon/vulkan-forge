@@ -40,11 +40,21 @@ def test_shader_milestone_4_complete():
     # Task 4.2: Triplanar Texture Sampling
     print("Task 4.2: Triplanar Texture Sampling")
     assert "fn sample_triplanar" in shader_source, "Missing sample_triplanar function"
-    assert "fn sample_triplanar_normal" in shader_source, "Missing sample_triplanar_normal function"
+    assert "fn sample_triplanar_vt_family" in shader_source, \
+        "Missing triplanar material-family sampling"
+    assert "fn apply_encoded_tangent_normal" in shader_source, \
+        "Missing tangent-space normal application"
+    assert "fn apply_material_normal_map" in shader_source, \
+        "Missing live material normal-map path"
+    assert "textureSample(material_normal_tex" in shader_source, \
+        "Material normal texture is not sampled"
 
     # Verify triplanar blend weights
     assert "blend_sharpness" in shader_source, "Missing blend sharpness parameter"
-    assert "blend_norm = blend_pow / " in shader_source, "Missing blend normalization"
+    assert "let weight_sum = sharpen.x + sharpen.y + sharpen.z" in shader_source, \
+        "Missing live triplanar weight sum"
+    assert "return sharpen / max(weight_sum, 1e-4)" in shader_source, \
+        "Missing live triplanar blend normalization"
 
     # Verify axis sampling
     assert "uv_x = world_pos.yz * scale" in shader_source, "Missing X-axis UVs"
@@ -52,7 +62,7 @@ def test_shader_milestone_4_complete():
     assert "uv_z = world_pos.xy * scale" in shader_source, "Missing Z-axis UVs"
 
     print("  ✓ sample_triplanar() implemented")
-    print("  ✓ sample_triplanar_normal() implemented")
+    print("  ✓ triplanar material families and tangent normals implemented")
     print("  ✓ Blend weights calculated from surface normal")
     print("  ✓ Three-axis sampling (X, Y, Z)")
     print()
@@ -61,16 +71,20 @@ def test_shader_milestone_4_complete():
     print("Task 4.3: Parallax Occlusion Mapping")
     assert "fn parallax_occlusion_mapping" in shader_source, \
         "Missing parallax_occlusion_mapping function"
-    assert "fn pom_self_shadow" in shader_source, "Missing pom_self_shadow function"
+    assert "if (shadow_enabled && pom_enabled)" in shader_source, \
+        "Missing live POM shadow gate"
+    assert "det_mix(0.4, 1.0, occlusion)" in shader_source, \
+        "Missing live POM shadow factor"
 
     # Verify adaptive sampling
-    assert "Adaptive step count" in shader_source or "adaptive" in shader_source.lower(), \
-        "Missing adaptive step count"
-    assert "view_angle" in shader_source, "Missing view angle calculation"
+    assert "let blend = clamp(abs(view_dir.z), 0.0, 1.0)" in shader_source, \
+        "Missing view-angle step blend"
+    assert "let step_count = clamp(u32(steps_interp + 0.5), 1u, max_s)" in shader_source, \
+        "Missing adaptive POM step count"
 
     # Verify ray marching
-    assert "Ray march" in shader_source or "Linear search" in shader_source, \
-        "Missing ray march implementation"
+    assert "current_uv -= parallax_dir * step_size" in shader_source, \
+        "Missing POM ray march"
 
     # Verify binary refinement
     assert "Binary refinement" in shader_source or "refine" in shader_source.lower(), \
@@ -80,15 +94,18 @@ def test_shader_milestone_4_complete():
     print("  ✓ Adaptive step count based on view angle")
     print("  ✓ Ray marching through height field")
     print("  ✓ Binary refinement for accuracy")
-    print("  ✓ pom_self_shadow() for self-shadowing")
+    print("  ✓ live POM shadow gate and occlusion factor")
     print()
 
     # Task 4.4: PBR BRDF Calculation
     print("Task 4.4: PBR BRDF Calculation")
-    assert "fn distribution_ggx" in shader_source, "Missing distribution_ggx function"
-    assert "fn geometry_smith" in shader_source, "Missing geometry_smith function"
-    assert "fn fresnel_schlick" in shader_source, "Missing fresnel_schlick function"
     assert "fn calculate_pbr_brdf" in shader_source, "Missing calculate_pbr_brdf function"
+    assert "let distribution = alpha_sq /" in shader_source, \
+        "Missing live GGX distribution"
+    assert "let geometry = g1_l * g1_v" in shader_source, \
+        "Missing live Smith geometry term"
+    assert "let fresnel = f0 +" in shader_source, \
+        "Missing live Schlick Fresnel term"
 
     # Verify Cook-Torrance BRDF
     assert "Cook-Torrance" in shader_source, "Missing Cook-Torrance documentation"
@@ -103,9 +120,9 @@ def test_shader_milestone_4_complete():
     assert "metallic" in shader_source and "roughness" in shader_source, \
         "Missing metallic-roughness parameters"
 
-    print("  ✓ distribution_ggx() (Normal Distribution Function)")
-    print("  ✓ geometry_smith() (Geometric Attenuation)")
-    print("  ✓ fresnel_schlick() (Fresnel Term)")
+    print("  ✓ GGX normal distribution term")
+    print("  ✓ Smith geometric attenuation term")
+    print("  ✓ Schlick Fresnel term")
     print("  ✓ calculate_pbr_brdf() (Cook-Torrance BRDF)")
     print("  ✓ Specular and diffuse terms")
     print("  ✓ Metallic-roughness workflow")

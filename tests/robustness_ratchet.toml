@@ -42,8 +42,8 @@ baseline_panic = 1
 baseline_unwrap = 45
 baseline_expect = 5
 panic = 1
-unwrap = 25
-expect = 5
+unwrap = 31
+expect = 15
 
 [[modules]]
 module = "vector"
@@ -202,6 +202,13 @@ expect = 0
 reason = "Provenance serialization unwraps fixed JSON-compatible internal records."
 
 [[source_allowlist]]
+path = "src/terrain/clipmap/gpu_lod.rs"
+panic = 0
+unwrap = 0
+expect = 4
+reason = "GPU LOD preparation requires these resources and readback callbacks after successful creation and mapping setup."
+
+[[source_allowlist]]
 path = "src/terrain/clipmap/level.rs"
 panic = 0
 unwrap = 3
@@ -237,6 +244,13 @@ expect = 1
 reason = "AOV readback buffer exists whenever the readback branch is entered."
 
 [[source_allowlist]]
+path = "src/terrain/renderer/bind_groups/terrain_pass.rs"
+panic = 0
+unwrap = 0
+expect = 1
+reason = "The fallback atlas view is present whenever the terrain pass selects the VT fallback path."
+
+[[source_allowlist]]
 path = "src/terrain/renderer/bind_groups/layouts.rs"
 panic = 0
 unwrap = 1
@@ -247,8 +261,22 @@ reason = "Bind-group array count uses a compile-time positive constant."
 path = "src/terrain/renderer/draw/execute.rs"
 panic = 0
 unwrap = 0
-expect = 1
-reason = "Draw execution follows successful preparation of the required bind group."
+expect = 4
+reason = "HZB and visibility paths enter these branches only after their required resources and bind groups were prepared."
+
+[[source_allowlist]]
+path = "src/terrain/renderer/geometry.rs"
+panic = 0
+unwrap = 0
+expect = 2
+reason = "Capability fallback tests require the recorded degradation entry immediately after exercising the fallback path."
+
+[[source_allowlist]]
+path = "src/terrain/vt/store.rs"
+panic = 0
+unwrap = 7
+expect = 0
+reason = "Mip-chain and fixed-layout page decoding use validated non-empty chains and exact byte ranges."
 
 [[source_allowlist]]
 path = "src/terrain/renderer/draw/setup/context.rs"

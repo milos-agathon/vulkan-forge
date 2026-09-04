@@ -6,6 +6,14 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-08-13
+### Added
+- HELIOS: added public NREL SPA solar positioning via `forge3d.geo.solar_position` while preserving the existing NOAA-compatible `sun_position` APIs, geodetic-curvature/refraction viewshed and shadow APIs, and shared PROMETHEUS min-max terrain traversal for viewshed and shadow queries.
+- HELIOS acceptance includes independent Whitebox and golden-image evidence, deterministic matching DX12/Vulkan physical-GPU results, and zero measured renderer memory growth.
+
+### Changed
+- Bumped the package and PyPI version to `1.35.0`.
+
 ## [1.34.0] - 2026-07-25
 ### Added
 - DUPLA: double-float (DD) arithmetic in lockstep Rust and WGSL, with Knuth/Dekker transforms and Joldes-Muller-Popescu error bounds. Adds the `forge3d.precision` module plus the `dd_selftest`, `dd_harness`, and `dd_jitter_demo` entry points, backend exactness canaries, tracked GPU proof buffers, and certificate `precision`/`jitter` evidence. Measured on an RTX 3070 across DX12 and Vulkan, every operation stays inside its cited bound (add 2.39/3 u2, mul 5.63/7, div 5.92/15, sqrt 3.34/15) over 100M generated plus 1M adversarial vectors per operation with zero mirror mismatches.

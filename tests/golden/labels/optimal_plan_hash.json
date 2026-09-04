@@ -1,8 +1,27 @@
 {
-  "description": "CARTOGRAPHER-PRIME cross-device golden: sha256 of the canonical ridgeline label-plan payload, one entry per CI runner config; all three must be identical and match the recompiled plan.",
-  "plan_hash": {
-    "macos-latest": "305ff575e5c6ace3398be368aecf07f898162d674f65bb365228d7022f568ede",
-    "ubuntu-latest": "305ff575e5c6ace3398be368aecf07f898162d674f65bb365228d7022f568ede",
-    "windows-latest": "305ff575e5c6ace3398be368aecf07f898162d674f65bb365228d7022f568ede"
-  }
+  "description": "CARTOGRAPHER-PRIME canonical ridgeline plan hash and the exact hosted runner configurations required for three-runner determinism evidence. This is runner/config evidence, not physical-device proof.",
+  "expected_test_count": 16,
+  "expected_tested_instance_count": 5,
+  "plan_hash": "8ad1f1330b00f9752ac6cffeec7de36ab2017ccbf0de907832096f42862bacaf",
+  "required_runner_configs": [
+    {
+      "id": "ubuntu-x64",
+      "runner_arch": "X64",
+      "runner_os": "Linux",
+      "rust_host": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "id": "macos-arm64",
+      "runner_arch": "ARM64",
+      "runner_os": "macOS",
+      "rust_host": "aarch64-apple-darwin"
+    },
+    {
+      "id": "windows-x64",
+      "runner_arch": "X64",
+      "runner_os": "Windows",
+      "rust_host": "x86_64-pc-windows-msvc"
+    }
+  ],
+  "schema": "forge3d.cartographer-prime.golden.v1"
 }

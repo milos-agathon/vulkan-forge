@@ -43,9 +43,11 @@ pub fn unproject_cursor(
     screen_height: u32,
     inv_view_proj: [[f32; 4]; 4],
 ) -> Ray {
-    // Convert screen coordinates to normalized device coordinates [-1, 1]
-    let ndc_x = (2.0 * screen_x as f32 / screen_width as f32) - 1.0;
-    let ndc_y = 1.0 - (2.0 * screen_y as f32 / screen_height as f32); // Y is flipped
+    // Address the centre of the raster pixel. The GPU visibility buffer is
+    // evaluated at pixel centres, so unprojecting the integer-valued top-left
+    // corner gives a different triangle/background answer along every edge.
+    let ndc_x = (2.0 * (screen_x as f32 + 0.5) / screen_width as f32) - 1.0;
+    let ndc_y = 1.0 - (2.0 * (screen_y as f32 + 0.5) / screen_height as f32); // Y is flipped
 
     // Near and far points in NDC
     let near_ndc = [ndc_x, ndc_y, 0.0, 1.0];
@@ -239,5 +241,12 @@ mod tests {
         let v = normalize([3.0, 4.0, 0.0]);
         let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
         assert!((len - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn unproject_cursor_addresses_the_raster_pixel_center() {
+        let ray = unproject_cursor(0, 0, 2, 2, glam::Mat4::IDENTITY.to_cols_array_2d());
+        assert_eq!(ray.origin, [-0.5, 0.5, 0.0]);
+        assert_eq!(ray.direction, [0.0, 0.0, 1.0]);
     }
 }

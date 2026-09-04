@@ -65,11 +65,17 @@ impl TerrainScene {
             self.begin_certificate_capture("terrain.render_internal");
         let mut timing = self.take_render_timing();
         let decoded = params.decoded();
+        self.ensure_shadow_atlas(&decoded.shadow)?;
 
         self.prepare_frame_lighting(decoded)?;
         let height_inputs =
             self.upload_height_inputs(heightmap, water_mask, params.terrain_data_revision)?;
-        self.prepare_geometry(params)?;
+        self.prepare_geometry(
+            params,
+            &height_inputs.heightmap_data,
+            (height_inputs.width, height_inputs.height),
+            height_inputs.terrain_data_hash,
+        )?;
         let probe_world_span = if is_mesh_camera_mode(&params.camera_mode)
             || is_clipmap_camera_mode(&params.camera_mode)
         {
@@ -185,6 +191,15 @@ impl TerrainScene {
             .cascades
             .max(1)
             .min(self.csm_renderer.allocation_layers);
+        let mut shadow_declaration = cache
+            .map(|options| options.shadow_bytes.clone())
+            .unwrap_or_else(|| declaration_uniforms.clone());
+        shadow_declaration.extend_from_slice(&shadow_width.to_le_bytes());
+        shadow_declaration.extend_from_slice(&shadow_layers.to_le_bytes());
+        shadow_declaration.push(u8::from(decoded.shadow.enabled));
+        shadow_declaration
+            .extend_from_slice(&(decoded.shadow.technique.len() as u32).to_le_bytes());
+        shadow_declaration.extend_from_slice(decoded.shadow.technique.as_bytes());
         let graph_bundle = super::render_graph::build_terrain_render_graph(
             params.size_px.0,
             params.size_px.1,
@@ -198,9 +213,7 @@ impl TerrainScene {
             false,
             super::render_graph::TerrainPassDeclarations {
                 prepare: prepare_declaration,
-                shadow: cache
-                    .map(|options| options.shadow_bytes.clone())
-                    .unwrap_or_else(|| declaration_uniforms.clone()),
+                shadow: shadow_declaration,
                 forward: declaration_uniforms,
                 resolve: resolve_declaration,
                 prepared_output_size: prepared_bytes.len() as u64,
@@ -236,6 +249,8 @@ impl TerrainScene {
         let mut shadow_setup = None;
         let mut material_vt_started = false;
         let mut timing_needs_resolve = false;
+        let mut hzb_frame_staged = false;
+        let mut visibility_frame_staged = false;
 
         scheduler
             .execute_graph_with(&scheduler_plan, &leaf_keys, |pass, action| {
@@ -281,6 +296,7 @@ impl TerrainScene {
                                 params,
                                 decoded,
                                 &height_inputs.heightmap_view,
+                                &height_curve_view,
                                 height_inputs.width,
                                 height_inputs.height,
                             )?;
@@ -348,6 +364,7 @@ impl TerrainScene {
                                 params,
                                 decoded,
                                 &height_inputs.heightmap_view,
+                                &height_curve_view,
                                 height_inputs.width,
                                 height_inputs.height,
                             )?;
@@ -444,6 +461,11 @@ impl TerrainScene {
                                 time_seconds,
                                 &mut timing,
                             )?;
+                            hzb_frame_staged = params.culling == "hzb_two_phase"
+                                && render_targets.sample_count == 1
+                                && self.two_phase_culler.is_some();
+                            visibility_frame_staged = is_clipmap_camera_mode(&params.camera_mode)
+                                && render_targets.sample_count == 1;
                             Ok::<_, anyhow::Error>(())
                         })?;
                         timing_needs_resolve = true;
@@ -582,8 +604,31 @@ impl TerrainScene {
             cache.is_none() || !scheduler.report().hits.is_empty() || submitted > 0,
             "cold native terrain graph must submit production work"
         );
+        if visibility_frame_staged && params.shading == "visibility" && params.culling == "frustum"
+        {
+            self.refresh_cpu_visibility_oracle_from_gpu_selection(
+                params,
+                &height_inputs.heightmap_data,
+                (height_inputs.width, height_inputs.height),
+            )?;
+        }
         if material_vt_started {
             self.finish_material_vt_frame()?;
+        }
+        if hzb_frame_staged {
+            let (_, view, proj) = Self::build_camera_matrices(params);
+            if let Some(culler) = self.two_phase_culler.as_mut() {
+                self.culling_stats = culler.finish_frame(self.device.as_ref(), proj * view)?;
+                crate::terrain::culling::two_phase::publish_stats(self.culling_stats);
+            }
+        } else {
+            self.culling_stats = crate::terrain::culling::two_phase::CullingStats::default();
+            crate::terrain::culling::two_phase::publish_stats(self.culling_stats);
+        }
+        if visibility_frame_staged {
+            self.finish_visibility_frame()?;
+        } else {
+            super::visibility_buffer::publish_stats(Default::default());
         }
         self.record_render_timings(&mut timing);
         self.store_render_timing(timing);

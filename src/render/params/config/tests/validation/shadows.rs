@@ -17,6 +17,22 @@ fn shadows_map_size_must_be_nonzero() {
 }
 
 #[test]
+fn hard_shadows_preserve_small_power_of_two_maps() {
+    let mut cfg = RendererConfig::default();
+    cfg.shadows.technique = ShadowTechnique::Hard;
+    cfg.shadows.map_size = 128;
+    cfg.validate().expect("small hard-shadow atlas");
+}
+
+#[test]
+fn filtered_shadows_preserve_256_maps() {
+    let mut cfg = RendererConfig::default();
+    cfg.shadows.technique = ShadowTechnique::Pcf;
+    cfg.shadows.map_size = 256;
+    cfg.validate().expect("256px filtered atlas");
+}
+
+#[test]
 fn shadows_cascades_must_be_in_range() {
     let mut cfg = RendererConfig::default();
     cfg.shadows.cascades = 0;

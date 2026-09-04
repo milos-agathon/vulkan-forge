@@ -65,6 +65,32 @@ def test_terrain_public_docs_drop_stale_sky_and_shadow_claims() -> None:
     assert "hosek_coeffs_a_d" in shader
 
 
+def test_terrain_sky_storage_format_matches_rust_texture_contract() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    rust = (repo / "src/terrain/renderer/atmosphere.rs").read_text(encoding="utf-8")
+    shader = (repo / "src/shaders/sky.wgsl").read_text(encoding="utf-8")
+
+    layout = rust.split('label: Some("terrain.sky.bgl0")', 1)[1].split(
+        "let sky_bind_group_layout1", 1
+    )[0]
+    output = rust.split('label: Some("terrain.sky.output")', 1)[1].split(
+        "let sky_view", 1
+    )[0]
+    assert "format: wgpu::TextureFormat::Rgba16Float" in layout
+    assert "format: wgpu::TextureFormat::Rgba16Float" in output
+    assert "texture_storage_2d<rgba16float, write>" in shader
+    assert "texture_storage_2d<rgba8unorm, write>" not in shader
+    assert "try_create_compute_pipeline_scoped" in rust
+    assert "create_compute_pipeline_scoped(" not in rust.replace(
+        "try_create_compute_pipeline_scoped(", ""
+    )
+
+    visual_gate = (repo / "tests/test_terrain_visual_goldens.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_assert_sky_scene_is_meaningful(scene_name, actual)" in visual_gate
+
+
 def test_material_texture_modules_state_gpu_boundary() -> None:
     import forge3d.materials as materials
     import forge3d.textures as textures

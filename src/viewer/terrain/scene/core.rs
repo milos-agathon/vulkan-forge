@@ -137,6 +137,7 @@ impl ViewerTerrainScene {
             depth_texture: None,
             depth_view: None,
             depth_size: (0, 0),
+            snapshot_depth_texture: None,
             terrain: None,
             pbr_config: crate::viewer::terrain::pbr_renderer::ViewerTerrainPbrConfig::default(),
             pbr_pipeline: None,
@@ -170,6 +171,7 @@ impl ViewerTerrainScene {
             post_process: None,
             dof_pass: None,
             motion_blur_pass: None,
+            motion_blur_depth_pass: None,
             volumetrics_pass: None,
             denoise_pass: None,
             surface_format: target_format,
@@ -188,6 +190,7 @@ impl ViewerTerrainScene {
             wboit_size: (0, 0),
             csm_renderer: None,
             moment_pass: None,
+            moment_blur_pass: None,
             csm_uniform_buffer: None,
             shadow_pipeline: None,
             shadow_uniform_buffers: Vec::new(),
@@ -306,9 +309,12 @@ impl ViewerTerrainScene {
         volumetrics: Option<crate::viewer::viewer_enums::ViewerVolumetricsConfig>,
         denoise: Option<crate::viewer::viewer_enums::ViewerDenoiseConfig>,
         debug_mode: Option<u32>,
-    ) {
-        // Update config
-        self.pbr_config.apply_updates(
+    ) -> Result<()> {
+        // Stage every configuration change first. Shadow resources are also
+        // staged before this candidate is published, so a rejected allocation
+        // cannot leave the scene configured for resources it does not own.
+        let mut candidate = self.pbr_config.clone();
+        candidate.apply_updates(
             enabled,
             hdr_path,
             ibl_intensity,
@@ -329,7 +335,7 @@ impl ViewerTerrainScene {
 
         // Handle specialized config updates
         if let Some(lens) = lens_effects {
-            self.pbr_config.apply_lens_effects(
+            candidate.apply_lens_effects(
                 lens.enabled,
                 lens.vignette_strength,
                 lens.vignette_radius,
@@ -340,7 +346,7 @@ impl ViewerTerrainScene {
         }
 
         if let Some(d) = dof {
-            self.pbr_config.apply_dof(
+            candidate.apply_dof(
                 d.enabled,
                 d.f_stop,
                 d.focus_distance,
@@ -352,7 +358,7 @@ impl ViewerTerrainScene {
         }
 
         if let Some(mb) = motion_blur {
-            self.pbr_config.apply_motion_blur(
+            candidate.apply_motion_blur(
                 mb.enabled,
                 mb.samples,
                 mb.shutter_open,
@@ -384,7 +390,7 @@ impl ViewerTerrainScene {
                     },
                 )
                 .collect::<Vec<_>>();
-            self.pbr_config.apply_volumetrics(
+            candidate.apply_volumetrics(
                 v.enabled,
                 &v.mode,
                 v.density,
@@ -398,6 +404,23 @@ impl ViewerTerrainScene {
                 &density_volumes,
             );
         }
+
+        let requires_moments =
+            crate::viewer::terrain::pbr_renderer::shadow_technique_requires_moments(
+                &candidate.shadow_technique,
+            );
+        crate::shadows::validate_shadow_allocation_budget(
+            candidate.shadow_map_res.clamp(512, 8192),
+            4,
+            requires_moments,
+        )?;
+        if candidate.enabled {
+            self.init_shadows_for_config(
+                candidate.shadow_map_res.clamp(512, 8192),
+                requires_moments,
+            )?;
+        }
+        self.pbr_config = candidate;
 
         // Re-init specialized passes if enabled
         if self.pbr_config.lens_effects.enabled {
@@ -415,13 +438,10 @@ impl ViewerTerrainScene {
             update_terrain_volumetrics_report(TerrainVolumetricsReport::default());
         }
 
-        if self.pbr_config.enabled {
-            self.init_shadows();
-        }
-
         println!(
             "[terrain_pbr] updated: {}",
             self.pbr_config.to_display_string()
         );
+        Ok(())
     }
 }

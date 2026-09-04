@@ -76,6 +76,52 @@ def test_old_bvhs_and_labels_are_removed_only_after_staging_succeeds():
     assert final_stage < body.index("self.remove_label")
 
 
+def test_rejected_pbr_preset_precedes_every_scene_review_state_commit():
+    body = _between("pub(crate) fn reapply_scene_review_state", "fn validate_scene_review_effective")
+    pbr = body.index("self.apply_scene_review_pbr_preset(effective.preset.as_ref())?")
+    for mutation in (
+        "remove_layer_bvh",
+        "commit_review_stacks",
+        "commit_scatter_batches",
+        "register_layer_bvh",
+        "self.remove_label",
+        "label.commit(self)",
+        "self.apply_scene_review_preset",
+        "managed_raster_overlay_ids = raster_ids",
+        "managed_vector_overlay_ids = vector_ids",
+        "managed_label_ids = label_ids",
+    ):
+        assert pbr < body.index(mutation), mutation
+
+    fallible = _between(
+        "fn apply_scene_review_pbr_preset",
+        "fn apply_scene_review_preset",
+    )
+    assert ".set_terrain_pbr(" in fallible
+    assert ".map_err(" in fallible
+    assert "?" in fallible
+    assert "cam_phi_deg =" not in fallible
+    assert "sky_enabled =" not in fallible
+
+    commit_only = _between("fn apply_scene_review_preset", "fn review_label_world_points")
+    assert ".set_terrain_pbr(" not in commit_only
+
+
+def test_direct_pbr_command_propagates_rejection_before_sky_commit():
+    command = (
+        ROOT / "src" / "viewer" / "cmd" / "terrain_command.rs"
+    ).read_text(encoding="utf-8")
+    body = command.split("ViewerCmd::SetTerrainPbr", 1)[1].split(
+        "ViewerCmd::LoadOverlay", 1
+    )[0]
+    setter = body.index("terrain_viewer.set_terrain_pbr(")
+    reject = body.index("viewer.reject_command(")
+    early_return = body.index("return true;", reject)
+    sky = body.index("viewer.sky_enabled = cfg.enabled")
+    assert setter < reject < early_return < sky
+    assert "unchanged_state=true" in body
+
+
 def test_ipc_waits_for_correlated_event_loop_completion():
     runner = (ROOT / "src/viewer/event_loop/runner.rs").read_text(encoding="utf-8")
     state = (ROOT / "src/viewer/event_loop/ipc_state.rs").read_text(encoding="utf-8")

@@ -18,5 +18,5 @@ pub use fog_init::create_fog_resources;
 pub use gbuffer_init::create_gbuffer_resources;
 pub use gi_baseline_init::create_gi_baseline_resources;
 pub use lit_init::create_lit_resources;
-pub use sky_init::create_sky_resources;
+pub use sky_init::{create_sky_resources, sky_output_descriptor};
 // viewer_new exports Viewer::new() impl directly

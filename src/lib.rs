@@ -107,6 +107,7 @@ pub mod math {
 
 // Rendering modules
 pub mod accel;
+pub mod astro;
 pub mod camera;
 pub mod cli;
 pub mod codec;

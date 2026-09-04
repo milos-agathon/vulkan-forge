@@ -15,6 +15,11 @@ impl ResourceRegistry {
         let utilization_ratio = host_visible_bytes as f64 / self.budget_limit as f64;
         let resident_tiles = self.resident_tiles.load(Ordering::Relaxed);
         let resident_tile_bytes = self.resident_tile_bytes.load(Ordering::Relaxed);
+        let resident_tiles_by_family =
+            std::array::from_fn(|slot| self.resident_tiles_by_family[slot].load(Ordering::Relaxed));
+        let resident_tile_bytes_by_family = std::array::from_fn(|slot| {
+            self.resident_tile_bytes_by_family[slot].load(Ordering::Relaxed)
+        });
         let staging_bytes_in_flight = self.staging_bytes_in_flight.load(Ordering::Relaxed);
         let staging_ring_count = self.staging_ring_count.load(Ordering::Relaxed);
         let staging_buffer_size = self.staging_buffer_size.load(Ordering::Relaxed);
@@ -35,6 +40,8 @@ impl ResourceRegistry {
             utilization_ratio,
             resident_tiles,
             resident_tile_bytes,
+            resident_tiles_by_family,
+            resident_tile_bytes_by_family,
             staging_bytes_in_flight,
             staging_ring_count,
             staging_buffer_size,

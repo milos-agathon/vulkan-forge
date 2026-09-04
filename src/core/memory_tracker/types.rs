@@ -14,6 +14,8 @@ pub struct MemoryMetrics {
     pub utilization_ratio: f64,
     pub resident_tiles: u32,
     pub resident_tile_bytes: u64,
+    pub resident_tiles_by_family: [u32; 4],
+    pub resident_tile_bytes_by_family: [u64; 4],
     pub staging_bytes_in_flight: u64,
     pub staging_ring_count: u32,
     pub staging_buffer_size: u64,

@@ -51,3 +51,29 @@ Run `python scripts/verify_mensura_fixtures.py` to verify the committed
 artifacts without network access. Passing an already-downloaded NGA archive to
 `--egm96-spherical` verifies the deterministic extraction against its original
 members; the script never downloads data.
+
+# Mars GMM3 areoid
+
+`mars_areoid_n179.bin` is the compact harmonic surface behind
+`forge3d.crs.areoid_undulation`. Its source is NASA PDS product
+`GGMRO_120_GEOID_90.IMG`, an areoid map generated from GMM3 truncated from
+degree 3 through 90. The PDS product uses a 3,396,000 m / 1:196.877360
+reference ellipsoid and GM 4.2828372854187757e13 m³/s². Before fitting, its
+planetocentric radial heights are converted to the registered IAU 2000 Mars
+ellipsoid (3,396,190 m / 1:169.894447223612), so `body_info("mars")` and
+`areoid_undulation` share one horizontal and vertical reference.
+
+`scripts/build_selene_areoid.py` deterministically transforms the 180×360
+float32 PDS map into fully normalized dimensionless disturbing-potential
+coefficients. The degree-179/order-90 representation is needed to preserve the
+published ellipsoid-relative map on its equiangular latitude grid. Measured
+against all 64,800 source cells, its maximum error is 0.735980 m and RMS error
+is 0.037742 m. The 30 independently sampled committed reference cells have
+maximum error 0.351391 m and RMS error 0.089154 m.
+
+The little-endian container follows the EGM96 header layout: magic
+`F3DAREO1`, version 1, maximum degree 179, 16,290 coefficient pairs, zero
+correction pairs, then n-major `(f64 C̄nm, f64 S̄nm)` pairs. Total size is
+260,664 bytes. Full source URLs, SHA-256 hashes, fit bounds, and artifact hash
+are recorded in `mars_areoid_n179.manifest.json`. The Moon intentionally has
+no spherical-harmonic gravity surface.

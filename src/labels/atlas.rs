@@ -651,6 +651,7 @@ impl Clone for MsdfAtlas {
 #[cfg(test)]
 mod tests {
     use super::{path_glyph_center, GlyphKey, GlyphMetrics, MsdfAtlas};
+    use crate::core::text_overlay::TextInstance;
     use crate::labels::positioned::PositionedGlyph;
     use crate::labels::renderer_channels_from_atlas;
     use crate::labels::types::GlyphPlacement;
@@ -756,5 +757,24 @@ mod tests {
 
         assert!((center[0] - 86.0).abs() < 1.0e-5);
         assert!((center[1] - 65.0).abs() < 1.0e-5);
+
+        // The collision adapter consumes the exact quad produced from these
+        // glyph-specific atlas dimensions and the GPOS/bearing-adjusted center.
+        let mut instance = TextInstance::new(
+            [center[0] - metric.width, center[1] - metric.height],
+            [center[0] + metric.width, center[1] + metric.height],
+            [0.0, 0.0],
+            [1.0, 1.0],
+            [1.0; 4],
+        );
+        instance.rotation = placement.rotation;
+        let candidate = crate::labels::optimal::candidate_from_line_instances(
+            1,
+            0,
+            std::slice::from_ref(&instance),
+            1,
+        )
+        .expect("authoritative atlas quad is valid");
+        assert_eq!(candidate.bounds, [74.0, 57.0, 98.0, 73.0]);
     }
 }

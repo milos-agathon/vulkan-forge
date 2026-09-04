@@ -14,7 +14,4 @@ pub use gpu::{PageTable, PageTableEntry};
 pub use height_loader::AsyncTileLoader;
 pub use overlay_loader::{AsyncOverlayLoader, OverlayTileData};
 pub use queue::AsyncTileQueue;
-pub use readers::{
-    FileHeightReader, FileOverlayReader, HeightReader, OverlayReader, SyntheticHeightReader,
-    SyntheticOverlayReader,
-};
+pub use readers::{FileHeightReader, FileOverlayReader, HeightReader, OverlayReader};

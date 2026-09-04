@@ -41,11 +41,21 @@ pub(super) fn to_viewer_cmd(req: &IpcRequest) -> Result<Option<ViewerCmd>, Strin
             azimuth_deg,
             elevation_deg,
             intensity,
-        } => Ok(Some(ViewerCmd::SetTerrainSun {
-            azimuth_deg: *azimuth_deg,
-            elevation_deg: *elevation_deg,
-            intensity: *intensity,
-        })),
+            source,
+        } => {
+            if !matches!(
+                source.as_deref(),
+                None | Some("manual_angles" | "solar_time")
+            ) {
+                return Err("terrain sun source must be 'manual_angles' or 'solar_time'".into());
+            }
+            Ok(Some(ViewerCmd::SetTerrainSun {
+                azimuth_deg: *azimuth_deg,
+                elevation_deg: *elevation_deg,
+                intensity: *intensity,
+                source: source.clone(),
+            }))
+        }
         IpcRequest::SetTerrain {
             phi,
             theta,

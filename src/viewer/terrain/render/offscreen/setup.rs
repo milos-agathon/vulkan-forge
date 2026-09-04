@@ -149,8 +149,10 @@ impl ViewerTerrainScene {
         .normalize();
 
         if use_pbr && self.shadow_pipeline.is_none() {
-            self.init_shadow_depth_pipeline();
-            self.update_shadow_bind_groups();
+            match self.init_shadow_depth_pipeline() {
+                Ok(()) => self.update_shadow_bind_groups(),
+                Err(error) => eprintln!("[snapshot] Failed to initialize shadow pipeline: {error}"),
+            }
         }
         if use_pbr && self.shadow_pipeline.is_some() {
             self.render_shadow_passes(encoder, view_mat, proj, -sun_dir, render_origin_span);

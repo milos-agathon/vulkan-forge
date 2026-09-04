@@ -2,3 +2,5 @@
 *.pdb filter=lfs diff=lfs merge=lfs -text
 assets/highres.png filter=lfs diff=lfs merge=lfs -text
 assets/swiss-legend.png filter=lfs diff=lfs merge=lfs -text
+assets/astro/*.dat text eol=lf
+tests/data/horizons_vectors.dat text eol=lf

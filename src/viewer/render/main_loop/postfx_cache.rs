@@ -2,6 +2,70 @@ use crate::core::screen_space_effects::ScreenSpaceEffectsManager;
 use crate::viewer::Viewer;
 
 impl Viewer {
+    pub(super) fn present_sky_output(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        depth: Option<&wgpu::TextureView>,
+    ) {
+        if self.sky_present_bg_cache.borrow().is_none() {
+            self.sky_present_bg_cache
+                .replace(Some(self.device.create_bind_group(
+                    &wgpu::BindGroupDescriptor {
+                        label: Some("viewer.sky.present.bg"),
+                        layout: &self.sky_present_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&self.sky_output_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&self.sky_present_sampler),
+                            },
+                        ],
+                    },
+                )));
+        }
+        crate::core::shader_registry::record_shader_use("viewer.sky.present.shader");
+        let depth_attachment = depth.map(|view| wgpu::RenderPassDepthStencilAttachment {
+            view,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        });
+        let bind_group = self.sky_present_bg_cache.borrow();
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("viewer.sky.present.pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: depth_attachment,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(if depth.is_some() {
+            &self.sky_present_depth_pipeline
+        } else {
+            &self.sky_present_flat_pipeline
+        });
+        pass.set_bind_group(
+            0,
+            bind_group
+                .as_ref()
+                .expect("sky presentation bind group initialized"),
+            &[],
+        );
+        pass.draw(0..3, 0..1);
+    }
+
     pub(super) fn ensure_sky_bind_groups(&self) {
         if self.sky_bg0_cache.borrow().is_none() {
             self.sky_bg0_cache

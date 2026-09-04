@@ -154,7 +154,10 @@ fn sample_normal_map(uv: vec2<f32>, tbn: mat3x3<f32>) -> vec3<f32> {
         var tangent_normal = normal_sample.xyz * 2.0 - 1.0;
         
         // Apply normal scale
-        tangent_normal.xy = tangent_normal.xy * material.normal_scale;
+        tangent_normal = vec3<f32>(
+            tangent_normal.xy * material.normal_scale,
+            tangent_normal.z
+        );
         
         // Normalize to ensure unit length
         tangent_normal = normalize(tangent_normal);
@@ -257,7 +260,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let view_depth = -view_pos.z; // Positive depth in view space
         
         // Sample shadows (returns 0.0 = full shadow, 1.0 = no shadow)
-        let shadow_visibility = calculate_shadow(input.world_position, world_normal, view_depth);
+        let shadow_visibility =
+            calculate_shadow(input.world_position, view_depth, world_normal);
         
         // Apply shadow to direct lighting only (IBL unaffected)
         direct_lighting = brdf_color * radiance * n_dot_l * shadow_visibility;
@@ -370,7 +374,8 @@ fn fs_pbr_simple(input: VertexOutput) -> @location(0) vec4<f32> {
         // P3-08: Apply shadow visibility
         let view_pos = uniforms.view_matrix * vec4<f32>(input.world_position, 1.0);
         let view_depth = -view_pos.z;
-        let shadow_visibility = calculate_shadow(input.world_position, world_normal, view_depth);
+        let shadow_visibility =
+            calculate_shadow(input.world_position, view_depth, world_normal);
         
         color = brdf_color * radiance * n_dot_l * shadow_visibility;
     }

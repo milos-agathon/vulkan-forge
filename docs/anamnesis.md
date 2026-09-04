@@ -96,10 +96,9 @@ changes one visible label, and requires:
 - at least 20× cold-to-incremental wall-clock speedup.
 
 The physical portability lane seeds a production TERRA pass on a protected
-Apple M4/Metal runner, transfers the unified store to a separate
-Windows/NVIDIA DX12 runner, requires at least 99% hits, independently
+NVIDIA/Vulkan runner, transfers the unified store to a separate Windows/NVIDIA
+DX12 runner, requires at least 99% hits, independently
 re-renders the committed TERRA golden, and rehydrates the cached raw RGBA pass
 as a GPU texture before byte comparison. A changed compatibility profile must
-produce 0% hits. The requested Linux/Vulkan-to-Windows/DX12 workflow remains
-present as a backend-specific lane and may emit `ABSENT` only for a proven lack
-of a physical Linux adapter; other failures are fatal.
+produce 0% hits. Metal may be exercised by a separately selected diagnostic,
+but it is not part of the portability or acceptance contract.

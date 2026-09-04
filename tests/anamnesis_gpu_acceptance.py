@@ -301,6 +301,7 @@ def run_acceptance(root: str | Path) -> dict[str, Any]:
     restored_changed_report = dict(renderer.last_anamnesis_cache_report)
 
     expected_incremental_hits = list(_NATIVE_PASSES) * 600
+    expected_seed_misses = list(_NATIVE_PASSES) * 600
     result = {
         "matching_frames": sum(
             left == right
@@ -378,9 +379,9 @@ def run_acceptance(root: str | Path) -> dict[str, Any]:
     if incremental_report["graph_command_submissions"] != 0:
         raise AssertionError(f"restored native graph submitted GPU work: {result}")
     if (
-        len(seed_report["misses"]) != 1801
-        or len(seed_report["hits"]) != 599
-        or seed_report["graph_command_submissions"] != 2402
+        seed_report["misses"] != expected_seed_misses
+        or seed_report["hits"]
+        or seed_report["graph_command_submissions"] != 3600
     ):
         raise AssertionError(f"native cold per-pass recompute set mismatch: {result}")
     if changed_report["hits"] or changed_report["misses"] != list(_NATIVE_PASSES):

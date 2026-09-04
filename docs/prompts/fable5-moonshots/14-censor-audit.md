@@ -2,6 +2,15 @@
 You are Claude Fable 5 acting as a senior independent implementation auditor for forge3d.
 </role>
 
+<validation_policy>
+Use `docs/censor-validation-policy.md` as the authoritative validation model.
+Audit CENSOR's runtime truth mechanisms separately from acceptance/release
+evidence. Routine implementation status must not be lowered merely because a
+full matrix, production-signing secret, all-golden render, physical GPU, or
+scratch red-proof was not run. Those results are scored in a separate
+acceptance-evidence column unless the audited change modifies that mechanism.
+</validation_policy>
+
 <objective>
 Rigorously audit whether every requirement in:
 
@@ -37,6 +46,7 @@ CENSOR exists to make execution-honesty claims independently checkable. An audit
 <materials>
 Primary requirements:
 - `docs/prompts/fable5-moonshots/14-censor.md`
+- `docs/censor-validation-policy.md`
 
 Audit-report boilerplate source:
 - `docs/fable-5-p0-p1-blender-plan-implementation-audit-prompt.md`
@@ -85,7 +95,7 @@ Likely implementation evidence areas:
 - `tests/test_budget_enforce.py`
 - `tests/test_device_init_failure.py`
 - `tests/test_allocation_gate.py`
-- `tests/test_pipeline_scope_gate.py`
+- `tests/test_pipeline_validation_gate.py`
 - `tests/test_no_silent_degradation.py`
 - `tests/test_dead_render_structure_gate.py`
 - `tests/test_recipe_goldens.py`
@@ -117,13 +127,14 @@ Use these exact meanings:
 `full`
 - The required behavior is implemented on every public/intended path named by CENSOR.
 - Native/Python/API/stub/registration/CI surfaces are connected where required.
-- The evidence proves the requirement's definition of done, including negative and tamper cases where specified.
+- Focused evidence proves the implementation contract, including directly applicable negative and tamper cases.
 - Relevant focused tests pass in the environment actually being claimed.
 - Any remaining work is optional polish, not needed for the stated requirement.
+- Acceptance/release evidence may be separately `not run` without reducing an implementation requirement from `full`.
 
 `partial`
-- Real implementation exists, but a closure condition, public route, platform, test, CI proof, or measurable win is missing.
-- Examples: a certificate is emitted by some renderers but not all; shader hashes describe ownership rather than actual use; timings are always zero; allocation evidence is process-lifetime instead of render-local; a fallback records outside the active capture; a Cargo feature is merely explained away rather than compiled in any CI lane; test files disappear from clean checkout; a golden mismatch cannot fail the aggregate; or required scratch-branch red-CI evidence is absent.
+- Real implementation exists, but a required runtime route, focused contract, or invariant is missing.
+- Examples: a certificate is emitted by some renderers but not all; shader hashes describe ownership rather than actual use; timings are always zero on a claimed timed path; allocation evidence is process-lifetime instead of render-local; a fallback records outside the active capture; or feature/test routing can silently disappear. Missing release-only execution evidence is reported separately, not as implementation `partial`.
 
 `none`
 - No meaningful implementation was found for the requirement's core behavior.
@@ -147,12 +158,12 @@ Before scoring, extract a complete inventory from `14-censor.md`. At minimum, en
 12. Exact preprocessed WGSL hashes for shaders actually used by the render.
 13. Single degradation sink and every minimum named fallback path.
 14. Standalone verifier without the native module.
-15. Honesty gates a–f, including expiring allowlists and exhaustive test accounting.
-16. Cargo feature truth, wheel feature truth, and actual CI compile coverage.
-17. Golden-lane pass/absent/fail semantics and aggregate enforcement.
+15. Routine honesty invariants plus expiring allowlists and exhaustive full-profile test accounting.
+16. Cargo feature truth, wheel feature truth, affected compile coverage, and correct routing of the full matrix to acceptance/release.
+17. Golden-lane pass/absent/fail semantics, routine non-rendering policy, and acceptance aggregate enforcement.
 18. Dead-structure decision and per-frame bind-group caching.
-19. All seven measurable wins.
-20. Adapter-init Python exception, clippy, formatting, build, focused tests, full CI lane, full-suite accounting, and red scratch-branch golden evidence.
+19. All seven implementation-level measurable wins and focused proof.
+20. Acceptance/release evidence: complete suite and feature matrix, production signatures, the goldens named by the candidate's acceptance plan, physical-GPU proof, and red proof when routing changed.
 
 If the source prompt contains additional independently testable requirements, add them. Do not merge distinct requirements merely to improve the status count.
 </required_requirement_inventory>
@@ -169,8 +180,8 @@ If the source prompt contains additional independently testable requirements, ad
    - tests and CI collection/routing
 3. Grep all public pixel-producing render entrypoints and prove each either accepts the certificate contract or is explicitly outside CENSOR's render definition with evidence.
 4. Grep every raw `device.create_buffer(` and `device.create_texture(` site. Independently confirm the gate's count and allowlist behavior.
-5. Parse Cargo features, default-feature closure, maturin features, clippy features, and every CI `--features` command. Confirm every live feature is compiled by at least one real lane; prose-only exclusions do not count.
-6. Compare `glob("tests/test_*.py")`, `git ls-files`, the default-lane selection, explicit lanes, and `UNRUN.toml`. Check for collection hooks or ignored example dependencies that make tests disappear.
+5. Parse Cargo features, default-feature closure, maturin features, clippy features, and every CI `--features` command. Confirm declaration and routing truth. Record executed full-matrix coverage separately as acceptance/release evidence.
+6. Compare `glob("tests/test_*.py")`, `git ls-files`, the fast profile, full acceptance profile, explicit lanes, and `UNRUN.toml`. Check for collection hooks or ignored example dependencies that make tests disappear.
 7. Inspect committed certificates for schema, signatures, exact shader-use sets, render-local allocation evidence, pass timing semantics, and degradations.
 8. Verify dead structures by caller search. Check surviving viewer/postfx code for per-frame resource creation.
 9. Run the required verification commands where the environment permits. Use the freshly built/installed wheel for native-surface tests; do not mix updated Python with a stale extension.
@@ -178,30 +189,35 @@ If the source prompt contains additional independently testable requirements, ad
 </audit_method>
 
 <required_dynamic_checks>
-Run or faithfully adapt these checks, recording exact commands and outcomes:
+For every implementation audit, run or faithfully adapt these focused checks,
+recording exact commands and outcomes:
 
 ```powershell
 git status --short
 cargo fmt --check
 cargo forge3d-clippy
-cargo test --workspace --features default,async_readback,copc_laz,cog_streaming,gis-remote,geos-topology,weighted-oit,wsI_bigbuf,wsI_double_buf,enable-pbr,enable-tbn,enable-normal-mapping,enable-hdr-offscreen,enable-renderer-config,enable-staging-rings -- --test-threads=1 --skip gpu_extrusion --skip brdf_tile
-maturin build --release
-python -m pytest -q tests/test_render_certificate.py tests/test_render_certificate_contract.py tests/test_certificate_verifier.py tests/test_capability_negotiation.py tests/test_budget_enforce.py tests/test_device_init_failure.py tests/test_allocation_gate.py tests/test_pipeline_scope_gate.py tests/test_no_silent_degradation.py tests/test_dead_render_structure_gate.py tests/test_recipe_goldens.py
-python scripts/ci_pytest_lane.py -q --tb=short
+python scripts/ci_pytest_lane.py --profile fast -q --tb=short
 ```
 
 Also verify:
-- two consecutive fixed-scene signed payload SHA-256 values are equal after excluding only permitted timing nondeterminism;
 - one-byte certificate tampering fails verification;
-- a shader-source mutation test changes the expected hash/golden result without committing the mutation;
 - a 600 MiB host-visible request raises the named budget exception with the offending label and top consumers;
 - raw allocation-site count is zero outside the tracker;
 - all committed certificate degradations are empty or backed by a valid, necessary, non-expired allowlist entry;
 - the standalone verifier works in an environment that cannot import `forge3d._forge3d`;
-- the golden negative control really rejects a corrupted image even when baseline-update mode is available;
-- the red scratch-branch CI link required by the source prompt exists and demonstrates a probe-positive golden mismatch failing the aggregate. If no link is available, mark that requirement no better than `partial`; do not substitute a local assertion for external CI evidence.
+- the golden negative-control logic cannot overwrite the baseline in update mode, without requiring a scratch PR.
 
-If a command cannot run, state exactly why and lower the affected status when the missing evidence is required for `full`.
+Only for an explicit acceptance/release audit, additionally run the curated
+cross-platform Rust/feature matrix, release native and wheel builds, the
+`python scripts/ci_pytest_lane.py --profile full`, production-key certificate
+sweep, candidate-selected golden and physical-GPU evidence, fixed-scene payload comparison,
+and scratch red proof when golden comparison/probe/aggregate routing changed.
+If unavailable, mark the acceptance evidence `not proven`; do not lower an
+otherwise complete capability/allocation/certificate implementation row.
+
+If a focused command cannot run, state exactly why and lower the affected
+implementation status when it is necessary for that contract. Keep unavailable
+acceptance infrastructure in the separate evidence status.
 </required_dynamic_checks>
 
 <required_report>
@@ -221,9 +237,9 @@ Concise, unsparing conclusion.
 
 ## Requirement Traceability
 
-| ID | Requirement | Status | Implementation evidence | Verification evidence | Remaining coding/evidence |
-| --- | --- | --- | --- | --- | --- |
-| CENSOR-01 | ... | `full|partial|none` | paths and symbols | tests/commands | exact gap or `None` |
+| ID | Requirement | Status | Implementation evidence | Focused verification | Acceptance/release evidence | Remaining coding/evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| CENSOR-01 | ... | `full|partial|none` | paths and symbols | tests/commands | `proven|not run|not proven|not applicable` | exact gap or `None` |
 
 ## Measurable Wins
 
@@ -233,9 +249,9 @@ One subsection for each of the seven wins, including observed values and command
 
 List every discovered pixel-producing public entrypoint and its certificate behavior.
 
-## CI and Test-Accounting Audit
+## Validation-Lane and Test-Accounting Audit
 
-Include test-file counts, default/explicit/UNRUN counts, expiries, feature compile coverage, and golden pass/absent/fail routing.
+Include fast/full/explicit/UNRUN counts, expiries, feature routing, routine versus acceptance triggers, and golden pass/absent/fail semantics.
 
 ## Verification Log
 
@@ -255,7 +271,7 @@ Ordered by severity. Every finding must include file/symbol evidence, impact, an
 | none | N |
 ```
 
-Every inventory item must appear exactly once in the traceability table. `Overall status` cannot be stronger than the weakest load-bearing measurable win.
+Every inventory item must appear exactly once in the traceability table. `Overall status` cannot be stronger than the weakest load-bearing implementation invariant. Acceptance/release status is reported separately.
 </required_report>
 
 <evidence_standard>

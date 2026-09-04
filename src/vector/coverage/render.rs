@@ -1,5 +1,6 @@
 use super::{
-    CoverageBinner, CoverageGeometry, CoverageRasterizer, CoverageResolver, PrimitiveKind,
+    raster::CoverageRasterPlan, BinLayout, CoverageBinner, CoverageGeometry, CoverageRasterizer,
+    CoverageResolver, PrimitiveKind,
 };
 use crate::core::error::{RenderError, RenderResult};
 use crate::core::resource_tracker::{tracked_create_buffer, TrackedBuffer};
@@ -35,6 +36,28 @@ pub struct CoverageRenderOutput {
     pub stats: CoverageRenderStats,
 }
 
+pub(crate) struct CoverageCompiledScene {
+    geometry: CoverageGeometry,
+    bin_layout: BinLayout,
+    raster_plan: CoverageRasterPlan,
+}
+
+impl CoverageCompiledScene {
+    pub(crate) fn geometry(&self) -> &CoverageGeometry {
+        &self.geometry
+    }
+}
+
+pub(crate) fn compile_coverage(geometry: CoverageGeometry) -> RenderResult<CoverageCompiledScene> {
+    let bin_layout = BinLayout::measure(&geometry)?;
+    let raster_plan = CoverageRasterPlan::compile(&geometry)?;
+    Ok(CoverageCompiledScene {
+        geometry,
+        bin_layout,
+        raster_plan,
+    })
+}
+
 /// Execute LIMES bin, analytic raster, and conflation-free resolve in order.
 ///
 /// All three pass labels and shader hashes are recorded into the active render
@@ -44,11 +67,37 @@ pub fn render_coverage(
     queue: &Arc<wgpu::Queue>,
     geometry: &CoverageGeometry,
 ) -> RenderResult<CoverageRenderOutput> {
+    let bin_layout = BinLayout::measure(geometry)?;
+    let raster_plan = CoverageRasterPlan::compile(geometry)?;
+    render_prepared_coverage(device, queue, geometry, bin_layout, &raster_plan)
+}
+
+pub(crate) fn render_compiled_coverage(
+    device: &Arc<wgpu::Device>,
+    queue: &Arc<wgpu::Queue>,
+    compiled: &CoverageCompiledScene,
+) -> RenderResult<CoverageRenderOutput> {
+    render_prepared_coverage(
+        device,
+        queue,
+        &compiled.geometry,
+        compiled.bin_layout,
+        &compiled.raster_plan,
+    )
+}
+
+fn render_prepared_coverage(
+    device: &Arc<wgpu::Device>,
+    queue: &Arc<wgpu::Queue>,
+    geometry: &CoverageGeometry,
+    bin_layout: BinLayout,
+    raster_plan: &CoverageRasterPlan,
+) -> RenderResult<CoverageRenderOutput> {
     let started = Instant::now();
     let binner = CoverageBinner::new(device);
-    let bins = binner.prepare(device, geometry)?;
+    let bins = binner.prepare_compiled(device, geometry, bin_layout)?;
     let rasterizer = CoverageRasterizer::new(device);
-    let raster = rasterizer.prepare(device, geometry, &bins)?;
+    let raster = rasterizer.prepare_compiled(device, geometry, &bins, raster_plan)?;
     let resolver = CoverageResolver::new(device);
     let resolved = resolver.prepare(device, geometry, &bins, &raster)?;
 

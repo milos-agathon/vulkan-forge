@@ -41,6 +41,20 @@ def test_terrain_shader_declares_vt_sampling_and_feedback_bindings() -> None:
     )
     for token in required_tokens:
         assert token in source, f"Missing terrain VT shader token: {token}"
+    assert "atomicCompareExchangeWeak" not in source
+    assert "atomicAdd(&terrain_vt_feedback[0], 1u)" in source
+    assert "atomicStore(&terrain_vt_feedback[append_slot + 2u], key)" in source
+    assert "atomicAdd(&terrain_vt_feedback[1], 1u)" in source
+    assert "fn terrain_vt_page_table_origin(" in source
+    assert "page + vec2<i32>(origin)" in source
+    assert "terrain_vt_page_table,\n        page + vec2<i32>(origin),\n        layer,\n        0," in source
+    assert "struct TerrainVtFamilyInfo" in source
+    assert "family_info: array<TerrainVtFamilyInfo, 3>" in source
+    assert "TERRAIN_VT_FAMILY_NORMAL,\n            grid_uv," in source
+    assert "TERRAIN_VT_FAMILY_MASK,\n            grid_uv," in source
+    assert "if (desired_entry.z > 0.5)" in source
+    assert "terrain_vt_page_table_layer(family_slot, material_index)," in source
+    assert "mip_level," in source
 
 
 def test_vt_layer_family_defaults() -> None:
@@ -58,8 +72,8 @@ def test_vt_layer_family_rejects_unknown() -> None:
 
 
 def test_vt_layer_family_accepts_forward_compatible_families() -> None:
-    VTLayerFamily(family="normal")
-    VTLayerFamily(family="mask")
+    assert VTLayerFamily(family="normal").fallback == (0.5, 0.5, 1.0, 1.0)
+    assert VTLayerFamily(family="mask").fallback == (1.0, 1.0, 1.0, 1.0)
 
 
 def test_native_terrain_vt_runtime_accepts_material_map_families() -> None:
@@ -103,6 +117,18 @@ def test_vt_settings_reject_indivisible_atlas() -> None:
         TerrainVTSettings(
             atlas_size=1000,
             layers=[VTLayerFamily(family="albedo", tile_size=248, tile_border=4)],
+        )
+
+
+def test_vt_settings_reject_budget_that_cannot_hold_one_tile_per_family() -> None:
+    with pytest.raises(ValueError, match="one logical tile"):
+        TerrainVTSettings(
+            enabled=True,
+            residency_budget_mb=0.49,
+            layers=[
+                VTLayerFamily(family="albedo"),
+                VTLayerFamily(family="normal"),
+            ],
         )
 
 
@@ -345,6 +371,7 @@ class TestTerrainMaterialVirtualTexturing:
         assert hasattr(renderer, "register_material_vt_source")
         assert hasattr(renderer, "get_material_vt_stats")
         assert hasattr(renderer, "clear_material_vt_sources")
+        assert hasattr(renderer, "read_latest_vt_shader_feedback")
 
     def test_vt_disabled_preserves_baseline_output(self, tv20_render_env) -> None:
         renderer, material_set, ibl, heightmap = tv20_render_env

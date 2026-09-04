@@ -1,6 +1,6 @@
 # tests/test_vector_overlay_rendering.py
 # Integration tests for vector overlay rendering
-# Tests IPC commands, lighting, and shadow integration
+# Tests IPC commands, lighting, and visibility controls
 
 import pytest
 import json
@@ -29,7 +29,8 @@ _IPC_BUFFERS: dict[int, bytes] = {}
 def find_viewer_binary() -> Path:
     """Find the release viewer used by the integration lane."""
     override = os.environ.get("FORGE3D_VIEWER_BINARY")
-    if override:
+    if override is not None:
+        assert override.strip(), "FORGE3D_VIEWER_BINARY must not be empty"
         binary = Path(override)
         assert binary.is_file(), f"FORGE3D_VIEWER_BINARY does not exist: {binary}"
         return binary
@@ -237,19 +238,6 @@ class TestVectorOverlayLighting:
             "elevation_deg": 45,
             "intensity": 1.0,
         })
-
-
-class TestVectorOverlayShadows:
-    """Test vector overlay shadow integration."""
-
-    def test_vector_overlay_receives_shadows(self, viewer_context):
-        """Verify vector overlay is shadowed by terrain.
-        
-        Per plan Section 8: Overlays sample same sun_vis_tex as terrain.
-        Overlay in shadow area should be darker than lit area.
-        """
-        # This would require placing overlay in known shadow area
-        # and comparing luminance to lit area
 
 
 class TestVectorOverlayVisibility:

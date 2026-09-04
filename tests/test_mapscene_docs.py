@@ -92,7 +92,7 @@ def test_offline_mapscene_guide_links_canonical_examples_and_support_guides():
         "guides/tiles3d_support_matrix",
         "guides/virtual_texturing_support_matrix",
         "guides/competitive_positioning",
-        "python -m pytest tests/test_mapscene_examples.py tests/test_mapscene_quickstart.py -q",
+        "python -m pytest tests/test_mapscene_quickstart.py -q",
     )
 
     for marker in required_markers:
@@ -125,8 +125,17 @@ def test_support_matrices_record_current_mapscene_diagnostics_and_ownership():
 def test_support_matrix_rows_use_prd_support_taxonomy():
     for target in SUPPORT_MATRIX_DOCS:
         text = _text(target)
+        in_support_table = False
         for line in text.splitlines():
-            if not line.startswith("| ") or line.startswith("| ---") or "Support level" in line:
+            if not line.startswith("| "):
+                in_support_table = False
+                continue
+            if line.startswith("| ---"):
+                continue
+            if "Support level" in line:
+                in_support_table = True
+                continue
+            if not in_support_table:
                 continue
             cells = [cell.strip().strip("`") for cell in line.strip("|").split("|")]
             level_index = 2 if target.endswith("competitive_positioning.md") else 1

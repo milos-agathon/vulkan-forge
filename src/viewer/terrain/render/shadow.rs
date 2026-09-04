@@ -118,24 +118,35 @@ impl ViewerTerrainScene {
 
         // Execute moment generation pass for VSM/EVSM/MSM techniques
         // This converts the depth maps into moment statistics
-        let technique = match self.pbr_config.shadow_technique.to_lowercase().as_str() {
-            "vsm" => crate::lighting::shadow::ShadowTechnique::VSM,
-            "evsm" => crate::lighting::shadow::ShadowTechnique::EVSM,
-            "msm" => crate::lighting::shadow::ShadowTechnique::MSM,
-            _ => return, // No moment generation needed for HARD/PCF/PCSS
+        let Some(technique) =
+            crate::lighting::shadow::ShadowTechnique::from_name(&self.pbr_config.shadow_technique)
+        else {
+            return;
         };
+        if !technique.requires_moments() {
+            return;
+        }
 
         // Prepare and execute moment pass if we have the resources
+        let mut disable_failed_blur = false;
         if let (Some(ref mut moment_pass), Some(ref csm)) =
             (&mut self.moment_pass, &self.csm_renderer)
         {
             if let Some(ref moment_texture) = csm.evsm_maps {
-                let depth_view = csm.shadow_texture_view();
-                let moment_view =
-                    crate::shadows::create_moment_storage_view(moment_texture, cascade_count);
-
-                moment_pass.prepare_bind_group(&self.device, &depth_view, &moment_view);
-                moment_pass.execute(
+                if let Err(error) = moment_pass.prepare_textures_checked(
+                    &self.device,
+                    csm.shadow_maps.as_ref(),
+                    moment_texture,
+                ) {
+                    eprintln!("[terrain_scene] failed to prepare moment maps: {error}");
+                    crate::core::degradation::record_degradation(
+                        "validation_failure",
+                        "viewer.csm_moment_generation",
+                        &error.to_string(),
+                    );
+                    return;
+                }
+                if let Err(error) = moment_pass.execute_checked(
                     &self.queue,
                     encoder,
                     technique,
@@ -143,8 +154,44 @@ impl ViewerTerrainScene {
                     shadow_map_size,
                     csm.config.evsm_positive_exp,
                     csm.config.evsm_negative_exp,
-                );
+                ) {
+                    eprintln!("[terrain_scene] failed to generate moment maps: {error}");
+                    crate::core::degradation::record_degradation(
+                        "validation_failure",
+                        "viewer.csm_moment_generation",
+                        &error.to_string(),
+                    );
+                    return;
+                }
+
+                if crate::shadows::requires_moment_blur(technique) {
+                    let Some(ref mut blur_pass) = self.moment_blur_pass else {
+                        return;
+                    };
+                    if let Err(e) = blur_pass.execute(
+                        &self.device,
+                        &self.queue,
+                        encoder,
+                        moment_texture,
+                        cascade_count,
+                        shadow_map_size,
+                        crate::shadows::DEFAULT_MOMENT_BLUR_RADIUS,
+                        technique,
+                        csm.config.evsm_positive_exp,
+                    ) {
+                        disable_failed_blur = true;
+                        eprintln!("[terrain_scene] failed to blur moment maps: {e}");
+                        crate::core::degradation::record_degradation(
+                            "allocation_fallback",
+                            "viewer.csm_moment_blur",
+                            "moment-map filtering unavailable",
+                        );
+                    }
+                }
             }
+        }
+        if disable_failed_blur {
+            self.moment_blur_pass = None;
         }
     }
 }

@@ -6,6 +6,7 @@ impl TerrainScene {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         heightmap_view: &wgpu::TextureView,
+        height_curve_view: &wgpu::TextureView,
         heightmap_width: u32,
         heightmap_height: u32,
         terrain_spacing: f32,
@@ -213,6 +214,10 @@ impl TerrainScene {
                         wgpu::BindGroupEntry {
                             binding: 2,
                             resource: wgpu::BindingResource::Sampler(&self.ao_debug_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(height_curve_view),
                         },
                     ],
                 });

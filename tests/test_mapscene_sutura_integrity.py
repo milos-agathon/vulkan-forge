@@ -175,7 +175,13 @@ def test_depth_occlusion_only_in_compile(tmp_path):
     assert "labels" in layers
     visibility = layers["labels"]["visibility"]
     assert visibility, "per-label visibility flags must be frozen"
-    assert set(visibility) == {"summit", "valley"}
+    assert all(key.startswith("label-instance:") for key in visibility)
+    assert all(entry["instance_id"] == key for key, entry in visibility.items())
+    assert {entry["label_id"] for entry in visibility.values()} == {
+        "summit",
+        "valley",
+    }
+    assert all(entry["source_id"] for entry in visibility.values())
 
 
 def test_bundle_roundtrip_bitexact(tmp_path):

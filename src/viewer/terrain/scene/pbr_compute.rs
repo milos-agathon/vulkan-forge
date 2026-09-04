@@ -8,7 +8,7 @@ impl ViewerTerrainScene {
         }
 
         // P6.2: Initialize shadows
-        self.init_shadows();
+        self.init_shadows()?;
 
         let pbr_bind_group_layout =
             self.device

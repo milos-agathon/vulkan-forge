@@ -3,13 +3,14 @@ use crate::core::resource_tracker::{
     tracked_create_buffer_init, tracked_create_texture, TrackedTexture,
 };
 
-/// Hierarchical Z-Buffer (min-depth pyramid) for accelerated occlusion queries
+const HZB_BUILD_SOURCE: &str = include_str!("../../shaders/hzb_build.wgsl");
+
+/// Hierarchical Z-Buffer depth pyramid for accelerated occlusion queries
 pub struct HzbPyramid {
     pub(crate) tex: TrackedTexture,
     pub(crate) mip_count: u32,
     width: u32,
     height: u32,
-    // Compute pipelines and layouts
     bgl_copy: BindGroupLayout,
     bgl_down: BindGroupLayout,
     pipe_copy: ComputePipeline,
@@ -18,9 +19,21 @@ pub struct HzbPyramid {
 
 impl HzbPyramid {
     pub(crate) fn new(device: &Device, width: u32, height: u32) -> RenderResult<Self> {
+        Self::new_with_copy_entry(device, width, height, "cs_copy")
+    }
+
+    pub(crate) fn new_max_reduced(device: &Device, width: u32, height: u32) -> RenderResult<Self> {
+        Self::new_with_copy_entry(device, width, height, "cs_copy_max_reduce")
+    }
+
+    fn new_with_copy_entry(
+        device: &Device,
+        width: u32,
+        height: u32,
+        copy_entry: &str,
+    ) -> RenderResult<Self> {
         use crate::core::mipmap::calculate_mip_levels;
         let mip_count = calculate_mip_levels(width, height).max(1);
-        // HZB is a float color texture (R32Float) with mip chain
         let tex = tracked_create_texture(
             device,
             &TextureDescriptor {
@@ -44,10 +57,9 @@ impl HzbPyramid {
         let shader = crate::core::shader_registry::create_labeled_shader_module(
             device,
             "p5.hzb.build.shader",
-            include_str!("../../shaders/hzb_build.wgsl"),
+            HZB_BUILD_SOURCE,
         );
 
-        // Group 0: depth copy (depth texture -> r32f storage). We use textureLoad on depth (no sampler).
         let bgl_copy = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("p5.hzb.bgl.copy"),
             entries: &[
@@ -74,7 +86,6 @@ impl HzbPyramid {
             ],
         });
 
-        // Group 1: downsample (r32f -> r32f) with reversed_z uniform
         let bgl_down = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("p5.hzb.bgl.down"),
             entries: &[
@@ -111,7 +122,6 @@ impl HzbPyramid {
             ],
         });
 
-        // Use separate pipeline layouts per entry to keep validation simple
         let pl_copy = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("p5.hzb.pl.copy"),
             bind_group_layouts: &[&bgl_copy],
@@ -128,7 +138,7 @@ impl HzbPyramid {
                 label: Some("p5.hzb.pipe.copy"),
                 layout: Some(&pl_copy),
                 module: &shader,
-                entry_point: "cs_copy",
+                entry_point: copy_entry,
             },
         );
         let pipe_down = crate::core::shader_registry::create_compute_pipeline_scoped(
@@ -140,7 +150,6 @@ impl HzbPyramid {
                 entry_point: "cs_downsample",
             },
         );
-
         Ok(Self {
             tex,
             mip_count,
@@ -163,7 +172,8 @@ impl HzbPyramid {
         levels: u32,
         reversed_z: bool,
     ) -> RenderResult<()> {
-        // Copy depth -> HZB level 0
+        crate::core::shader_registry::record_shader_use("p5.hzb.build.shader");
+        // Copy/reduce depth into HZB level 0.
         let dst0 = self.tex.create_view(&TextureViewDescriptor {
             label: Some("p5.hzb.mip0"),
             format: None,
@@ -194,15 +204,15 @@ impl HzbPyramid {
         });
         pass0.set_pipeline(&self.pipe_copy);
         pass0.set_bind_group(0, &bg_copy, &[]);
-        let gx0 = (self.width + 7) / 8;
-        let gy0 = (self.height + 7) / 8;
+        let mut level_w = self.width;
+        let mut level_h = self.height;
+        let gx0 = level_w.div_ceil(8);
+        let gy0 = level_h.div_ceil(8);
         pass0.dispatch_workgroups(gx0, gy0, 1);
         drop(pass0);
 
         // Downsample chain up to requested levels
         let build_to = levels.min(self.mip_count).saturating_sub(1);
-        let mut level_w = self.width;
-        let mut level_h = self.height;
         // Create uniform buffer for reversed_z flag
         let reversed_z_val: u32 = if reversed_z { 1 } else { 0 };
         let params_buf = tracked_create_buffer_init(
@@ -283,3 +293,7 @@ impl HzbPyramid {
         self.tex.create_view(&TextureViewDescriptor::default())
     }
 }
+
+#[cfg(test)]
+#[path = "hzb_tests.rs"]
+mod tests;

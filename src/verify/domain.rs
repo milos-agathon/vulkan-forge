@@ -316,6 +316,28 @@ impl Interval {
         )
     }
 
+    pub(crate) fn fraction_with_nonnegative_residual(
+        self,
+        residual: Self,
+        denominator: Self,
+    ) -> Self {
+        if !self.is_finite_only()
+            || !residual.is_finite_only()
+            || self.lo < 0.0
+            || residual.lo < 0.0
+        {
+            return Self::top(true);
+        }
+        let denominator = denominator.with_input_ftz();
+        if !denominator.is_finite_only()
+            || denominator.lo < f32::MIN_POSITIVE
+            || denominator.hi > DIV_DENOM_MAX
+        {
+            return Self::top(true);
+        }
+        expand_ulps(Self::new(0.0, 1.0), NATIVE_OP_ULPS)
+    }
+
     pub(crate) fn sqrt(self) -> Self {
         let input = self.with_input_ftz();
         if input.may_nan || input.has_infinity() || !input.has_finite() || input.lo < 0.0 {

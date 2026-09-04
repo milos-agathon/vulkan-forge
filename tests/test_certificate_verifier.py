@@ -84,6 +84,17 @@ def test_any_signed_byte_tamper_fails(tmp_path):
     assert certificate.verify(p, cert["signature"]["pubkey"]) is False
 
 
+def test_model_assumption_tamper_fails_verification():
+    fixture = copy.deepcopy(FIXTURE)
+    fixture["models"] = {
+        "astro.twilight": "civil-to-astronomical smoothstep over solar altitude"
+    }
+    cert = certificate.sign_certificate(fixture)
+    assert "models" in cert["signature"]["signed_fields"]
+    cert["models"]["astro.twilight"] = "tampered visibility model"
+    assert certificate.verify(cert, cert["signature"]["pubkey"]) is False
+
+
 def test_payload_bytes_are_deterministic():
     a = certificate.canonical_payload_bytes(copy.deepcopy(FIXTURE))
     b = certificate.canonical_payload_bytes(json.loads(json.dumps(FIXTURE)))

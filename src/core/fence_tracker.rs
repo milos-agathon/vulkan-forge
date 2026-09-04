@@ -172,7 +172,7 @@ mod tests {
         let instance = Instance::new(wgpu::InstanceDescriptor {
             backends: Backends::all(),
             dx12_shader_compiler: Default::default(),
-            flags: wgpu::InstanceFlags::default(),
+            flags: crate::core::gpu::instance_flags(),
             gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
         });
 

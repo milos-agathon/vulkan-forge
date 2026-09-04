@@ -16,6 +16,12 @@ pub struct PyCogDataset {
     url: String,
 }
 
+impl PyCogDataset {
+    pub(crate) fn reader(&self) -> Arc<CogHeightReader> {
+        self.reader.clone()
+    }
+}
+
 #[pymethods]
 impl PyCogDataset {
     /// Open a COG dataset from a URL.

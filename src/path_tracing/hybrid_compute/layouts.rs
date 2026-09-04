@@ -40,7 +40,8 @@ impl HybridPathTracer {
                 storage_entry(5, false),
                 sampled_texture_entry(6),
                 storage_entry(7, false),
-                sampled_texture_entry(10),
+                uniform_entry(10),
+                sampled_texture_entry(11),
             ],
         })
     }
@@ -74,7 +75,8 @@ impl HybridPathTracer {
                 uniform_entry(3),
                 storage_entry(8, false),
                 storage_entry(9, false),
-                sampled_texture_entry(10),
+                uniform_entry(10),
+                sampled_texture_entry(11),
             ],
         })
     }

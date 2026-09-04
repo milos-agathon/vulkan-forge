@@ -4,18 +4,21 @@ def _city_labels(order):
             "id": "city-b",
             "text": "Beta",
             "geometry": {"type": "Point", "coordinates": (30.0, 40.0, 6.0)},
+            "label_size": (1.0, 1.0),
             "priority": 3,
         },
         "a": {
             "id": "city-a",
             "text": "Alpha",
             "geometry": {"type": "Point", "coordinates": (10.0, 20.0, 5.0)},
+            "label_size": (1.0, 1.0),
             "priority": 5,
         },
         "c": {
             "id": "city-c",
             "text": "Gamma",
             "geometry": {"type": "Point", "coordinates": (20.0, 15.0, 4.0)},
+            "label_size": (1.0, 1.0),
             "priority": 4,
         },
     }

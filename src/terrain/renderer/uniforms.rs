@@ -27,6 +27,8 @@ pub(super) struct FogUniforms {
     pub(super) fog_inscatter: [f32; 4],
     pub(super) sky_params0: [f32; 4],
     pub(super) sky_params1: [f32; 4],
+    pub(super) aether_sun_direction: [f32; 4],
+    pub(super) aether_planet_lut: [f32; 4],
 }
 
 impl FogUniforms {
@@ -36,6 +38,8 @@ impl FogUniforms {
             fog_inscatter: [1.0, 1.0, 1.0, 0.0],
             sky_params0: [0.0, 0.0, 0.0, 0.0],
             sky_params1: [0.0, 0.0, 0.0, 0.0],
+            aether_sun_direction: [0.0, 0.0, 1.0, 0.0],
+            aether_planet_lut: [6_360_000.0, 6_460_000.0, 2.0, 2.0],
         }
     }
 }

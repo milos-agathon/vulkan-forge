@@ -1,8 +1,6 @@
 name: Publish to PyPI
 
 on:
-  pull_request:
-    branches: [main, develop]
   push:
     tags:
       - 'v*'
@@ -19,6 +17,11 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   build-wheels:
@@ -63,6 +66,7 @@ jobs:
         with:
           name: wheels-${{ matrix.platform.os }}
           path: dist/*.whl
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 90 || 1 }}
 
   build-sdist:
     name: Build sdist
@@ -87,6 +91,7 @@ jobs:
         with:
           name: sdist
           path: dist/*.tar.gz
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 90 || 1 }}
 
   smoke-test:
     name: Smoke Test (${{ matrix.platform.os }})
@@ -190,7 +195,7 @@ jobs:
 
   publish:
     name: Publish
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false'))
     needs: [build-wheels, build-sdist, smoke-test]
     runs-on: ubuntu-latest
     permissions:

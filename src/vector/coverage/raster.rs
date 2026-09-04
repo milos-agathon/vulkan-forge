@@ -47,6 +47,31 @@ struct PixelDispatchLists {
     resolve_pixels: Vec<u32>,
 }
 
+pub(super) struct CoverageRasterPlan {
+    baselines: Vec<i32>,
+    rules: Vec<LayerRuleRecord>,
+    pixel_lists: PixelDispatchLists,
+}
+
+impl CoverageRasterPlan {
+    pub(super) fn compile(geometry: &CoverageGeometry) -> Result<Self, RenderError> {
+        let baselines = build_pixel_baselines(geometry);
+        let rules = geometry
+            .layers
+            .iter()
+            .map(|layer| LayerRuleRecord {
+                values: [layer.fill_rule as u32, 0, 0, 0],
+            })
+            .collect();
+        let pixel_lists = build_pixel_dispatch_lists(geometry)?;
+        Ok(Self {
+            baselines,
+            rules,
+            pixel_lists,
+        })
+    }
+}
+
 pub struct CoverageRasterResources {
     pub coverage: TrackedBuffer,
     pub coverage_bytes: u64,
@@ -131,20 +156,25 @@ impl CoverageRasterizer {
         geometry: &CoverageGeometry,
         bins: &CoverageBins,
     ) -> Result<CoverageRasterResources, RenderError> {
+        let plan = CoverageRasterPlan::compile(geometry)?;
+        self.prepare_compiled(device, geometry, bins, &plan)
+    }
+
+    pub(super) fn prepare_compiled(
+        &self,
+        device: &wgpu::Device,
+        geometry: &CoverageGeometry,
+        bins: &CoverageBins,
+        plan: &CoverageRasterPlan,
+    ) -> Result<CoverageRasterResources, RenderError> {
         if bins.layout.layer_count as usize != geometry.layers.len() {
             return Err(RenderError::Upload(
                 "vector_coverage_raster_layout: bin and geometry layer counts differ".into(),
             ));
         }
-        let baselines = build_pixel_baselines(geometry);
-        let pixel_lists = build_pixel_dispatch_lists(geometry)?;
-        let rules: Vec<_> = geometry
-            .layers
-            .iter()
-            .map(|layer| LayerRuleRecord {
-                values: [layer.fill_rule as u32, 0, 0, 0],
-            })
-            .collect();
+        let baselines = &plan.baselines;
+        let pixel_lists = &plan.pixel_lists;
+        let rules = &plan.rules;
         let pixel_count = u64::from(geometry.width)
             .checked_mul(u64::from(geometry.height))
             .and_then(|count| count.checked_mul(u64::from(bins.layout.layer_count)))
@@ -209,7 +239,7 @@ impl CoverageRasterizer {
             device,
             &BufferInitDescriptor {
                 label: Some("vf.Vector.Coverage.TileBaselines"),
-                contents: bytemuck::cast_slice(&baselines),
+                contents: bytemuck::cast_slice(baselines),
                 usage: wgpu::BufferUsages::STORAGE,
             },
         )?;
@@ -217,7 +247,7 @@ impl CoverageRasterizer {
             device,
             &BufferInitDescriptor {
                 label: Some("vf.Vector.Coverage.LayerRules"),
-                contents: bytemuck::cast_slice(&rules),
+                contents: bytemuck::cast_slice(rules),
                 usage: wgpu::BufferUsages::STORAGE,
             },
         )?;

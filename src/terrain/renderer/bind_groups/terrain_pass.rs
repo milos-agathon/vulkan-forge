@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::atmosphere::AETHER_RADIOMETRIC_SCALE_MAX;
 
 pub(in crate::terrain::renderer) struct TerrainPassBindGroups {
     pub(in crate::terrain::renderer) main: wgpu::BindGroup,
@@ -162,6 +163,7 @@ impl TerrainScene {
         height_curve_view: &wgpu::TextureView,
         water_mask_view_uploaded: Option<&wgpu::TextureView>,
         sky_view: &wgpu::TextureView,
+        atmosphere_scattering_view: &wgpu::TextureView,
         height_ao_computed: bool,
         sun_vis_computed: bool,
         decoded: &crate::terrain::render_params::DecodedTerrainSettings,
@@ -193,6 +195,21 @@ impl TerrainScene {
         };
         let sky_enabled = decoded.sky.enabled;
         let sky_aerial_enabled = sky_enabled && decoded.sky.aerial_perspective;
+        let aether_planet_lut = decoded
+            .sky
+            .lut_handle
+            .as_ref()
+            .map(|handle| {
+                let config = handle.config();
+                let dimensions = handle.luts().metadata.dimensions;
+                [
+                    config.bottom_radius_m,
+                    config.top_radius_m,
+                    dimensions.scattering_height as f32,
+                    dimensions.scattering_nu as f32,
+                ]
+            })
+            .unwrap_or([6_360_000.0, 6_460_000.0, 2.0, 2.0]);
         let fog_uniforms = FogUniforms {
             params0: [
                 decoded.fog.density,
@@ -204,7 +221,7 @@ impl TerrainScene {
                 decoded.fog.inscatter[0],
                 decoded.fog.inscatter[1],
                 decoded.fog.inscatter[2],
-                0.0,
+                if decoded.sky.model == 3 { 1.0 } else { 0.0 },
             ],
             sky_params0: [
                 if sky_enabled { 1.0 } else { 0.0 },
@@ -214,14 +231,36 @@ impl TerrainScene {
                     0.0
                 },
                 if sky_aerial_enabled { 1.0 } else { 0.0 },
-                decoded.sky.sun_intensity.max(0.0),
+                decoded
+                    .sky
+                    .sun_intensity
+                    .clamp(0.0, AETHER_RADIOMETRIC_SCALE_MAX),
             ],
-            sky_params1: [
-                decoded.sky.sun_size.max(0.0),
-                decoded.light.direction[2].max(0.0),
-                decoded.sky.turbidity.clamp(1.0, 10.0),
-                decoded.sky.sky_exposure.max(0.0),
+            sky_params1: if decoded.sky.model == 3 {
+                [
+                    decoded.sky.ozone_du,
+                    decoded.sky.mie_g,
+                    decoded.sky.turbidity,
+                    decoded
+                        .sky
+                        .sky_exposure
+                        .clamp(0.0, AETHER_RADIOMETRIC_SCALE_MAX),
+                ]
+            } else {
+                [
+                    decoded.sky.sun_size.max(0.0),
+                    decoded.light.direction[2].max(0.0),
+                    decoded.sky.turbidity.clamp(1.0, 10.0),
+                    decoded.sky.sky_exposure.max(0.0),
+                ]
+            },
+            aether_sun_direction: [
+                decoded.light.direction[0],
+                decoded.light.direction[1],
+                decoded.light.direction[2],
+                0.0,
             ],
+            aether_planet_lut,
         };
         self.queue.write_buffer(
             &self.fog_uniform_buffer,
@@ -229,7 +268,7 @@ impl TerrainScene {
             bytemuck::bytes_of(&fog_uniforms),
         );
         let fog = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("terrain.fog.bind_group"),
+            label: Some("terrain.atmosphere.bind_group"),
             layout: &self.fog_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -239,6 +278,10 @@ impl TerrainScene {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(sky_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(atmosphere_scattering_view),
                 },
             ],
         });
@@ -356,9 +399,20 @@ impl TerrainScene {
             bytemuck::bytes_of(&material_layer_uniforms),
         );
         let build_material_layer_bind_group =
-            |atlas_view: &wgpu::TextureView,
+            |atlas_views: &[wgpu::TextureView],
              page_table_view: &wgpu::TextureView,
              feedback_buffer: &wgpu::Buffer| {
+                let atlas_view_refs = atlas_views.iter().collect::<Vec<_>>();
+                let atlas_resource =
+                    if super::super::virtual_texture::bindless_bc_supported(self.device.as_ref()) {
+                        wgpu::BindingResource::TextureViewArray(&atlas_view_refs)
+                    } else {
+                        wgpu::BindingResource::TextureView(
+                            atlas_views
+                                .first()
+                                .expect("VT fallback always has an atlas view"),
+                        )
+                    };
                 self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("terrain.material_layer.bind_group"),
                     layout: &self.material_layer_bind_group_layout,
@@ -403,7 +457,7 @@ impl TerrainScene {
                         },
                         wgpu::BindGroupEntry {
                             binding: 8,
-                            resource: wgpu::BindingResource::TextureView(atlas_view),
+                            resource: atlas_resource,
                         },
                         wgpu::BindGroupEntry {
                             binding: 9,
@@ -433,6 +487,10 @@ impl TerrainScene {
                             binding: 15,
                             resource: wgpu::BindingResource::Sampler(material_map_sampler),
                         },
+                        wgpu::BindGroupEntry {
+                            binding: 16,
+                            resource: self.vt_frame_counters_buffer.as_entire_binding(),
+                        },
                     ],
                 })
             };
@@ -444,7 +502,7 @@ impl TerrainScene {
                 .map_err(|_| anyhow!("material_vt mutex poisoned"))?;
             if let Some(bindings) = material_vt.binding_resources() {
                 build_material_layer_bind_group(
-                    bindings.atlas_view,
+                    bindings.atlas_views,
                     bindings.page_table_view,
                     bindings
                         .feedback_buffer
@@ -452,14 +510,14 @@ impl TerrainScene {
                 )
             } else {
                 build_material_layer_bind_group(
-                    &self.vt_atlas_fallback_view,
+                    &self.vt_atlas_fallback_views,
                     &self.vt_page_table_fallback_view,
                     &self.vt_feedback_fallback_buffer,
                 )
             }
         } else {
             build_material_layer_bind_group(
-                &self.vt_atlas_fallback_view,
+                &self.vt_atlas_fallback_views,
                 &self.vt_page_table_fallback_view,
                 &self.vt_feedback_fallback_buffer,
             )

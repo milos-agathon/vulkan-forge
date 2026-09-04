@@ -24,6 +24,7 @@ pub enum IpcRequest {
     CamLookat { eye: [f64; 3], target: [f64; 3], #[serde(default = "default_up")] up: [f32; 3] },
     SetFov { deg: f32 },
     LitSun { azimuth_deg: f32, elevation_deg: f32 },
+    SetObservation { year: i32, month: u8, day: u8, hour: u8, minute: u8, second: f64, latitude_deg: f64, longitude_deg: f64, #[serde(default)] height_m: f64 },
     LitIbl { path: String, #[serde(default = "default_intensity")] intensity: f32 },
     SetZScale { value: f32 },
     Snapshot { path: String, #[serde(default)] width: Option<u32>, #[serde(default)] height: Option<u32> },
@@ -38,7 +39,7 @@ pub enum IpcRequest {
         #[serde(default = "default_fov")] fov_deg: f32,
         #[serde(default)] target: Option<[f64; 3]>,
     },
-    SetTerrainSun { #[serde(default = "default_sun_azimuth")] azimuth_deg: f32, #[serde(default = "default_sun_elevation")] elevation_deg: f32, #[serde(default = "default_sun_intensity")] intensity: f32 },
+    SetTerrainSun { #[serde(default = "default_sun_azimuth")] azimuth_deg: f32, #[serde(default = "default_sun_elevation")] elevation_deg: f32, #[serde(default = "default_sun_intensity")] intensity: f32, #[serde(default)] source: Option<String> },
     SetTerrain {
         #[serde(default)] phi: Option<f32>, #[serde(default)] theta: Option<f32>, #[serde(default)] radius: Option<f32>,
         #[serde(default)] fov: Option<f32>, #[serde(default)] sun_azimuth: Option<f32>, #[serde(default)] sun_elevation: Option<f32>,

@@ -10,6 +10,10 @@ import forge3d.map_scene as map_scene
 from _terrain_runtime import terrain_rendering_available
 
 
+_DEPTH_CONVENTION = "normalized_device_depth"
+_DEPTH_DOMAIN = [0.0, 1.0]
+
+
 def test_mapscene_label_terrain_occlusion_records_rejection() -> None:
     scene = f3d.MapScene(
         terrain=f3d.TerrainSource(
@@ -106,11 +110,17 @@ def test_mapscene_label_depth_aov_occlusion_rejects_label_behind_scene_depth() -
                         "id": "front",
                         "text": "Front",
                         "geometry": {"type": "Point", "coordinates": [32.0, 32.0, 0.25]},
+                        "projected_anchor": [32.0, 32.0, 0.25],
+                        "projected_depth_convention": _DEPTH_CONVENTION,
+                        "projected_depth_domain": _DEPTH_DOMAIN,
                     },
                     {
                         "id": "behind",
                         "text": "Behind",
                         "geometry": {"type": "Point", "coordinates": [32.0, 32.0, 0.75]},
+                        "projected_anchor": [32.0, 32.0, 0.75],
+                        "projected_depth_convention": _DEPTH_CONVENTION,
+                        "projected_depth_domain": _DEPTH_DOMAIN,
                     },
                 ],
                 glyph_atlas={"glyphs": sorted(set("FrontBehind"))},
@@ -120,6 +130,8 @@ def test_mapscene_label_depth_aov_occlusion_rejects_label_behind_scene_depth() -
                         "image": np.full((4, 4), 0.5, dtype=np.float32).tolist(),
                         "source": "unit_test_depth_aov",
                         "bias": 0.0,
+                        "depth_convention": _DEPTH_CONVENTION,
+                        "depth_domain": _DEPTH_DOMAIN,
                     }
                 },
             )
@@ -157,6 +169,9 @@ def test_depth_aov_occlusion_tests_projected_depth_without_explicit_z() -> None:
                         "id": "behind-2d",
                         "text": "Behind",
                         "projected_depth": 0.75,
+                        "projected_anchor": [32.0, 32.0, 0.75],
+                        "projected_depth_convention": _DEPTH_CONVENTION,
+                        "projected_depth_domain": _DEPTH_DOMAIN,
                         "geometry": {"type": "Point", "coordinates": [32.0, 32.0]},
                     }
                 ],
@@ -167,6 +182,8 @@ def test_depth_aov_occlusion_tests_projected_depth_without_explicit_z() -> None:
                         "image": np.full((4, 4), 0.5, dtype=np.float32).tolist(),
                         "source": "unit_test_depth_aov",
                         "bias": 0.0,
+                        "depth_convention": _DEPTH_CONVENTION,
+                        "depth_domain": _DEPTH_DOMAIN,
                     }
                 },
             )
@@ -217,6 +234,8 @@ def test_curved_label_depth_occlusion_is_documented_unsupported_substitution() -
                         "image": np.full((4, 4), 0.5, dtype=np.float32).tolist(),
                         "source": "unit_test_depth_aov",
                         "bias": 0.0,
+                        "depth_convention": _DEPTH_CONVENTION,
+                        "depth_domain": _DEPTH_DOMAIN,
                     }
                 },
             )
@@ -228,12 +247,13 @@ def test_curved_label_depth_occlusion_is_documented_unsupported_substitution() -
 
     assert plan.accepted == []
     assert [(label.label_id, label.reason) for label in plan.rejected] == [
-        ("curved-ridge", "unsupported_geometry_type")
+        ("curved-ridge", "missing_geometry_authority")
     ]
-    assert plan.rejected[0].details == {"placement": "curved_text"}
-    assert plan.rejected[0].diagnostic_refs == ("experimental_feature",)
+    assert plan.rejected[0].details == {"required_authority": "layout_curved_text"}
+    assert plan.rejected[0].diagnostic_refs == ("label_geometry_authority_missing",)
     assert any(
-        diagnostic.code == "experimental_feature" and diagnostic.object_id == "curved-ridge"
+        diagnostic.code == "label_geometry_authority_missing"
+        and diagnostic.object_id == "curved-ridge"
         for diagnostic in plan.diagnostics
     )
 
@@ -318,11 +338,17 @@ def _real_depth_occlusion_scene(path: Path, *, extra_labels: int = 0) -> f3d.Map
             "id": "front",
             "text": "Front",
             "geometry": {"type": "Point", "coordinates": [32.0, 32.0, 0.0]},
+            "projected_anchor": [32.0, 32.0, 0.0],
+            "projected_depth_convention": _DEPTH_CONVENTION,
+            "projected_depth_domain": _DEPTH_DOMAIN,
         },
         {
             "id": "behind",
             "text": "Behind",
             "geometry": {"type": "Point", "coordinates": [32.0, 32.0, 0.95]},
+            "projected_anchor": [32.0, 32.0, 0.95],
+            "projected_depth_convention": _DEPTH_CONVENTION,
+            "projected_depth_domain": _DEPTH_DOMAIN,
         },
     ]
     # SUTURA: the depth source for occlusion culling is serialized with the
@@ -332,6 +358,8 @@ def _real_depth_occlusion_scene(path: Path, *, extra_labels: int = 0) -> f3d.Map
             "image": np.full((16, 16), 0.5, dtype=np.float32).tolist(),
             "source": "serialized_depth_proxy",
             "bias": 0.0,
+            "depth_convention": _DEPTH_CONVENTION,
+            "depth_domain": _DEPTH_DOMAIN,
         }
     }
     for index in range(extra_labels):
@@ -340,6 +368,13 @@ def _real_depth_occlusion_scene(path: Path, *, extra_labels: int = 0) -> f3d.Map
                 "id": f"dense-{index:02d}",
                 "text": f"P{index}",
                 "geometry": {"type": "Point", "coordinates": [8.0 + index * 2.0, 12.0 + (index % 5) * 4.0, 0.20]},
+                "projected_anchor": [
+                    8.0 + index * 2.0,
+                    12.0 + (index % 5) * 4.0,
+                    0.20,
+                ],
+                "projected_depth_convention": _DEPTH_CONVENTION,
+                "projected_depth_domain": _DEPTH_DOMAIN,
             }
         )
     return f3d.MapScene(

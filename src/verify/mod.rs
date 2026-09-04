@@ -131,6 +131,20 @@ const PROVEN_TARGETS: &[Target] = &[
         contract: "shaders/contracts/terrain_pbr_pom.toml",
         kind: "entry",
     },
+    Target {
+        module: "aether_terrain_segment",
+        path: "src/shaders/terrain_pbr_pom.wgsl",
+        entry: "aether_terrain_segment_transmittance",
+        contract: "shaders/contracts/terrain_pbr_pom.toml",
+        kind: "lemma",
+    },
+    Target {
+        module: "aether_terrain_apply",
+        path: "src/shaders/terrain_pbr_pom.wgsl",
+        entry: "aether_terrain_apply_segment",
+        contract: "shaders/contracts/terrain_pbr_pom.toml",
+        kind: "lemma",
+    },
 ];
 
 #[derive(Debug, Serialize)]
@@ -358,7 +372,9 @@ fn verify_source(
 
 fn load_target_source(target: Target) -> anyhow::Result<String> {
     match target.module {
-        "terrain_pbr_pom" => Ok(crate::shader_sources::terrain()),
+        "terrain_pbr_pom" | "aether_terrain_segment" | "aether_terrain_apply" => {
+            Ok(crate::shader_sources::terrain())
+        }
         "hybrid_terrain_traversal" => Ok(crate::shader_sources::hybrid_kernel()),
         "tonemap_common" => Ok(format!(
             "{}\n{}",
@@ -914,6 +930,110 @@ mod tests {
         );
         let ablation = verify_target(target, Some("height_range_div")).unwrap();
         assert_eq!(ablation.proof_status, "unproven");
+    }
+
+    #[test]
+    fn aether_terrain_segment_is_proven_and_zero_division_is_rejected() {
+        let target = PROVEN_TARGETS
+            .iter()
+            .find(|target| target.module == "aether_terrain_segment")
+            .copied()
+            .unwrap();
+        let baseline = verify_target(target, None).unwrap();
+        assert_eq!(
+            baseline.proof_status,
+            "proven",
+            "{} alarms: {:#?}",
+            baseline.alarms.len(),
+            baseline.alarms
+        );
+        let source = crate::shader_sources::terrain().replace(
+            "let path_per_sample = bounded_distance_m * density_scale * 0.0625;",
+            "let path_per_sample = distance_m / (density_scale - density_scale);",
+        );
+        let mutant = verify_source(
+            target.module,
+            target.path,
+            target.entry,
+            &source,
+            target.contract,
+        );
+        assert_eq!(mutant.proof_status, "unproven");
+        assert!(mutant
+            .alarms
+            .iter()
+            .any(|alarm| alarm.kind == "possible_nan_or_inf"));
+    }
+
+    #[test]
+    fn aether_atmospheric_apply_is_proven_and_ablation_rejected() {
+        let target = PROVEN_TARGETS
+            .iter()
+            .find(|target| target.module == "aether_terrain_apply")
+            .copied()
+            .unwrap();
+        let baseline = verify_target(target, None).unwrap();
+        assert_eq!(
+            baseline.proof_status,
+            "proven",
+            "{} alarms: {:#?}",
+            baseline.alarms.len(),
+            baseline.alarms
+        );
+        let source = crate::shader_sources::terrain().replace(
+            "let transported = bounded_surface * transmittance + finite_inscatter;",
+            "let transported = bounded_surface / (transmittance - transmittance);",
+        );
+        let mutant = verify_source(
+            target.module,
+            target.path,
+            target.entry,
+            &source,
+            target.contract,
+        );
+        assert_eq!(mutant.proof_status, "unproven");
+        assert!(mutant
+            .alarms
+            .iter()
+            .any(|alarm| alarm.kind == "possible_nan_or_inf"));
+    }
+
+    #[test]
+    fn aether_atmospheric_apply_rejects_raw_zero_normalization() {
+        let target = PROVEN_TARGETS
+            .iter()
+            .find(|target| target.module == "aether_terrain_apply")
+            .copied()
+            .unwrap();
+        assert_eq!(verify_target(target, None).unwrap().proof_status, "proven");
+
+        for (safe, unsafe_normalize) in [
+            (
+                "aether_terrain_finite_normalize(view_direction)",
+                "normalize(view_direction)",
+            ),
+            (
+                "aether_terrain_finite_normalize(sun_direction)",
+                "normalize(sun_direction)",
+            ),
+        ] {
+            let source = crate::shader_sources::terrain().replace(safe, unsafe_normalize);
+            let mutant = verify_source(
+                target.module,
+                target.path,
+                target.entry,
+                &source,
+                target.contract,
+            );
+            assert_eq!(
+                mutant.proof_status, "unproven",
+                "raw normalization unexpectedly proved: {unsafe_normalize}"
+            );
+            assert!(mutant
+                .alarms
+                .iter()
+                .any(|alarm| alarm.kind == "possible_nan_or_inf"));
+        }
     }
 
     #[test]

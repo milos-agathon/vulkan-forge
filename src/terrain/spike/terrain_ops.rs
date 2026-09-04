@@ -162,6 +162,16 @@ impl TerrainSpike {
         dict.set_item("utilization_ratio", metrics.utilization_ratio)?;
         dict.set_item("resident_tiles", metrics.resident_tiles)?;
         dict.set_item("resident_tile_bytes", metrics.resident_tile_bytes)?;
+        for (slot, family) in ["albedo", "normal", "mask", "height"].iter().enumerate() {
+            dict.set_item(
+                format!("resident_tiles_{family}"),
+                metrics.resident_tiles_by_family[slot],
+            )?;
+            dict.set_item(
+                format!("resident_bytes_{family}"),
+                metrics.resident_tile_bytes_by_family[slot],
+            )?;
+        }
         dict.set_item("staging_bytes_in_flight", metrics.staging_bytes_in_flight)?;
         dict.set_item("staging_ring_count", metrics.staging_ring_count)?;
         dict.set_item("staging_buffer_size", metrics.staging_buffer_size)?;

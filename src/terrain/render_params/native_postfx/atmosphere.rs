@@ -52,11 +52,16 @@ pub struct SkySettingsNative {
     pub model: u32,
     pub turbidity: f32,
     pub ground_albedo: f32,
+    pub ozone_du: f32,
+    pub mie_g: f32,
     pub sun_intensity: f32,
     pub sun_size: f32,
     pub aerial_perspective: bool,
     pub aerial_density: f32,
     pub sky_exposure: f32,
+    /// Exact tracked LUT payload. AETHER always resolves either the shipped
+    /// bank or a caller-provided offline bake into this typed handoff.
+    pub lut_handle: Option<crate::core::atmosphere::AtmosphereLutHandle>,
 }
 
 #[cfg(feature = "extension-module")]
@@ -67,11 +72,14 @@ impl Default for SkySettingsNative {
             model: 1,
             turbidity: 2.0,
             ground_albedo: 0.3,
+            ozone_du: 300.0,
+            mie_g: 0.8,
             sun_intensity: 1.0,
             sun_size: 1.0,
             aerial_perspective: true,
             aerial_density: 1.0,
             sky_exposure: 1.0,
+            lut_handle: None,
         }
     }
 }

@@ -5,10 +5,16 @@
 use super::ray::Ray;
 use super::selection::{SelectionManager, SelectionStyle};
 use crate::accel::types::{Aabb as BvhAabb, BvhNode, Triangle};
+use crate::core::resource_tracker::tracked_create_buffer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::{Buffer, Device, Queue};
+
+pub(crate) fn unpack_visibility_id(packed: u32) -> Option<(u32, u32)> {
+    let value = packed.checked_sub(1)?;
+    Some((value >> 16, value & 0xffff))
+}
 
 /// Rich pick result with full feature attributes
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +140,8 @@ impl LayerBvhData {
 
 /// Unified picking system with BVH acceleration
 pub struct UnifiedPickingSystem {
+    device: Arc<Device>,
+    queue: Arc<Queue>,
     config: UnifiedPickingConfig,
     /// BVH data per layer
     layer_bvhs: HashMap<u32, LayerBvhData>,
@@ -145,13 +153,97 @@ pub struct UnifiedPickingSystem {
 
 impl UnifiedPickingSystem {
     /// Create a new unified picking system
-    pub fn new(_device: Arc<Device>, _queue: Arc<Queue>) -> Self {
+    pub fn new(device: Arc<Device>, queue: Arc<Queue>) -> Self {
         Self {
+            device,
+            queue,
             config: UnifiedPickingConfig::default(),
             layer_bvhs: HashMap::new(),
             selection_manager: SelectionManager::new(),
             feature_attributes: HashMap::new(),
         }
+    }
+
+    /// Read terrain tile/triangle identities directly from TESSELLA's
+    /// R32Uint visibility buffer. One aligned row is reserved per requested
+    /// pixel so arbitrary batches, including the 10,000-pixel differential
+    /// gate, use one submission and one map rather than a CPU ray loop.
+    pub fn pick_visibility_pixels(
+        &self,
+        visibility: &wgpu::Texture,
+        width: u32,
+        height: u32,
+        pixels: &[(u32, u32)],
+    ) -> Result<Vec<Option<(u32, u32)>>, String> {
+        if pixels.is_empty() {
+            return Ok(Vec::new());
+        }
+        if pixels.iter().any(|&(x, y)| x >= width || y >= height) {
+            return Err("visibility pick coordinate is outside the texture".to_string());
+        }
+        const ROW_BYTES: u64 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64;
+        let readback = tracked_create_buffer(
+            self.device.as_ref(),
+            &wgpu::BufferDescriptor {
+                label: Some("picking.visibility.readback"),
+                size: ROW_BYTES * pixels.len() as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("picking.visibility.encoder"),
+            });
+        for (index, &(x, y)) in pixels.iter().enumerate() {
+            encoder.copy_texture_to_buffer(
+                wgpu::ImageCopyTexture {
+                    texture: visibility,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x, y, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::ImageCopyBuffer {
+                    buffer: &readback,
+                    layout: wgpu::ImageDataLayout {
+                        offset: index as u64 * ROW_BYTES,
+                        bytes_per_row: Some(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT),
+                        rows_per_image: Some(1),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        self.queue.submit(Some(encoder.finish()));
+        let slice = readback.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).ok();
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        pollster::block_on(receiver.receive())
+            .ok_or_else(|| "visibility picking callback dropped".to_string())?
+            .map_err(|error| format!("visibility picking map failed: {error}"))?;
+        let mapped = slice.get_mapped_range();
+        let results = pixels
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let offset = index * ROW_BYTES as usize;
+                let packed =
+                    u32::from_le_bytes(mapped[offset..offset + 4].try_into().expect("4 bytes"));
+                unpack_visibility_id(packed)
+            })
+            .collect();
+        drop(mapped);
+        readback.unmap();
+        Ok(results)
     }
 
     /// Get configuration
@@ -487,5 +579,12 @@ mod tests {
         let ray = Ray::new([2.0, 2.0, 1.0], [0.0, 0.0, -1.0]);
         let t = ray_triangle_intersect(&ray, &triangle);
         assert!(t.is_none());
+    }
+
+    #[test]
+    fn visibility_id_reserves_zero_for_background() {
+        assert_eq!(unpack_visibility_id(0), None);
+        let packed = ((0x1234 << 16) | 0x56) + 1;
+        assert_eq!(unpack_visibility_id(packed), Some((0x1234, 0x56)));
     }
 }

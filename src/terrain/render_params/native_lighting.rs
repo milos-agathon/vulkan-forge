@@ -81,7 +81,12 @@ pub struct ShadowSettingsNative {
     pub cascades: u32,
     pub max_distance: f32,
     pub softness: f32,
+    /// Legacy world-space radius, converted to texels per cascade by WGSL.
     pub pcss_light_radius: f32,
+    pub pcss_blocker_radius: f32,
+    pub pcss_filter_radius: f32,
+    /// PCSS area-light radius in shadow-map texels.
+    pub light_size: f32,
     pub intensity: f32,
     pub slope_scale_bias: f32,
     pub depth_bias: f32,
@@ -99,6 +104,9 @@ impl Default for ShadowSettingsNative {
             max_distance: 3000.0,
             softness: 0.01,
             pcss_light_radius: 0.0,
+            pcss_blocker_radius: crate::shadows::DEFAULT_PCSS_BLOCKER_RADIUS_TEXELS,
+            pcss_filter_radius: crate::shadows::DEFAULT_PCSS_FILTER_RADIUS_TEXELS,
+            light_size: crate::shadows::DEFAULT_PCSS_LIGHT_SIZE,
             intensity: 1.0,
             slope_scale_bias: 0.001,
             depth_bias: 0.0005,

@@ -173,6 +173,39 @@ def test_installs_interactive_viewer_console_script():
     )
 
 
+def test_sidera_third_party_notice_is_shipped_with_embedded_coefficients():
+    """The MIT notice travels with wheels containing ``moon_terms.bin``."""
+    import forge3d
+
+    root = Path(__file__).resolve().parent.parent
+    source_package = root / "python" / "forge3d"
+    package_path = Path(forge3d.__file__).resolve()
+    if package_path.is_relative_to(source_package.resolve()):
+        pyproject = root / "pyproject.toml"
+        if tomllib is not None:
+            with pyproject.open("rb") as fh:
+                license_files = tomllib.load(fh)["project"]["license-files"]
+            assert "assets/astro/THIRD_PARTY_NOTICES.md" in license_files
+        else:
+            project = pyproject.read_text(encoding="utf-8").split("[project]", 1)[1]
+            project = project.split("\n[", 1)[0]
+            assert '"assets/astro/THIRD_PARTY_NOTICES.md"' in project
+        return
+
+    installed = distribution("forge3d")
+    members = [
+        member
+        for member in installed.files or ()
+        if member.name == "THIRD_PARTY_NOTICES.md"
+    ]
+    assert len(members) == 1, (
+        "installed forge3d wheel omits assets/astro/THIRD_PARTY_NOTICES.md"
+    )
+    notice = installed.locate_file(members[0]).read_text(encoding="utf-8")
+    assert "Copyright (c) 2016 Commenthol" in notice
+    assert "Permission is hereby granted" in notice
+
+
 def test_installed_wheel_path_gate_rejects_repo_local_package(tmp_path):
     repo_package = Path(__file__).resolve().parent.parent / "python" / "forge3d"
     native = tmp_path / "site-packages" / "forge3d" / "_forge3d.abi3.so"

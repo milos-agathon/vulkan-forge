@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
-import sys
 
 import numpy as np
 
@@ -18,6 +17,7 @@ from forge3d.north_arrow import NorthArrow
 from forge3d.offline import render_offline
 from forge3d.scale_bar import ScaleBar
 from forge3d.sdf import HybridRenderer, SdfPrimitive, SdfScene
+import forge3d.smoke as smoke_module
 from forge3d.smoke import SmokeDomain
 from forge3d.vector import VectorScene
 import forge3d._forge3d as _native
@@ -56,6 +56,9 @@ DOCUMENTED_EXCLUSIONS = {
     # Certificate-report getter: returns the last render's execution report,
     # renders nothing itself.
     "render_execution_report": "execution-report getter, produces no pixels",
+    # CPU validation fixture used as an input to the separately certified PT
+    # closure harness; it is not a product render and submits no GPU work.
+    "atmosphere_generate_environment": "CPU validation fixture, no GPU render",
 }
 
 
@@ -70,6 +73,8 @@ RENDER_ENTRYPOINTS = {
     "render_adjudication_pair": f3d.render_adjudication_pair,
     "hybrid_render_terrain_reference": f3d.hybrid_render_terrain_reference,
     "render_terrain_poster": f3d.render_terrain_poster,
+    "hybrid_render_aether_spectral_reference": f3d.hybrid_render_aether_spectral_reference,
+    "native.hybrid_render_aether_spectral_reference": _native.hybrid_render_aether_spectral_reference,
     "render_offscreen_rgba": render_offscreen_rgba,
     "Renderer.render_triangle_rgba": f3d.Renderer.render_triangle_rgba,
     "Renderer.render_triangle_png": f3d.Renderer.render_triangle_png,
@@ -125,10 +130,10 @@ def test_public_render_entrypoints_expose_certificate_keyword() -> None:
 # cache. Each entry carries the reason, on the same terms as
 # DOCUMENTED_EXCLUSIONS above.
 CACHE_EXCLUSIONS = {
-    # LIMES analytic coverage is a self-contained bin/raster/resolve pipeline
-    # with no reusable native terrain graph, so `vector_render_analytic_py`
+    # LIMES owns a bounded internal compiled-scene cache rather than a
+    # caller-supplied ANAMNESIS render graph, so `vector_render_analytic_py`
     # takes certificate= but not cache=.
-    "vector_render_analytic_py": "analytic coverage path, no cacheable native graph",
+    "vector_render_analytic_py": "internal compiled-scene cache, no ANAMNESIS graph",
 }
 
 
@@ -278,6 +283,7 @@ def test_documented_exclusions_explain_their_certificate_scope() -> None:
         "export_svg": export_svg,
         "export_pdf": export_pdf,
         "run_benchmark": run_benchmark,
+        "atmosphere_generate_environment": f3d.atmosphere_generate_environment,
     }
     for name, entrypoint in exclusions.items():
         assert name in DOCUMENTED_EXCLUSIONS
@@ -398,12 +404,12 @@ def test_native_smoke_certificate_uses_cpu_identity():
     assert [entry["label"] for entry in cert["passes"]] == ["smoke.cpu_projection"]
     assert cert["adapter"]["backend"] == "cpu"
     assert cert["engine"]["wgsl_module_hashes"] == {}
-    if sys.version_info >= (3, 14):
+    if smoke_module._HAS_NATIVE_SMOKE:
+        assert cert["degradations"] == []
+    else:
         assert {(item["kind"], item["name"]) for item in cert["degradations"]} == {
             ("cpu_fallback", "smoke.render")
         }
-    else:
-        assert cert["degradations"] == []
 
 
 def test_fallback_renderer_discloses_cpu_degradation():

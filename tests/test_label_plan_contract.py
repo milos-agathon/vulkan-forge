@@ -10,12 +10,14 @@ def _labels():
             "id": "city-a",
             "text": "Alpha",
             "geometry": {"type": "Point", "coordinates": (10.0, 20.0, 5.0)},
+            "label_size": (1.0, 1.0),
             "priority": 5,
         },
         {
             "id": "city-b",
             "text": "Beta",
             "geometry": {"type": "Point", "coordinates": (30.0, 40.0, 6.0)},
+            "label_size": (1.0, 1.0),
             "priority": 3,
         },
     ]
@@ -47,7 +49,7 @@ def test_label_plan_public_contract_and_roundtrip():
     assert len(plan.accepted) == 2
     assert plan.rejected == []
     assert plan.diagnostics == []
-    assert plan.bounds["screen"] == [10.0, 20.0, 30.0, 40.0]
+    assert plan.bounds["screen"] == [9.5, 19.5, 30.5, 40.5]
     assert isinstance(plan.accepted[0], AcceptedLabel)
     assert isinstance(plan.accepted[0].candidate, LabelCandidate)
     assert plan.accepted[0].candidate.candidate_type == "center"

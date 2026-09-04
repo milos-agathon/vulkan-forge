@@ -67,6 +67,11 @@ pub struct TerrainRenderParams {
     pub output_srgb_eotf: bool,
     /// P7: Camera projection mode ("screen" = fullscreen triangle, "mesh" = perspective grid)
     pub camera_mode: String,
+    pub culling: String,
+    pub shading: String,
+    pub vt_store_path: Option<String>,
+    pub prefetch_horizon_ms: f32,
+    pub vt_upload_budget_bytes: u64,
     /// P7: Debug mode for projection probes (0=normal, 40=view-depth, 41=NDC depth, 42=view-pos XYZ)
     pub debug_mode: u32,
     /// M1: Accumulation AA sample count (1 = no AA, 16/64/256 typical for offline)

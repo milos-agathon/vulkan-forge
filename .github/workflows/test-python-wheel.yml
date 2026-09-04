@@ -1,0 +1,108 @@
+name: Test one platform wheel
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact commit SHA under test.
+        required: true
+        type: string
+      runner:
+        description: GitHub runner image.
+        required: true
+        type: string
+      python_versions:
+        description: JSON array of Python versions.
+        required: true
+        type: string
+      wheel_artifact:
+        description: Exact wheel artifact produced in this workflow run.
+        required: true
+        type: string
+      test_mode:
+        description: full or compatibility.
+        required: true
+        type: string
+      restore_lfs:
+        description: Restore the shared TIFF fixture bundle.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ inputs.test_mode }} (${{ inputs.runner }}, ${{ matrix.python-version }})
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(inputs.python_versions) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Prove exact-head checkout
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ inputs.ref }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Download shared LFS fixture artifact
+        if: inputs.restore_lfs
+        uses: actions/download-artifact@v4
+        with:
+          name: lfs-fixture-bundles
+          path: lfs-fixture-bundles
+
+      - name: Restore Python TIFF fixtures
+        if: inputs.restore_lfs
+        run: python -m zipfile -e lfs-fixture-bundles/python-tiffs.zip .
+
+      - name: Download exact platform wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.wheel_artifact }}
+          path: dist/
+
+      - name: Install wheel and compatibility dependencies
+        if: inputs.test_mode == 'compatibility'
+        run: |
+          python scripts/install_compatible_wheel.py dist
+          python -m pip install pytest numpy
+
+      - name: Install wheel and full-suite dependencies
+        if: inputs.test_mode == 'full'
+        run: |
+          python scripts/install_compatible_wheel.py dist
+          python -m pip install pytest pyyaml numpy pillow mypy pyproj rasterio
+
+      - name: Install system fonts
+        if: inputs.test_mode == 'full' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
+
+      - name: Run compatibility smoke
+        if: inputs.test_mode == 'compatibility'
+        env:
+          FORGE3D_NO_BOOTSTRAP: '1'
+        run: >-
+          python -m pytest
+          tests/test_install_smoke.py
+          tests/test_license.py
+          tests/test_api_contracts.py
+          -v --tb=short
+
+      - name: Run full default Python lane
+        if: inputs.test_mode == 'full'
+        env:
+          FORGE3D_NO_BOOTSTRAP: '1'
+        run: |
+          python scripts/ci_pytest_lane.py --profile full -v --tb=short

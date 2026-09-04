@@ -46,11 +46,12 @@ regeneration rather than silently drifting.
 
 Committed certificates are signed by the repository production key. Only its
 public key is tracked in `signing.pub`; the random 32-byte seed is stored as the
-GitHub Actions secret `FORGE3D_CERT_SIGNING_KEY`. The protected internal/release
-golden lane fails when the secret is absent, when a certificate uses the local
-development key, when its public key differs from `signing.pub`, or when
-verification fails. Fork PRs receive no secret and are explicitly reported as
-an untrusted external certificate lane.
+GitHub Actions secret `FORGE3D_CERT_SIGNING_KEY`. A protected, explicitly
+dispatched acceptance/release signing lane fails when the secret is absent,
+when a certificate uses the local development key, when its public key differs
+from `signing.pub`, or when verification fails. Routine internal and fork pull
+requests receive no production secret; they verify structure, canonicalization,
+the pinned public key, and tamper rejection as explicitly untrusted work.
 
 Offline verification needs no secret or native extension:
 

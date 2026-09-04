@@ -31,12 +31,19 @@ pub struct CsmRenderer {
     pub shadow_map_views: Vec<TextureView>,
     pub shadow_sampler: Sampler,
     pub evsm_maps: Option<TrackedTexture>,
+    moment_fallback: TrackedTexture,
     pub bind_group: Option<BindGroup>,
 }
 
 impl CsmRenderer {
     /// Create a new CSM renderer
     pub fn new(device: &Device, config: CsmConfig) -> RenderResult<Self> {
+        super::validate_shadow_device_limits(device, config.shadow_map_size, config.cascade_count)?;
+        super::validate_shadow_allocation_budget(
+            config.shadow_map_size,
+            config.cascade_count,
+            config.enable_evsm,
+        )?;
         let uniform_buffer = tracked_create_buffer(
             device,
             &BufferDescriptor {
@@ -51,6 +58,7 @@ impl CsmRenderer {
         let shadow_map_views = create_shadow_map_views(&shadow_maps, &config);
         let shadow_sampler = create_shadow_sampler(device);
         let evsm_maps = create_evsm_maps(device, &config)?;
+        let moment_fallback = create_moment_fallback(device)?;
 
         Ok(Self {
             allocation_size: config.shadow_map_size,
@@ -62,6 +70,7 @@ impl CsmRenderer {
             shadow_map_views,
             shadow_sampler,
             evsm_maps,
+            moment_fallback,
             bind_group: None,
         })
     }
@@ -121,8 +130,12 @@ impl CsmRenderer {
         self.uniforms.slope_bias = self.config.slope_bias;
         self.uniforms.shadow_map_size = self.config.shadow_map_size as f32;
         self.uniforms.debug_mode = self.config.debug_mode;
-        self.uniforms.evsm_positive_exp = self.config.evsm_positive_exp;
-        self.uniforms.evsm_negative_exp = self.config.evsm_negative_exp;
+        // Must match the clamp applied by MomentGenerationPass::execute, or the
+        // sampler would warp by a different constant than the stored moments.
+        self.uniforms.evsm_positive_exp =
+            crate::shadows::clamp_evsm_exponent(self.config.evsm_positive_exp);
+        self.uniforms.evsm_negative_exp =
+            crate::shadows::clamp_evsm_exponent(self.config.evsm_negative_exp);
         self.uniforms.peter_panning_offset = self.config.peter_panning_offset;
         self.uniforms.cascade_blend_range = self.config.cascade_blend_range;
     }
@@ -207,7 +220,7 @@ impl CsmRenderer {
             base_mip_level: 0,
             mip_level_count: Some(1),
             base_array_layer: 0,
-            array_layer_count: Some(self.config.cascade_count),
+            array_layer_count: Some(self.allocation_layers),
         })
     }
 
@@ -222,38 +235,48 @@ impl CsmRenderer {
                 base_mip_level: 0,
                 mip_level_count: Some(1),
                 base_array_layer: 0,
-                array_layer_count: Some(self.config.cascade_count),
+                array_layer_count: Some(self.allocation_layers),
+            })
+        })
+    }
+
+    /// View used to satisfy the fixed PBR moment binding for non-moment techniques.
+    ///
+    /// VSM/EVSM/MSM receive the real atlas; PCF/PCSS receive a one-texel array
+    /// that is never sampled by their shader branches.
+    pub fn moment_binding_view(&self) -> TextureView {
+        self.moment_texture_view().unwrap_or_else(|| {
+            self.moment_fallback.create_view(&TextureViewDescriptor {
+                label: Some("csm_moment_fallback_view"),
+                format: Some(TextureFormat::Rgba16Float),
+                dimension: Some(TextureViewDimension::D2Array),
+                aspect: wgpu::TextureAspect::All,
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                base_array_layer: 0,
+                array_layer_count: Some(self.moment_fallback.depth_or_array_layers()),
             })
         })
     }
 
     /// Calculate total GPU memory used by the shadow resources
     pub fn total_memory_bytes(&self) -> u64 {
-        let depth_bytes = (self.config.shadow_map_size as u64)
-            * (self.config.shadow_map_size as u64)
-            * (self.config.cascade_count as u64)
-            * 4;
-
-        let moment_bytes = if self.evsm_maps.is_some() {
-            (self.config.shadow_map_size as u64)
-                * (self.config.shadow_map_size as u64)
-                * (self.config.cascade_count as u64)
-                * 8 // Rgba16Float = 8 bytes per pixel
-        } else {
-            0
-        };
-
-        depth_bytes + moment_bytes
+        super::shadow_allocation_bytes(
+            self.allocation_size,
+            self.allocation_layers,
+            self.evsm_maps.is_some(),
+        )
+        .expect("CsmRenderer stores validated allocation dimensions")
     }
 
     /// Helper to expose current shadow map resolution
     pub fn shadow_map_resolution(&self) -> u32 {
-        self.config.shadow_map_size
+        self.allocation_size
     }
 
     /// Get WGSL shader source for CSM
     pub fn shader_source() -> &'static str {
-        include_str!("../shaders/shadows.wgsl")
+        super::CSM_SHADER_SOURCE
     }
 
     /// Enable/disable debug visualization
@@ -386,12 +409,74 @@ fn create_evsm_maps(device: &Device, config: &CsmConfig) -> RenderResult<Option<
                 format: TextureFormat::Rgba16Float,
                 usage: TextureUsages::RENDER_ATTACHMENT
                     | TextureUsages::TEXTURE_BINDING
-                    | TextureUsages::STORAGE_BINDING,
+                    | TextureUsages::STORAGE_BINDING
+                    | TextureUsages::COPY_SRC,
                 view_formats: &[],
             },
         )?;
         Ok(Some(texture))
     } else {
         Ok(None)
+    }
+}
+
+fn create_moment_fallback(device: &Device) -> RenderResult<TrackedTexture> {
+    tracked_create_texture(
+        device,
+        &TextureDescriptor {
+            label: Some("csm_moment_fallback"),
+            size: Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: super::MAX_SHADOW_CASCADES,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba16Float,
+            usage: TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+    )
+}
+
+#[cfg(test)]
+mod allocation_tests {
+    use super::*;
+
+    #[test]
+    fn physical_moment_atlas_lifecycle_preserves_requested_sizes_and_full_accounting() {
+        let Some(device) = crate::core::gpu::create_device_for_test() else {
+            crate::shader_sources::assert_valid_wgsl_without_gpu(
+                "physical moment atlas lifecycle",
+                CsmRenderer::shader_source(),
+            );
+            return;
+        };
+        let config_for = |resolution| {
+            let mut config = CsmConfig::default();
+            config.shadow_map_size = resolution;
+            config.cascade_count = 1;
+            config.enable_evsm = true;
+            config
+        };
+        let mut renderer = CsmRenderer::new(&device, config_for(512)).expect("CSM renderer");
+
+        for resolution in [512, 1024, 2048] {
+            if renderer.shadow_map_resolution() != resolution {
+                renderer = CsmRenderer::new(&device, config_for(resolution)).expect("CSM renderer");
+            }
+
+            assert_eq!(renderer.shadow_map_resolution(), resolution);
+            assert_eq!(renderer.shadow_maps.width(), resolution);
+            assert_eq!(
+                renderer.evsm_maps.as_ref().expect("moment atlas").width(),
+                resolution
+            );
+            assert_eq!(
+                renderer.total_memory_bytes(),
+                u64::from(resolution) * u64::from(resolution) * 20
+            );
+        }
     }
 }

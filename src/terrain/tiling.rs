@@ -166,9 +166,13 @@ impl TileCache {
         let tile_id = tile_data.tile_id;
         let memory_size = tile_data.host_memory_size;
 
-        // Check memory budget before insertion
+        // Atomically reserve/register before mutating the cache. This keeps
+        // tile-cache host memory in the same aggregate budget domain as
+        // tracked GPU buffers and scoped CPU reservations.
         let tracker = global_tracker();
-        tracker.check_budget(memory_size)?;
+        tracker
+            .track_buffer_allocation_labeled(memory_size, true, "terrain.tile-cache")
+            .map_err(|error| error.to_string())?;
 
         // If tile already exists, remove it first
         if let Some(old_data) = self.data.remove(&tile_id) {
@@ -182,8 +186,7 @@ impl TileCache {
             self.evict_oldest()?;
         }
 
-        // Insert new tile
-        tracker.track_buffer_allocation(memory_size, true);
+        // Insert new tile (the aggregate registration already succeeded).
         self.total_memory_usage += memory_size;
         self.data.insert(tile_id, tile_data);
         self.access_order.push_back(tile_id);

@@ -37,6 +37,29 @@ def _finite_max_error(source: np.ndarray, decoded: np.ndarray) -> float:
     return float(np.max(np.abs(decoded[finite] - source[finite]), initial=0.0))
 
 
+def _require_f3dz_nvidia_vulkan() -> dict:
+    probe = forge3d.device_probe("vulkan")
+    assert isinstance(probe, dict) and probe.get("status") == "ok", probe
+    assert str(probe.get("backend", "")).lower() == "vulkan", probe
+    assert str(probe.get("device_type", "")).lower() == "discretegpu", probe
+    assert probe.get("vendor") == 0x10DE or "nvidia" in str(probe.get("name", "")).lower(), probe
+
+    artifact_dir = os.getenv("FORGE3D_F3DZ_ARTIFACT_DIR")
+    if artifact_dir:
+        artifact_path = Path(artifact_dir) / "adapter-probe.json"
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(
+            json.dumps(
+                {"requested_backend": "vulkan", "probe": probe},
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    return probe
+
+
 def test_committed_real_corpus_manifest_and_hashes() -> None:
     manifest = load_toml(CORPUS / "MANIFEST.toml")
     assert manifest["format"] == "forge3d-f3dz-corpus/1"
@@ -161,6 +184,8 @@ def test_base_quality_render_capture_declares_degradation_and_refined_does_not()
 
 
 def test_gpu_matches_cpu_for_every_corpus_page() -> None:
+    if os.getenv("FORGE3D_REQUIRE_F3DZ_GPU") == "1":
+        _require_f3dz_nvidia_vulkan()
     unavailable: list[str] = []
     for name in TILES:
         _, report = _case(name, 0.1, True)
@@ -192,10 +217,128 @@ def test_physical_gpu_ci_contract_is_zero_skip_and_records_benchmark() -> None:
     workflow = (
         Path(__file__).parents[1] / ".github" / "workflows" / "ci.yml"
     ).read_text(encoding="utf-8")
-    assert "test-f3dz-gpu:" in workflow
-    assert "runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]" in workflow
-    assert "FORGE3D_REQUIRE_F3DZ_GPU: '1'" in workflow
-    assert "python -m pytest tests/test_f3dz_codec.py" in workflow
-    assert "scripts/assert_junit_zero_skips.py" in workflow
-    assert "cargo bench --bench f3dz_bench" in workflow
-    assert "f3dz-physical-gpu-evidence" in workflow
+    job = workflow.split("  test-f3dz-gpu:", 1)[1].split(
+        "\n  test-anamnesis-portability-seed:", 1
+    )[0]
+    assert "needs: [build-wheel-windows, terrain-golden-paths]" in job
+    assert "if: >-" in job
+    assert "github.event_name == 'schedule'" in job
+    assert "inputs.scope == 'full'" in job
+    assert "inputs.scope == 'f3dz'" in job
+    for forbidden in (
+        "github.event_name == 'pull_request'",
+        "github.event_name == 'push'",
+        "run-physical",
+        "needs.terrain-golden-paths.outputs.f3dz",
+    ):
+        assert forbidden not in job
+
+    f3dz_paths = workflow.split("            f3dz:\n", 1)[1].split(
+        "\n            anamnesis:\n", 1
+    )[0]
+    required_paths = (
+        "Cargo.toml",
+        "Cargo.lock",
+        "build.rs",
+        "pyproject.toml",
+        "benches/f3dz_bench.rs",
+        "python/forge3d/codec.py",
+        "python/forge3d/__init__.py",
+        "python/forge3d/_native.py",
+        "python/forge3d/_gpu.py",
+        "src/codec/**",
+        "src/lib.rs",
+        "src/core/mod.rs",
+        "src/core/error.rs",
+        "src/core/certificate.rs",
+        "src/core/degradation.rs",
+        "src/core/gpu.rs",
+        "src/core/capabilities.rs",
+        "src/core/resource_tracker.rs",
+        "src/core/memory_tracker.rs",
+        "src/core/shader_registry.rs",
+        "src/core/shader_contract_runtime.rs",
+        "src/core/provenance.rs",
+        "src/core/memory_tracker/**",
+        "src/py_functions/codec.rs",
+        "src/py_functions/diagnostics.rs",
+        "src/py_functions/mod.rs",
+        "src/py_module/mod.rs",
+        "src/py_module/functions.rs",
+        "src/py_module/functions/codec.rs",
+        "src/py_module/functions/diagnostics.rs",
+        "src/shaders/f3dz_decode.wgsl",
+        "scripts/install_compatible_wheel.py",
+        "scripts/assert_junit_zero_skips.py",
+        "tests/data/codec_corpus/**",
+        "tests/_toml_compat.py",
+        "tests/test_f3dz_codec.py",
+    )
+    for path in required_paths:
+        assert f"              - '{path}'" in f3dz_paths
+    excluded_paths = (
+        "docs/formats/f3dz.md",
+        "tools/f3dz_determinism_report.py",
+        ".cargo/**",
+        "scripts/terrain_ci_probe.py",
+        "src/terrain/cog/cog_reader.rs",
+        "src/terrain/stream/height.rs",
+        "python/forge3d/__init__.pyi",
+    )
+    for path in excluded_paths:
+        assert f"              - '{path}'" not in f3dz_paths
+    for workflow_path in (
+        ".github/workflows/ci.yml",
+        ".github/workflows/build-wheel.yml",
+    ):
+        assert f"              - '{workflow_path}'" in f3dz_paths
+    assert "runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]" in job
+    assert "FORGE3D_REQUIRE_F3DZ_GPU: '1'" in job
+    assert "python scripts/terrain_ci_probe.py" not in job
+    assert "python -m pytest tests/test_f3dz_codec.py" in job
+    assert "scripts/assert_junit_zero_skips.py" in job
+    assert "cargo bench --bench f3dz_bench" in job
+    assert "rustup default stable" in job
+    assert "rust-toolchain.txt" in job
+    assert job.index("rustup default stable") < job.index(
+        "cargo bench --bench f3dz_bench"
+    )
+    benchmark = job.split(
+        "      - name: Record separate source benchmark (nightly/full only)", 1
+    )[1].split("\n      - name: Upload F3DZ physical-GPU evidence", 1)[0]
+    assert "github.event_name == 'schedule'" in benchmark
+    assert "inputs.scope == 'full'" in benchmark
+    assert "source-benchmark-not-installed-wheel-acceptance" in benchmark
+    assert "benchmark-provenance.json" in benchmark
+    assert "f3dz-physical-gpu-evidence" in job
+    assert "Get-PSDrive -PSProvider FileSystem" in job
+    assert "Sort-Object Free -Descending" in job
+    assert (
+        '$scratchScope = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_JOB"'
+        in job
+    )
+    assert "FORGE3D_F3DZ_SCRATCH_DIR" in job
+    assert '"CARGO_TARGET_DIR=$targetDir"' in job
+    assert "name: Clean F3DZ build scratch" in job
+    assert "(Split-Path -Leaf $parentDir) -ne 'forge3d-ci-scratch'" in job
+    assert job.index("name: Upload F3DZ physical-GPU evidence") < job.index(
+        "name: Clean F3DZ build scratch"
+    )
+
+
+def test_f3dz_gpu_probe_writes_adapter_evidence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    probe = {
+        "status": "ok",
+        "backend": "Vulkan",
+        "device_type": "DiscreteGpu",
+        "vendor": 0x10DE,
+        "name": "NVIDIA GeForce RTX 3070",
+    }
+    monkeypatch.setattr(forge3d, "device_probe", lambda backend: probe)
+    monkeypatch.setenv("FORGE3D_F3DZ_ARTIFACT_DIR", str(tmp_path))
+
+    assert _require_f3dz_nvidia_vulkan() == probe
+    assert json.loads((tmp_path / "adapter-probe.json").read_text(encoding="utf-8")) == {
+        "requested_backend": "vulkan",
+        "probe": probe,
+    }

@@ -7,6 +7,7 @@ pub(crate) fn register_py_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::core::session::Session>()?;
     m.add_class::<crate::colormap::colormap1d::Colormap1D>()?;
     m.add_class::<crate::core::overlay_layer::OverlayLayer>()?;
+    m.add_class::<crate::py_types::PyAtmosphereLutHandle>()?;
     m.add_class::<crate::terrain::render_params::TerrainRenderParams>()?;
     m.add_class::<crate::terrain::renderer::TerrainRenderer>()?;
     m.add_class::<crate::render::material_set::MaterialSet>()?;
@@ -46,6 +47,7 @@ pub(crate) fn register_py_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::labels::py_bindings::PyLabelStyle>()?;
     m.add_class::<crate::labels::py_bindings::PyLabelFlags>()?;
     m.add_class::<crate::labels::py_bindings::PyLabelRationale>()?;
+    m.add_class::<crate::labels::py_bindings::PyLabelDepthHostAllocation>()?;
     m.add_class::<crate::smoke::py::PySmokeDomain>()?;
     m.add_class::<crate::smoke::py::PySmokeEmitter>()?;
     m.add_class::<crate::smoke::py::PySmokeStepSettings>()?;

@@ -743,6 +743,13 @@ impl OneShotTiming {
         match manager.get_results_blocking() {
             Ok(results) if !results.is_empty() => {
                 for result in &results {
+                    if !result.timestamp_valid {
+                        crate::core::degradation::record_degradation(
+                            "timing_unavailable",
+                            &result.name,
+                            "timestamp query returned an unwritten or non-monotonic interval",
+                        );
+                    }
                     crate::core::certificate::record_pass(
                         &result.name,
                         result.certificate_gpu_ms(),

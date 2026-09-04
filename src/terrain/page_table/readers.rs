@@ -1,6 +1,6 @@
 use glam::Vec2;
 
-use crate::terrain::tiling::{QuadTreeNode, TileBounds, TileId};
+use crate::terrain::tiling::{TileBounds, TileId};
 
 /// Simple file-backed overlay reader that expands a template like
 /// "/data/tiles/{lod}/{x}/{y}.png" and returns RGBA8 bytes.
@@ -128,33 +128,6 @@ pub trait HeightReader: Send + Sync + 'static {
     ) -> Vec<f32>;
 }
 
-pub struct SyntheticHeightReader;
-
-impl HeightReader for SyntheticHeightReader {
-    fn read(
-        &self,
-        root_bounds: &TileBounds,
-        tile_size: Vec2,
-        tile_id: TileId,
-        width: u32,
-        height: u32,
-    ) -> Vec<f32> {
-        let mut heights = Vec::with_capacity((width * height) as usize);
-        let bounds = QuadTreeNode::calculate_bounds(root_bounds, tile_id, tile_size);
-        for y in 0..height {
-            for x in 0..width {
-                let u = x as f32 / (width - 1) as f32;
-                let v = y as f32 / (height - 1) as f32;
-                let world_x = bounds.min.x + u * bounds.size().x;
-                let world_y = bounds.min.y + v * bounds.size().y;
-                let h = (world_x * 0.1).sin() * 10.0 + (world_y * 0.1).cos() * 10.0;
-                heights.push(h);
-            }
-        }
-        heights
-    }
-}
-
 pub trait OverlayReader: Send + Sync + 'static {
     fn read(
         &self,
@@ -164,33 +137,4 @@ pub trait OverlayReader: Send + Sync + 'static {
         width: u32,
         height: u32,
     ) -> Vec<u8>;
-}
-
-pub struct SyntheticOverlayReader;
-
-impl OverlayReader for SyntheticOverlayReader {
-    fn read(
-        &self,
-        root_bounds: &TileBounds,
-        tile_size: Vec2,
-        tile_id: TileId,
-        width: u32,
-        height: u32,
-    ) -> Vec<u8> {
-        let mut px = Vec::with_capacity((width * height * 4) as usize);
-        let bounds = QuadTreeNode::calculate_bounds(root_bounds, tile_id, tile_size);
-        for y in 0..height {
-            for x in 0..width {
-                let u = x as f32 / (width - 1) as f32;
-                let v = y as f32 / (height - 1) as f32;
-                let wx = bounds.min.x + u * bounds.size().x;
-                let wy = bounds.min.y + v * bounds.size().y;
-                let r = (((wx * 0.01).sin() * 0.5 + 0.5) * 255.0) as u8;
-                let g = (((wy * 0.01).cos() * 0.5 + 0.5) * 255.0) as u8;
-                let b = (((wx * 0.02 + wy * 0.02).sin() * 0.5 + 0.5) * 255.0) as u8;
-                px.extend_from_slice(&[r, g, b, 255]);
-            }
-        }
-        px
-    }
 }

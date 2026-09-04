@@ -315,7 +315,7 @@ There is no cherry-pick step: `11a141c7` was merged to main via PR #106 and is a
 
 **Files and symbols to change:**
 
-- `.github/workflows/ci.yml` — add required `test-m06-viewer-vulkan` on `[self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]`, set `WGPU_BACKEND=vulkan`, check out LFS fixtures, build the release `interactive_viewer`, install `pytest numpy pillow rasterio`, run only the M-06 live file with `-vv -rs --junitxml=m06.xml`, assert the JUnit skipped total is zero with Python stdlib XML parsing, upload image/diff artifacts on failure, and add the job to `ci-success.needs`. Adapter or binary absence must fail inside the fixture, never call `pytest.skip`.
+- `.github/workflows/ci.yml` — add selected `test-m06-full-geospatial-viewer` acceptance on `[self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]`, triggered only by the nightly schedule or an explicit manual `m06`/`full` scope. It never runs on pull-request or push events. Set `WGPU_BACKEND=vulkan`, check out LFS fixtures, build the release `interactive_viewer`, install `pytest numpy pillow rasterio`, run only the M-06 live file with `-vv -rs --junitxml=m06.xml`, assert the JUnit skipped total is zero with Python stdlib XML parsing, upload image/diff artifacts on failure, and add the job to `Full Acceptance Summary.needs`. Adapter or binary absence must fail inside the fixture, never call `pytest.skip`.
 - New `tests/test_m06_full_geospatial_viewer.py` — reuse the existing process/socket/snapshot launcher; create deterministic local and UTM-translated north-up fixtures, south-up/X-mirrored rejection fixtures, normalized-RGB comparison, rebase/orbit checks, and the 1 mm feature check.
 - New `tests/test_m06_viewer_matrix_contract.py` — strip comments, normalize UFCS/whitespace/multiline statements, inventory look-at, perspective, projection/view composition, inverse-VP, and previous-VP operations under `src/viewer`; compare the normalized `(path, operation)` set with an explicit allowlist and require an Anchor/frame-helper assertion at every allowed producer. Any unclassified producer or stale allowlist entry fails.
 - `tests/test_world_coord_f32_gate.py` — refresh against the integrated tree and add component/field/index cast fixtures (`origin.x as f32`, `point[i] as f32`, array/map conversion helpers) plus positive Anchor-chokepoint assertions.
@@ -334,7 +334,7 @@ There is no cherry-pick step: `11a141c7` was merged to main via PR #106 and is a
 
 - The implementation branch is based on the recorded allocation-gated integration SHA; `tests/test_allocation_gate.py` exists and passes.
 - Matrix and f32 inventories are mechanically refreshed, checked in, and demonstrably fail on injected forbidden operations.
-- `test-m06-viewer-vulkan` is required by `ci-success`, uses the real NVIDIA Vulkan runner, and cannot skip green.
+- `test-m06-full-geospatial-viewer` is required only on the nightly schedule or an explicit manual `m06`/`full` dispatch. Pull-request and push events never allocate the physical runner. When selected, it uses the real NVIDIA Vulkan runner and cannot skip green; `PR Core Success` remains the stable hosted pull-request gate.
 - Local fallback/control tests pass; the metric, cast-before-subtract, and unsupported-transform negative controls pass; the live translated-scene test is red for the expected pre-implementation reason.
 
 **Verification/tests:**
@@ -654,7 +654,7 @@ python -c "import xml.etree.ElementTree as E; r=E.parse('m06.xml').getroot(); as
 - `tests/test_m06_full_geospatial_viewer.py` created by M06-FGV-00, reusing the process/socket/snapshot harness at `tests/test_terrain_viewer_pbr.py:39-135` rather than inventing another launcher.
 - Reuse `tests/_ssim.py:12-82` for SSIM and NumPy mean absolute RGB error, but call `ssim(..., data_range=1.0)` for normalized `[0,1]` RGB. The helper's `255.0` default is invalid for this comparison.
 - Generate GeoTIFF fixtures with the shipped native `forge3d.gis.write_raster`; keep `rasterio` installed in the acceptance job to independently read back transform/CRS metadata. Install Pillow for PNG overlay/snapshot I/O. Both remain test dependencies, not new base runtime dependencies.
-- Tag the live test `@pytest.mark.interactive_viewer` as registered at `tests/conftest.py:150`. Required evidence comes from `test-m06-viewer-vulkan` on the self-hosted NVIDIA runner and must be included in `ci-success.needs`; the informational macOS Metal lane remains supplementary.
+- Tag the live test `@pytest.mark.interactive_viewer` as registered at `tests/conftest.py:150`. Required evidence comes from `test-m06-full-geospatial-viewer` on the self-hosted NVIDIA runner and must be included in `Full Acceptance Summary.needs` whenever selected; the informational macOS Metal lane remains supplementary.
 
 **Required live test:**
 
@@ -668,7 +668,7 @@ python -c "import xml.etree.ElementTree as E; r=E.parse('m06.xml').getroot(); as
 
 **Definition of Done:**
 
-- Acceptance runs through a freshly built `interactive_viewer`, IPC, terrain screen/snapshot, vectors, labels, and raster overlay in required `test-m06-viewer-vulkan` CI on the self-hosted NVIDIA/Vulkan runner. Record the run URL, command, adapter, backend, pass count, and **zero skipped tests**; local RTX evidence is a useful preflight but not the merge gate.
+- Acceptance runs through a freshly built `interactive_viewer`, IPC, terrain screen/snapshot, vectors, labels, and raster overlay in required `test-m06-full-geospatial-viewer` CI on the self-hosted NVIDIA/Vulkan runner. Record the run URL, command, adapter, backend, pass count, and **zero skipped tests**; local RTX evidence is a useful preflight but not the merge gate.
 - Local and translated render meet the stated metrics; the two 1 mm features remain distinct.
 - South-up/X-mirrored terrain is rejected transactionally before GPU allocation, and a stationary-target orbit causes no rebase/history churn.
 - A deliberately unanchored test double/negative control fails the millimetre or differential assertion.
@@ -699,7 +699,7 @@ python -c "import xml.etree.ElementTree as E; r=E.parse('m06.xml').getroot(); as
 - `docs/carto-engine/mensura-m06-world-coord-anchoring.md` — author this note fresh on the integration branch (it exists only on the historical `mensura` branch): final shared-anchor data flow, coordinate basis, and normalized exceptions, with no Option-1 residual contract.
 - Viewer API docs around `python/forge3d/viewer.py:914-1011,1082-1111` and low-level vector/label docs.
 - Picking API docs/stubs for `RichPickResult.world_pos` — state that the returned tuple is f64 absolute viewer-world `(X, display Y, Z)`, never anchor-relative render space.
-- Live-acceptance docs/CI comments — state that P0 evidence is the required `test-m06-viewer-vulkan` run with zero skips; do not cite the informational macOS lane as a merge gate.
+- Live-acceptance docs/CI comments — state that P0 evidence is the required `test-m06-full-geospatial-viewer` run with zero skips; do not cite the informational macOS lane as a merge gate.
 - Record the M06-FGV-00 integration SHA and refreshed inventory results. Historical `mensura@5e625c0a` citations are not closure evidence.
 
 **Definition of Done:**
@@ -746,7 +746,7 @@ python -c "import xml.etree.ElementTree as E; r=E.parse('m06.xml').getroot(); as
 | Historical citations drift during integration. | An implementer edits the wrong callsite or certifies an obsolete producer inventory. | M06-FGV-00 starts from pinned `origin/main` (which already contains the MENSURA prerequisite; ancestry is verified, not re-applied), refreshes line anchors, and makes normalized source inventories executable contracts before production edits. Discovery citations taken from the historical `mensura` branch (Option-1 code, anchoring doc) describe artifacts that do not exist on the baseline and must not be "restored". |
 | Local render parity is assumed rather than measured. | Existing users see a camera/orientation/normal regression. | Identity-fallback differential plus existing simple/PBR/shadow goldens are mandatory. |
 | Normalized RGB uses the SSIM helper's `data_range=255.0` default. | Stabilizer constants swamp the signal and make the 0.999 threshold nearly unfalsifiable. | Call `ssim(..., data_range=1.0)` explicitly for `[0,1]` images and retain the MAE gate. |
-| Informational interactive-viewer CI is treated as P0 evidence. | Metal, `continue-on-error`, or a missing-binary skip appears green without exercising the Vulkan contract. | Required `test-m06-viewer-vulkan` builds the binary on the self-hosted NVIDIA runner, fails on absence/skip, and is included in `ci-success.needs`. |
+| Informational interactive-viewer CI is treated as P0 evidence. | Metal, `continue-on-error`, or a missing-binary skip appears green without exercising the Vulkan contract. | Selected `test-m06-full-geospatial-viewer` builds the binary on the self-hosted NVIDIA runner, fails on absence/skip, and is included in `Full Acceptance Summary.needs`. |
 | Test fixture generation assumes undeclared raster packages. | CI fails or skips before rendering. | Write DEMs with native `forge3d.gis.write_raster`, install Pillow and rasterio explicitly in the acceptance job, and keep both out of base runtime dependencies. |
 | Simple-shader height remains tied to raster pixel width. | The same geospatial footprint changes relief when DEM resolution changes. | Use raster width only for legacy local fallback and physical `abs(world_span_xz.x)` as `simple_height_extent` for georeferenced terrain; regression-test both contracts. |
 | A visual 1 mm point test passes because oversized markers overlap. | False precision win. | Pair the visual centroid assertion with a Rust packed-render-position delta assertion and a deliberately unanchored negative control. |
@@ -802,7 +802,7 @@ python -m pytest tests/test_terrain_viewer_pbr.py tests/test_vector_overlay_rend
 python -m pytest tests/test_recipe_goldens.py tests/test_determinism_hash.py -q
 ```
 
-The P0 live command runs in required `test-m06-viewer-vulkan` CI on the self-hosted NVIDIA runner with `WGPU_BACKEND=vulkan`. Build the release viewer first, install Pillow and rasterio explicitly, and reject adapter absence, binary absence, or any skipped M-06 test. The existing informational macOS lane is supplementary only.
+The P0 live command runs in `test-m06-full-geospatial-viewer` CI on the self-hosted NVIDIA runner with `WGPU_BACKEND=vulkan` only when selected by the nightly schedule or an explicit manual `m06`/`full` scope. It never runs on pull-request or push events; `PR Core Success` remains the hosted pull-request gate and does not claim physical evidence. Build the release viewer first, install Pillow and rasterio explicitly, and reject adapter absence, binary absence, or any skipped M-06 test whenever the lane is selected. The existing informational macOS lane is supplementary only.
 
 ### Allocation and budget gates
 
@@ -821,7 +821,7 @@ The implementation must satisfy all of the following:
    - [ ] M06-FGV-00 branch starts directly from pinned `origin/main@a257a452`, proves `11a141c7` is an ancestor (no cherry-pick), records the resulting SHA/status, and never uses `mensura@5e625c0a` as the implementation base or ports its Option-1 commits.
    - [ ] Re-read `ci.yml`, `.cargo/config.toml`, `pyproject.toml`, budget policy, and allocation gate on that integration SHA; `tests/test_allocation_gate.py` passes.
    - [ ] Mechanical world-field and matrix inventories match explicit checked-in allowlists; injected forbidden operations fail both gates.
-   - [ ] Required `test-m06-viewer-vulkan` is in `ci-success.needs`, fails on adapter/binary absence or skips, and uploads failure artifacts.
+   - [ ] Selected `test-m06-full-geospatial-viewer` is in `Full Acceptance Summary.needs`, fails on adapter/binary absence or skips, and uploads failure artifacts.
    - [ ] Acceptance environment installs NumPy, Pillow, and rasterio; native `forge3d.gis.write_raster` creates the fixtures and rasterio independently verifies metadata.
    - [ ] Metric warp and cast-before-subtract negative controls fail as designed; unsupported signed transforms reject before allocation; the pre-implementation translated live case is recorded red.
 2. **Land bottom-up with compile checkpoints**
@@ -842,7 +842,7 @@ The implementation must satisfy all of the following:
    - [ ] World-coordinate gate reports exactly one sanctioned narrowing implementation, positively requires Anchor conversion for DVec/f64 operands, and explicit viewer storage contracts pass.
    - [ ] Matrix gate rejects look-at/perspective/projection-view producer operations outside its explicit file/callsite allowlist; every allowlisted and no-matrix inventory row has a positive assertion.
 4. **Live measurable acceptance**
-   - [ ] Fresh release `interactive_viewer` binary built in required self-hosted NVIDIA/Vulkan CI; M-06 run reports zero skipped tests and `ci-success` requires it. Informational macOS CI status is not substituted.
+   - [ ] Fresh release `interactive_viewer` binary built in selected self-hosted NVIDIA/Vulkan CI; M-06 run reports zero skipped tests and `Full Acceptance Summary` requires it whenever selected. Informational macOS CI status is not substituted.
    - [ ] Local vs UTM-translated render: `ssim(..., data_range=1.0) >= 0.999`, normalized mean absolute RGB error <= 0.5/255; adapter/backend recorded.
    - [ ] South-up and X-mirrored fixtures return the typed unsupported-transform diagnostic with unchanged resource-ledger counts.
    - [ ] Pre/post target-driven 1 km rebase render meets the same thresholds with stable pick ID, absolute f64 pick world position, and label screen position.

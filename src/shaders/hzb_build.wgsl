@@ -1,8 +1,8 @@
 // HZB (Hierarchical Z-Buffer) build shader
-// Generates a min-depth mipmap pyramid for accelerated occlusion queries (P5)
+// Generates a configurable depth pyramid for accelerated occlusion queries (P5)
 
 // ============================================================================
-// Copy pass: Depth texture -> R32Float mip 0
+// Generic copy pass: Depth texture -> R32Float mip 0.
 // ============================================================================
 
 @group(0) @binding(0) var depth_in: texture_depth_2d;
@@ -14,9 +14,34 @@ fn cs_copy(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= dims.x || gid.y >= dims.y) {
         return;
     }
-    
-    let depth = textureLoad(depth_in, vec2<u32>(gid.xy), 0);
+
+    let depth = textureLoad(depth_in, gid.xy, 0);
     textureStore(hzb_out, gid.xy, vec4<f32>(depth, 0.0, 0.0, 0.0));
+}
+
+// Terrain allocates a half-sized pyramid. Fuse the copy with the first
+// conservative MAX reduction and never materialize a full-resolution R32Float
+// mip. Proportional bounds preserve odd edges.
+@compute @workgroup_size(8, 8, 1)
+fn cs_copy_max_reduce(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let dst_dims = textureDimensions(hzb_out);
+    if (gid.x >= dst_dims.x || gid.y >= dst_dims.y) {
+        return;
+    }
+
+    let src_dims = textureDimensions(depth_in);
+    let src_lo = gid.xy * src_dims / dst_dims;
+    let src_hi = min(
+        ((gid.xy + 1u) * src_dims + dst_dims - 1u) / dst_dims,
+        src_dims,
+    );
+    var reduced = 0.0;
+    for (var y = src_lo.y; y < src_hi.y; y++) {
+        for (var x = src_lo.x; x < src_hi.x; x++) {
+            reduced = max(reduced, textureLoad(depth_in, vec2<u32>(x, y), 0));
+        }
+    }
+    textureStore(hzb_out, gid.xy, vec4<f32>(reduced, 0.0, 0.0, 0.0));
 }
 
 // ============================================================================
@@ -31,19 +56,6 @@ struct DownsampleParams {
 @group(0) @binding(1) var hzb_dst: texture_storage_2d<r32float, write>;
 @group(0) @binding(2) var<uniform> params: DownsampleParams;
 
-// Min-depth reduction (conservative occlusion test)
-// For reversed-Z (far=0.0, near=1.0), we want max depth
-// For standard-Z (near=0.0, far=1.0), we want min depth
-fn reduce_depth(d0: f32, d1: f32, d2: f32, d3: f32, reversed: bool) -> f32 {
-    if (reversed) {
-        // Reversed-Z: further objects have smaller depth, so use max for conservative test
-        return max(max(d0, d1), max(d2, d3));
-    } else {
-        // Standard-Z: further objects have larger depth, so use min for conservative test
-        return min(min(d0, d1), min(d2, d3));
-    }
-}
-
 @compute @workgroup_size(8, 8, 1)
 fn cs_downsample(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dst_dims = textureDimensions(hzb_dst);
@@ -51,17 +63,22 @@ fn cs_downsample(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     
-    let src_xy = gid.xy * 2u;
     let src_dims = textureDimensions(hzb_src);
-    
-    // Sample 2x2 quad from source mip
-    let d0 = textureLoad(hzb_src, src_xy + vec2<u32>(0u, 0u), 0).r;
-    let d1 = textureLoad(hzb_src, min(src_xy + vec2<u32>(1u, 0u), src_dims - 1u), 0).r;
-    let d2 = textureLoad(hzb_src, min(src_xy + vec2<u32>(0u, 1u), src_dims - 1u), 0).r;
-    let d3 = textureLoad(hzb_src, min(src_xy + vec2<u32>(1u, 1u), src_dims - 1u), 0).r;
-    
     let reversed = params.reversed_z != 0u;
-    let min_depth = reduce_depth(d0, d1, d2, d3, reversed);
-    
-    textureStore(hzb_dst, gid.xy, vec4<f32>(min_depth, 0.0, 0.0, 0.0));
+    // Proportional source bounds include the trailing row/column when an odd
+    // source dimension is halved (for example, 5 -> 2).
+    let src_lo = gid.xy * src_dims / dst_dims;
+    let src_hi = min(
+        ((gid.xy + 1u) * src_dims + dst_dims - 1u) / dst_dims,
+        src_dims,
+    );
+    var reduced = select(1.0, 0.0, reversed);
+    for (var y = src_lo.y; y < src_hi.y; y++) {
+        for (var x = src_lo.x; x < src_hi.x; x++) {
+            let depth = textureLoad(hzb_src, vec2<u32>(x, y), 0).r;
+            reduced = select(min(reduced, depth), max(reduced, depth), reversed);
+        }
+    }
+
+    textureStore(hzb_dst, gid.xy, vec4<f32>(reduced, 0.0, 0.0, 0.0));
 }

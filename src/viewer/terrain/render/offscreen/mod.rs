@@ -29,6 +29,7 @@ impl ViewerTerrainScene {
         selected_feature_id: u32,
         frame: crate::viewer::viewer_types::FrameCamera,
     ) -> Option<crate::core::resource_tracker::TrackedTexture> {
+        self.snapshot_depth_texture = None;
         eprintln!("[DEBUG render_to_texture ENTRY] {}x{}", width, height);
         if self.terrain.is_none() {
             eprintln!("[DEBUG render_to_texture] No terrain, returning None");
@@ -48,7 +49,7 @@ impl ViewerTerrainScene {
                 return None;
             }
         };
-        let (_depth_tex, depth_view) = match self.create_snapshot_depth_target(width, height) {
+        let (depth_tex, depth_view) = match self.create_snapshot_depth_target(width, height) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("[terrain] failed to allocate snapshot depth target: {e}");
@@ -77,7 +78,7 @@ impl ViewerTerrainScene {
             has_vector_overlays,
         );
 
-        Some(self.apply_snapshot_effects(
+        let output = self.apply_snapshot_effects(
             encoder,
             target_format,
             width,
@@ -86,6 +87,8 @@ impl ViewerTerrainScene {
             color_tex,
             color_view,
             &state,
-        ))
+        );
+        self.snapshot_depth_texture = Some(depth_tex);
+        Some(output)
     }
 }

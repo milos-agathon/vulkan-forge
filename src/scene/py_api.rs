@@ -1,5 +1,6 @@
 use super::*;
 
+mod atmosphere;
 mod base;
 mod bloom;
 mod cloud_shadows;

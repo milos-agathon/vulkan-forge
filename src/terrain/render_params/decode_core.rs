@@ -27,6 +27,11 @@ pub(super) struct CoreTerrainParams {
     pub colormap_srgb: bool,
     pub output_srgb_eotf: bool,
     pub camera_mode: String,
+    pub culling: String,
+    pub shading: String,
+    pub vt_store_path: Option<String>,
+    pub prefetch_horizon_ms: f32,
+    pub vt_upload_budget_bytes: u64,
     pub debug_mode: u32,
     pub aa_samples: u32,
     pub aa_seed: Option<u64>,
@@ -174,6 +179,54 @@ pub(super) fn parse_core_params(params: &Bound<'_, PyAny>) -> PyResult<CoreTerra
         .ok()
         .and_then(|v| v.extract::<String>().ok())
         .unwrap_or_else(|| "screen".to_string());
+    let culling = params
+        .getattr("culling")
+        .ok()
+        .and_then(|v| v.extract::<String>().ok())
+        .unwrap_or_else(|| "frustum".to_string());
+    if !matches!(culling.as_str(), "none" | "frustum" | "hzb_two_phase") {
+        return Err(PyValueError::new_err(
+            "culling must be one of 'none', 'frustum', or 'hzb_two_phase'",
+        ));
+    }
+    let shading = params
+        .getattr("shading")
+        .ok()
+        .and_then(|value| value.extract::<String>().ok())
+        .unwrap_or_else(|| "forward".to_string());
+    if !matches!(shading.as_str(), "forward" | "visibility") {
+        return Err(PyValueError::new_err(
+            "shading must be one of 'forward' or 'visibility'",
+        ));
+    }
+    let vt_store_path = match params.getattr("vt_store").ok() {
+        None => None,
+        Some(value) if value.is_none() => None,
+        Some(value) => value
+            .extract::<String>()
+            .ok()
+            .or_else(|| value.getattr("path").ok()?.extract::<String>().ok()),
+    };
+    let prefetch_horizon_ms = params
+        .getattr("prefetch_horizon_ms")
+        .ok()
+        .and_then(|value| value.extract::<f32>().ok())
+        .unwrap_or(100.0);
+    if !prefetch_horizon_ms.is_finite() || prefetch_horizon_ms < 0.0 {
+        return Err(PyValueError::new_err(
+            "prefetch_horizon_ms must be finite and >= 0",
+        ));
+    }
+    let vt_upload_budget_bytes = params
+        .getattr("vt_upload_budget_bytes")
+        .ok()
+        .and_then(|value| value.extract::<u64>().ok())
+        .unwrap_or(16 * 1024 * 1024);
+    if vt_upload_budget_bytes == 0 {
+        return Err(PyValueError::new_err(
+            "vt_upload_budget_bytes must be greater than zero",
+        ));
+    }
     let debug_mode = params
         .getattr("debug_mode")
         .ok()
@@ -249,6 +302,11 @@ pub(super) fn parse_core_params(params: &Bound<'_, PyAny>) -> PyResult<CoreTerra
         colormap_srgb,
         output_srgb_eotf,
         camera_mode,
+        culling,
+        shading,
+        vt_store_path,
+        prefetch_horizon_ms,
+        vt_upload_budget_bytes,
         debug_mode,
         aa_samples,
         aa_seed,

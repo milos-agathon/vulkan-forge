@@ -48,6 +48,18 @@ class TestClipmapConfig:
         config = ClipmapConfig(morph_range=-0.5)
         assert config.morph_range == 0.0
 
+    def test_config_rejects_zero_or_nonfinite_topology_inputs(self):
+        """Invalid public inputs raise ValueError instead of panicking in Rust."""
+        import pytest
+        from forge3d import ClipmapConfig
+
+        with pytest.raises(ValueError, match="must be positive"):
+            ClipmapConfig(ring_resolution=0)
+        with pytest.raises(ValueError, match="must be positive"):
+            ClipmapConfig(center_resolution=0)
+        with pytest.raises(ValueError, match="must be finite"):
+            ClipmapConfig(morph_range=float("nan"))
+
     def test_config_repr(self):
         """Config has readable repr."""
         from forge3d import ClipmapConfig
@@ -71,6 +83,17 @@ class TestClipmapMeshGeneration:
         assert mesh.vertex_count > 0
         assert mesh.index_count > 0
         assert mesh.index_count % 3 == 0  # All triangles
+
+    def test_generate_rejects_nonfinite_or_empty_world_extent(self):
+        """Mesh generation validates world geometry before entering Rust math."""
+        import pytest
+        from forge3d import ClipmapConfig, clipmap_generate_py
+
+        config = ClipmapConfig()
+        with pytest.raises(ValueError, match="center must be finite"):
+            clipmap_generate_py(config, (float("nan"), 0.0), 1000.0)
+        with pytest.raises(ValueError, match="terrain_extent"):
+            clipmap_generate_py(config, (0.0, 0.0), 0.0)
 
     def test_generate_at_different_centers(self):
         """Clipmap can be generated at different center positions."""

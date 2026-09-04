@@ -59,6 +59,7 @@ pub enum ViewerCmd {
     CaptureP53SsrThickness, CaptureP54GiStack, QueryGiSeed, GiStatus,
 
     SetSunDirection { azimuth_deg: f32, elevation_deg: f32 },
+    SetObservation { year: i32, month: u8, day: u8, hour: u8, minute: u8, second: f64, latitude_deg: f64, longitude_deg: f64, height_m: f64 },
     SetIbl { path: String, intensity: f32 },
     SetZScale(f32),
     SnapshotWithSize { path: String, width: Option<u32>, height: Option<u32> },
@@ -71,7 +72,7 @@ pub enum ViewerCmd {
         fov_deg: f32,
         target: Option<[f64; 3]>,
     },
-    SetTerrainSun { azimuth_deg: f32, elevation_deg: f32, intensity: f32 },
+    SetTerrainSun { azimuth_deg: f32, elevation_deg: f32, intensity: f32, source: Option<String> },
     SetTerrain {
         phi: Option<f32>, theta: Option<f32>, radius: Option<f32>, fov: Option<f32>,
         sun_azimuth: Option<f32>, sun_elevation: Option<f32>, sun_intensity: Option<f32>,

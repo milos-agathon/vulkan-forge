@@ -14,6 +14,7 @@
 
 use super::terrain_heightfield::{AlbedoSampling, TerrainPtScene};
 use super::*;
+use crate::core::atmosphere::AETHER_RADIOMETRIC_SCALE_MAX;
 use crate::core::memory_tracker::global_tracker;
 use crate::path_tracing::lighting::{GpuAreaLight, GpuDirectionalLight};
 use crate::path_tracing::restir::{
@@ -33,6 +34,7 @@ fn record_runtime_contract(
     hybrid: &HybridUniforms,
     lighting: &LightingUniforms,
     terrain: &super::terrain_heightfield::TerrainPtUniforms,
+    earth_curvature: &super::terrain_heightfield::EarthCurvatureUniforms,
     frames: u32,
     reservoirs: &[Reservoir],
     accum: &[f32],
@@ -127,6 +129,24 @@ fn record_runtime_contract(
             &terrain.extra.map(|value| value as f32),
             0.0,
             32.0,
+        );
+        check(
+            "earth_curvature.inv_two_r_prime",
+            &[earth_curvature.inv_two_r_prime],
+            0.0,
+            1e-6,
+        );
+        check(
+            "earth_curvature.ray_origin_geodetic",
+            &earth_curvature.ray_origin_geodetic,
+            -180.0,
+            180.0,
+        );
+        check(
+            "earth_curvature.enabled",
+            &[earth_curvature.enabled as f32],
+            0.0,
+            1.0,
         );
         check("terrain_height_tex.samples", &desc.heights, 0.0, 0.0);
         check("accum_hdr.samples", accum, 0.0, 131_026.0);
@@ -249,10 +269,17 @@ pub struct TerrainReferenceDesc {
     pub sun_elevation_deg: f32,
     pub sun_intensity: f32,
     pub sun_color: [f32; 3],
+    pub observer_geodetic_deg: [f64; 2],
+    pub earth_model: crate::geo::refraction::EarthModel,
+    pub refraction_model: crate::geo::refraction::RefractionModel,
     /// Optional equirect environment map (RGB f32 rows) + dims; None uses the
     /// constant-white fallback scaled by `env_intensity`.
     pub env_map: Option<(Vec<f32>, u32, u32)>,
     pub env_intensity: f32,
+    /// Optional AETHER transport applied as a standalone post over the
+    /// authoritative PROMETHEUS accumulation and exact depth AOV. `None`
+    /// preserves the original traversal and output byte-for-byte.
+    pub atmosphere: Option<crate::core::atmosphere::AtmosphereLutHandle>,
     /// Optional mesh mixed into the scene: flat [x,y,z] vertices + triangle
     /// indices, traversed alongside the heightfield (TraversalMode::Hybrid).
     pub mesh: Option<(Vec<f32>, Vec<u32>)>,
@@ -640,11 +667,17 @@ impl HybridPathTracer {
         let queue = &try_ctx()?.queue;
         let (width, height) = (desc.width, desc.height);
         validate_desc(desc)?;
+        let exposure = desc.exposure.clamp(0.0, AETHER_RADIOMETRIC_SCALE_MAX);
+        let sun_intensity = desc.sun_intensity.clamp(0.0, AETHER_RADIOMETRIC_SCALE_MAX);
+        let sun_color = desc
+            .sun_color
+            .map(|value| value.clamp(0.0, AETHER_RADIOMETRIC_SCALE_MAX));
+        let env_intensity = desc.env_intensity.clamp(0.0, AETHER_RADIOMETRIC_SCALE_MAX);
         let mut tracked = TrackedGpu::new();
 
         // --- Terrain scene: min-max pyramid + env map (validates the DEM,
         // registers itself with the memory tracker, frees on drop) ---
-        let terrain_scene = TerrainPtScene::new(
+        let terrain_scene = TerrainPtScene::new_with_albedo(
             device,
             queue,
             &desc.heights,
@@ -658,7 +691,7 @@ impl HybridPathTracer {
             desc.env_map
                 .as_ref()
                 .map(|(data, w, h)| (data.as_slice(), *w, *h)),
-            desc.env_intensity,
+            env_intensity,
         )?;
 
         // --- Optional mesh mixed through the shared HybridScene seam ---
@@ -709,7 +742,7 @@ impl HybridPathTracer {
         // Direction from surface TOWARD the sun (kernel convention).
         let light_dir = [az.cos() * el.cos(), el.sin(), az.sin() * el.cos()];
         let (light_color, restir_sun_intensity, restir_sun_color) =
-            factor_sun_lighting(desc.sun_intensity, desc.sun_color);
+            factor_sun_lighting(sun_intensity, sun_color);
 
         let mut base = Uniforms {
             width,
@@ -721,7 +754,7 @@ impl HybridPathTracer {
             cam_right: right.into(),
             cam_aspect: desc.full_width as f32 / desc.full_height as f32,
             cam_up: up.into(),
-            cam_exposure: desc.exposure,
+            cam_exposure: exposure,
             cam_forward: forward.into(),
             seed_hi: desc.seed,
             seed_lo: desc.seed ^ 0x85EB_CA6B,
@@ -776,7 +809,7 @@ impl HybridPathTracer {
             shadows_enabled: 1,
             ambient_color: [0.0, 0.0, 0.0],
             shadow_intensity: 1.0,
-            hdri_intensity: desc.env_intensity,
+            hdri_intensity: env_intensity,
             hdri_rotation: 0.0,
             specular_power: 32.0,
             _pad: [0; 5],
@@ -800,6 +833,21 @@ impl HybridPathTracer {
             },
         )?;
         tracked.buffer(&terrain_ubo);
+        let earth_curvature = super::terrain_heightfield::EarthCurvatureUniforms::new(
+            desc.earth_model,
+            desc.refraction_model,
+            desc.observer_geodetic_deg,
+            f64::from(desc.sun_azimuth_deg),
+        )?;
+        let earth_curvature_ubo = tracked_create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("hybrid-pt-earth-curvature-ubo"),
+                contents: bytemuck::bytes_of(&earth_curvature),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        )?;
+        tracked.buffer(&earth_curvature_ubo);
 
         // --- Scene buffers (the spheres slot needs 1 dummy element) ---
         let scene_buf = tracked_create_buffer(
@@ -937,7 +985,7 @@ impl HybridPathTracer {
         // --- Memory-budget gate (hard): everything above is registered with
         // the tracker; refuse to render if the working set exceeds the
         // 512 MiB budget. ---
-        let gpu_resource_bytes = tracked.bytes() + terrain_scene.byte_size();
+        let base_gpu_resource_bytes = tracked.bytes() + terrain_scene.byte_size();
         let metrics = global_tracker().get_metrics();
         if metrics.total_bytes > metrics.limit_bytes
             || metrics.host_visible_bytes > metrics.limit_bytes
@@ -1041,6 +1089,10 @@ impl HybridPathTracer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 10,
+                    resource: earth_curvature_ubo.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
                     resource: wgpu::BindingResource::TextureView(&albedo_view),
                 },
             ],
@@ -1086,6 +1138,10 @@ impl HybridPathTracer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 10,
+                    resource: earth_curvature_ubo.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
                     resource: wgpu::BindingResource::TextureView(&albedo_view),
                 },
             ],
@@ -1308,6 +1364,73 @@ impl HybridPathTracer {
             )));
         }
 
+        // Allocate and upload AETHER's post-only resources after PROMETHEUS
+        // has finished its frame-0 AOV writes and convergence loop. This keeps
+        // the reference traversal's resource/queue schedule unchanged.
+        let aether_post = desc
+            .atmosphere
+            .as_ref()
+            .map(|lut_handle| {
+                super::aether_post::AetherPostPass::new(
+                    device,
+                    queue,
+                    lut_handle,
+                    width,
+                    height,
+                    desc.cam_origin,
+                    right.into(),
+                    up.into(),
+                    forward.into(),
+                    desc.fov_y_deg.to_radians(),
+                    exposure,
+                    light_dir,
+                    sun_intensity,
+                    &accum_buf,
+                    &out_view,
+                )
+            })
+            .transpose()?;
+        let gpu_resource_bytes =
+            base_gpu_resource_bytes + aether_post.as_ref().map_or(0, |post| post.gpu_bytes());
+        let post_metrics = global_tracker().get_metrics();
+        if post_metrics.total_bytes > post_metrics.limit_bytes
+            || post_metrics.host_visible_bytes > post_metrics.limit_bytes
+        {
+            return Err(RenderError::Render(format!(
+                "terrain PT exceeds the memory budget with AETHER post resources: tracked total {} \
+                 (host-visible {}) > limit {}",
+                post_metrics.total_bytes,
+                post_metrics.host_visible_bytes,
+                post_metrics.limit_bytes
+            )));
+        }
+
+        // AETHER consumes the existing linear accumulation and exact frame-0
+        // depth AOV after convergence. The original PROMETHEUS traversal,
+        // bind groups, reservoir reuse, and accumulation layout stay untouched.
+        let mut aether_post_timing = None;
+        if let Some(post) = aether_post.as_ref() {
+            let mut post_timing = crate::core::gpu_timing::OneShotTiming::for_current_device();
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("hybrid-pt-aether-post-encoder"),
+            });
+            let scope = post_timing.begin(&mut encoder, "hybrid_pt.aether_aerial");
+            post.encode(
+                &mut encoder,
+                queue,
+                aov_frames.get_texture(AovKind::Depth).unwrap(),
+                aov_frames.get_texture(AovKind::Visibility).unwrap(),
+                frames,
+            );
+            post_timing.end(&mut encoder, scope, 1);
+            post_timing.resolve(&mut encoder);
+            queue.submit([encoder.finish()]);
+            device.poll(wgpu::Maintain::Wait);
+            // Record only after the already-executed base scopes below so the
+            // certificate preserves queue execution order.
+            aether_post_timing = Some(post_timing);
+        }
+
         // --- ReSTIR reservoir validity: the merged history must be finite
         // and (for a lit scene) actually populated by the reuse chain ---
         let res_stride = std::mem::size_of::<Reservoir>() as u64;
@@ -1331,11 +1454,8 @@ impl HybridPathTracer {
         if reservoir_valid_count == 0 {
             reservoir_m_min = 0;
         }
-        if should_require_valid_sun_reservoirs(
-            desc.sun_elevation_deg,
-            desc.sun_intensity,
-            desc.sun_color,
-        ) && reservoir_valid_count == 0
+        if should_require_valid_sun_reservoirs(desc.sun_elevation_deg, sun_intensity, sun_color)
+            && reservoir_valid_count == 0
         {
             return Err(RenderError::Render(
                 "terrain PT ReSTIR reuse chain produced no valid reservoirs for a sun-lit \
@@ -1356,6 +1476,7 @@ impl HybridPathTracer {
             &hybrid_uniforms,
             &lighting,
             &terrain_uniforms,
+            &earth_curvature,
             frames,
             reservoirs,
             accum,
@@ -1420,6 +1541,11 @@ impl HybridPathTracer {
             crate::core::certificate::record_pass("hybrid_pt.restir_temporal", 0.0, frames);
             crate::core::certificate::record_pass("hybrid_pt.restir_spatial", 0.0, frames);
         }
+        if let Some(post_timing) = aether_post_timing {
+            if !post_timing.record_into_certificate() {
+                crate::core::certificate::record_pass("hybrid_pt.aether_aerial", 0.0, 1);
+            }
+        }
 
         Ok(TerrainReferenceOutput {
             rgba,
@@ -1474,8 +1600,15 @@ mod tests {
             sun_elevation_deg: 45.0,
             sun_intensity: 2.5,
             sun_color: [1.0, 0.97, 0.92],
+            observer_geodetic_deg: [0.0, 0.0],
+            earth_model: crate::geo::refraction::EarthModel::Ellipsoid { latitude_deg: 0.0 },
+            refraction_model: crate::geo::refraction::RefractionModel::Bennett {
+                pressure_mbar: 1013.25,
+                temperature_c: 15.0,
+            },
             env_map: None,
             env_intensity: 0.35,
+            atmosphere: None,
             mesh: None,
             width: 8,
             height: 8,

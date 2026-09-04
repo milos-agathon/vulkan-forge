@@ -1,0 +1,93 @@
+name: Refresh recipe certificates
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Confirm this reviewed exact ref should produce new signed certificates.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certificate-refresh-production
+  cancel-in-progress: false
+
+jobs:
+  build-wheel-windows:
+    name: Build exact-ref Windows wheel
+    # Signing authority is never exposed to candidate-controlled branch code.
+    if: inputs.confirm && github.ref == 'refs/heads/main' && github.ref_protected
+    uses: ./.github/workflows/build-wheel.yml
+    with:
+      ref: ${{ github.sha }}
+      runner: windows-latest
+      target: x86_64-pc-windows-msvc
+      maturin_args: --release --out dist
+      manylinux: 'auto'
+      artifact: certificate-refresh-wheel-windows
+
+  refresh:
+    name: Render and sign on NVIDIA Vulkan
+    needs: build-wheel-windows
+    if: inputs.confirm && github.ref == 'refs/heads/main' && github.ref_protected
+    runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
+    environment: production-signing
+    timeout-minutes: 30
+    env:
+      WGPU_BACKEND: vulkan
+      FORGE3D_ALLOW_HOSTED_WINDOWS_TERRAIN: '1'
+      FORGE3D_CERT_SIGNING_KEY: ${{ secrets.FORGE3D_CERT_SIGNING_KEY }}
+      FORGE3D_REQUIRE_PRODUCTION_SIGNING: '1'
+      FORGE3D_NO_BOOTSTRAP: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Prove exact-head checkout
+        shell: pwsh
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne '${{ github.sha }}') {
+            throw "certificate refresh checkout mismatch: expected=${{ github.sha }} actual=$actual"
+          }
+          $actual | Set-Content "$env:RUNNER_TEMP/certificate-refresh-head.txt"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: certificate-refresh-wheel-windows
+          path: dist/
+
+      - name: Install exact-ref wheel and test dependencies
+        shell: pwsh
+        run: |
+          python scripts/install_compatible_wheel.py dist
+          python -m pip install pytest numpy pyproj pillow
+
+      - name: Require production signing and physical NVIDIA Vulkan
+        shell: pwsh
+        run: |
+          if (-not $env:FORGE3D_CERT_SIGNING_KEY) { throw 'missing production signing key' }
+          python scripts/terrain_ci_probe.py --mode terrain --require-nvidia-vulkan --json "$env:RUNNER_TEMP/certificate-refresh-adapter.json"
+
+      - name: Render and sign the recipe catalog
+        env:
+          FORGE3D_RUN_TERRAIN_GOLDENS: '1'
+          FORGE3D_UPDATE_RECIPE_CERTIFICATES: '1'
+        run: python -m pytest tests/test_recipe_goldens.py::test_recipe_goldens_render_and_match -v --tb=short
+
+      - name: Upload signed certificates and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: refreshed-recipe-certificates
+          path: |
+            tests/golden/certificates/*.json
+            ${{ runner.temp }}/certificate-refresh-head.txt
+            ${{ runner.temp }}/certificate-refresh-adapter.json
+          if-no-files-found: error
+          retention-days: 90

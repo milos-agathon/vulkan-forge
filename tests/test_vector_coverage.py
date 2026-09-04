@@ -26,11 +26,6 @@ _SHEET_PATH = Path(__file__).parent / "data" / "vector_torture" / "cases.json"
 _MEAN_ERROR_GATE = 1.0e-3
 _MAX_ERROR_GATE = 0.5 / 255.0
 _THROUGHPUT_SAMPLES = 5
-# Measured on the RTX 3070 lane across 6 min-of-5 runs: 4.20, 4.45, 4.46, 4.50,
-# 4.50, 4.60. Wall-clock is noisier than the GPU timestamps this replaced, so
-# the budget carries ~20% headroom over the worst sample. See the DEVIATION note
-# on the gate below: this is a regression bound, not requirement 6's 2.0.
-_THROUGHPUT_RATIO_BUDGET = 5.5
 
 
 @lru_cache(maxsize=1)
@@ -41,14 +36,13 @@ def _hardware_adapter_available() -> bool:
     (WARP on windows-latest, lavapipe/llvmpipe on Linux images). Those are not
     a valid substrate for these gates on two independent counts, both measured
     on run 30112398437: `thin_sliver_0_1px` took 17 minutes on hosted Windows
-    against 0.13 s on the macOS Metal lane -- which alone overruns the
+    against 0.13 s on a physical GPU -- which alone overruns the
     35-minute job budget and cancelled the lane mid-suite -- and it also failed
     the committed 64x64 supersampled reference gate there while passing on both
     real adapters. This is the same classification `_terrain_runtime` applies,
-    and the same reason ci.yml moved the visual-golden lane off hosted Windows
-    to macos-14. The gates keep running on every real adapter: the macOS Metal
-    lane and the self-hosted RTX 3070 lane, which is where this file is
-    enumerated in ci.yml.
+    and the same reason ci.yml routes required visual acceptance to the
+    self-hosted RTX 3070. Optional backend diagnostics may exercise other real
+    adapters, but they are not acceptance prerequisites.
     """
 
     if not f3d.has_gpu():
@@ -537,6 +531,11 @@ def test_analytic_output_is_byte_identical_across_two_runs():
         "vector_coverage_raster.wgsl",
         "vector_coverage_resolve.wgsl",
     }
+    assert [entry["label"] for entry in report["passes"]] == [
+        "vector.coverage.bin",
+        "vector.coverage.raster",
+        "vector.coverage.resolve",
+    ]
 
 
 @pytest.mark.skipif(
@@ -544,29 +543,7 @@ def test_analytic_output_is_byte_identical_across_two_runs():
     reason="LIMES throughput gate runs on the designated physical-GPU lane",
 )
 def test_torture_plus_100k_road_segments_frame_time_within_budget():
-    """Frame-time budget for requirement 6 of `31-limes.md`, with a DEVIATION.
-
-    The requirement is "in <= 2x the current default path's FRAME TIME on an
-    RTX-3070-class adapter". Frame time, not GPU time: on this scene the default
-    path spends 0.089 ms on the GPU out of a ~54 ms frame, because ~99.8% of its
-    cost is lyon tessellating 100k round-capped, round-joined polylines on the
-    CPU and never appears on the GPU timeline. Dividing GPU time by that
-    denominator asks the analytic path -- whose entire purpose is moving that
-    work onto the GPU -- to beat a pre-tessellated quad blit, which no
-    implementation of this design can do.
-
-    DEVIATION, recorded deliberately rather than silently: measured on the
-    metric the requirement names, the analytic path is 4.2-4.6x, not <= 2x, and
-    `_THROUGHPUT_RATIO_BUDGET` is set above that rather than at 2.0. The gate
-    therefore locks in current behaviour and catches regressions; it does not
-    assert the requirement is met. Roughly 170 ms of the ~236 ms analytic frame
-    is per-SCENE work -- JSON decode, geometry ingest, baselines, dispatch and
-    component lists -- that a camera move would not change but that this
-    single-call API recomputes every time. Reaching 2x needs that work hoisted
-    into a compile-once step, which is an API change to LIMES, not tuning.
-
-    The GPU numbers stay in the printed line as diagnostics.
-    """
+    """Steady-state full-frame budget for requirement 6 of `31-limes.md`."""
 
     analytic, current_fill, current_line = _throughput_scenes()
     fill_json = json.dumps(current_fill, separators=(",", ":"), allow_nan=False)
@@ -611,8 +588,8 @@ def test_torture_plus_100k_road_segments_frame_time_within_budget():
         f"adapter={analytic_report['adapter']['device']!r} "
         f"segments=100000 samples={_THROUGHPUT_SAMPLES} "
         f"current_frame_ms={current_ms:.3f} analytic_frame_ms={analytic_ms:.3f} "
-        f"ratio={ratio:.6f} budget={_THROUGHPUT_RATIO_BUDGET} "
+        f"ratio={ratio:.6f} budget=2.0 "
         f"(diagnostic current_gpu_ms={current_gpu_ms:.6f} "
         f"analytic_gpu_ms={analytic_gpu_ms:.6f})"
     )
-    assert ratio <= _THROUGHPUT_RATIO_BUDGET
+    assert ratio <= 2.0

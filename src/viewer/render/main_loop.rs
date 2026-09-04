@@ -10,6 +10,7 @@ mod geometry;
 mod postfx;
 mod postfx_cache;
 mod secondary;
+mod snapshot_sky;
 
 use crate::viewer::Viewer;
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -15,6 +16,11 @@ from forge3d.terrain_params import (
     make_terrain_params_config,
 )
 
+from tests._golden_variants import (
+    assert_nvidia_vulkan_golden_adapter,
+    nvidia_vulkan_golden_selected,
+    selected_golden_path,
+)
 from tests._ssim import ssim
 
 
@@ -152,15 +158,18 @@ def _save_png(path: Path, image: np.ndarray) -> None:
 
 
 def _golden_path(scene_name: str) -> Path:
-    """Keep the canonical Vulkan/DX12 baseline and an explicit Metal baseline.
+    """Select an explicitly bound physical backend baseline.
 
-    The dedicated macOS lane is probe-positive real Metal hardware. Its
-    deterministic backend output differs measurably from the canonical
-    baseline, so it has its own committed reference at the same thresholds.
-    There is no fallback between backends: a missing Metal reference fails.
+    The required NVIDIA lane and optional Metal diagnostic use separate
+    references because backend output differs measurably. There is no
+    cross-backend reference fallback.
     """
-    suffix = ".metal" if os.environ.get("WGPU_BACKEND", "").lower() == "metal" else ""
-    return GOLDEN_DIR / f"{scene_name}{suffix}.png"
+    return selected_golden_path(
+        GOLDEN_DIR,
+        scene_name,
+        "FORGE3D_TERRAIN_GOLDEN_VARIANT",
+        implicit_metal=True,
+    )
 
 
 def _write_failure_artifacts(scene_name: str, actual: np.ndarray, expected: np.ndarray) -> None:
@@ -204,10 +213,43 @@ def _assert_matches_golden(scene_name: str, actual: np.ndarray) -> None:
     assert mean_abs <= 2.0, f"{scene_name} mean absolute difference too high: {mean_abs:.4f}"
 
 
+def _assert_sky_scene_is_meaningful(scene_name: str, actual: np.ndarray) -> None:
+    if scene_name not in {"terrain_atmosphere", "terrain_low_sun_sky"}:
+        return
+    rgb = np.asarray(actual[..., :3], dtype=np.float64)
+    if rgb.size and float(rgb.max()) <= 1.5:
+        rgb = rgb * 255.0
+    # Both fixed fixtures reserve the upper eighth for unobstructed sky. Test
+    # that region rather than the whole frame so lit terrain cannot hide a
+    # missing/black atmosphere during an intentional baseline refresh.
+    sky_band = rgb[: max(rgb.shape[0] // 8, 1)]
+    luminance = (
+        0.2126 * sky_band[..., 0]
+        + 0.7152 * sky_band[..., 1]
+        + 0.0722 * sky_band[..., 2]
+    )
+    assert float(luminance.mean()) > 20.0, f"{scene_name} collapsed to a black sky"
+    assert float((luminance > 10.0).mean()) > 0.9, (
+        f"{scene_name} has too little visible sky coverage"
+    )
+    assert float(luminance.std()) > 1.0, f"{scene_name} lost visible sky variation"
+
+
 @pytest.fixture(scope="module")
 def terrain_golden_env():
     session = f3d.Session(window=False)
     renderer = f3d.TerrainRenderer(session)
+    if nvidia_vulkan_golden_selected("FORGE3D_TERRAIN_GOLDEN_VARIANT"):
+        adapter_probe = f3d.device_probe("vulkan")
+        assert_nvidia_vulkan_golden_adapter(
+            "FORGE3D_TERRAIN_GOLDEN_VARIANT", adapter_probe
+        )
+        if ARTIFACT_DIR is not None:
+            ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+            (ARTIFACT_DIR / "terrain-render-adapter.json").write_text(
+                json.dumps(adapter_probe, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
     material_set = f3d.MaterialSet.terrain_default()
     overlay = _build_overlay()
     heightmap = _build_heightmap()
@@ -319,4 +361,5 @@ def test_terrain_visual_goldens(terrain_golden_env, scene_name: str, scene_kwarg
         kwargs["water_mask"] = water_mask
 
     actual = _render_scene(renderer, material_set, ibl, heightmap, overlay, **kwargs)
+    _assert_sky_scene_is_meaningful(scene_name, actual)
     _assert_matches_golden(scene_name, actual)

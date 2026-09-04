@@ -1,0 +1,42 @@
+{
+  "asset": "mars_areoid_n179.bin",
+  "asset_bytes": 260664,
+  "asset_sha256": "a36346d659c4533ab8a3280069b9011e3e4ce650a23fa7070a3d6cadcda510b9",
+  "container_magic": "F3DAREO1",
+  "generator": "scripts/build_selene_areoid.py",
+  "gmm3_coefficients": {
+    "degree": 120,
+    "sha256": "eb4913b1afb6682406e6a9dad5be7918a162fa8462473c9a2e7aae258d4c2c9c",
+    "url": "https://pds-geosciences.wustl.edu/mro/mro-m-rss-5-sdp-v1/mrors_1xxx/data/shadr/gmm3_120_sha.tab"
+  },
+  "iau2000_conversion": {
+    "coordinate": "planetocentric radial",
+    "source_ellipsoid": {
+      "semi_major_m": 3396000.0,
+      "inverse_flattening": 196.877360
+    },
+    "target_ellipsoid": {
+      "semi_major_m": 3396190.0,
+      "inverse_flattening": 169.894447223612
+    }
+  },
+  "reference_points": {
+    "count": 30,
+    "max_error_m": 0.351390584891,
+    "rms_error_m": 0.089153893000,
+    "source": "tests/data/mars_areoid_reference.txt"
+  },
+  "source_map": {
+    "description": "NASA PDS GMM3 areoid, gravity field truncated from degree 3 through 90",
+    "dimensions": [180, 360],
+    "dtype": "little-endian float32 metres",
+    "sha256": "3539ffe090fc4d34324be964e5297eabdeaad4cf23bad642bd75aa91d99015b0",
+    "url": "https://pds-geosciences.wustl.edu/mro/mro-m-rss-5-sdp-v1/mrors_1xxx/data/rsdmap/ggmro_120_geoid_90.img"
+  },
+  "surface_fit": {
+    "degree": 179,
+    "max_grid_error_m": 0.735979679862,
+    "max_order": 90,
+    "rms_grid_error_m": 0.037742045331
+  }
+}

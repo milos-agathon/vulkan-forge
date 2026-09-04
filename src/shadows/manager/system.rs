@@ -20,7 +20,7 @@ pub struct ShadowManager {
     moment_sampler: Sampler,
     fallback_moment_texture: Option<TrackedTexture>,
     moment_pass: Option<MomentGenerationPass>,
-    /// P0.2/M3: Blur pass for VSM/EVSM/MSM soft shadows
+    /// P0.2/M3: Blur pass for VSM/MSM soft shadows
     blur_pass: Option<ShadowBlurPass>,
     requires_moments: bool,
     memory_bytes: u64,
@@ -35,7 +35,7 @@ impl ShadowManager {
         );
         config.csm.enable_evsm = requires_moments;
 
-        budget::enforce_memory_budget(&mut config);
+        budget::enforce_memory_budget(&mut config)?;
 
         let renderer = CsmRenderer::new(device, config.csm.clone())?;
 
@@ -57,7 +57,11 @@ impl ShadowManager {
             Some(Self::create_fallback_moment_texture(device)?)
         };
 
-        let memory_bytes = renderer.total_memory_bytes();
+        let memory_bytes = budget::estimate_memory_bytes(
+            config.csm.shadow_map_size,
+            config.csm.cascade_count,
+            config.technique,
+        )?;
 
         // Create moment generation and blur passes if needed
         let moment_pass = if requires_moments {
@@ -66,8 +70,7 @@ impl ShadowManager {
             None
         };
 
-        // P0.2/M3: Create blur pass for VSM/EVSM/MSM soft shadows
-        let blur_pass = if requires_moments {
+        let blur_pass = if super::super::requires_moment_blur(config.technique) {
             Some(ShadowBlurPass::new(device)?)
         } else {
             None
@@ -148,8 +151,8 @@ impl ShadowManager {
              - Shadow Map Size: {}x{}\n\
              - Cascade Count: {}\n\
              - Total Memory: {:.2} MiB\n\
-             - PCSS Blocker Radius: {:.4}\n\
-             - PCSS Filter Radius: {:.4}\n\
+             - PCSS Blocker Radius (texels): {:.4}\n\
+             - PCSS Filter Radius (texels): {:.4}\n\
              - Light Size: {:.4}\n\
              - Moment Bias: {:.6}\n\
              - Requires Moments: {}",
@@ -217,7 +220,7 @@ impl ShadowManager {
                 binding: 3,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Texture {
-                    sample_type: TextureSampleType::Float { filterable: false },
+                    sample_type: TextureSampleType::Float { filterable: true },
                     view_dimension: TextureViewDimension::D2Array,
                     multisampled: false,
                 },
@@ -250,7 +253,7 @@ impl ShadowManager {
             let layer_count = self.config.csm.cascade_count.max(1).min(4);
             texture.create_view(&TextureViewDescriptor {
                 label: Some("shadow_moment_fallback_view"),
-                format: Some(TextureFormat::Rgba32Float),
+                format: Some(TextureFormat::Rgba16Float),
                 dimension: Some(TextureViewDimension::D2Array),
                 aspect: TextureAspect::All,
                 base_mip_level: 0,
@@ -316,21 +319,20 @@ impl ShadowManager {
             None => return Ok(()),
         };
 
-        // Get depth and moment views
-        let depth_view = self.renderer.shadow_texture_view();
         let moment_texture = match &self.renderer.evsm_maps {
             Some(tex) => tex,
             None => return Ok(()),
         };
 
-        let moment_view =
-            super::super::create_moment_storage_view(moment_texture, self.config.csm.cascade_count);
-
         // Prepare bind group
-        moment_pass.prepare_bind_group(device, &depth_view, &moment_view);
+        moment_pass.prepare_textures_checked(
+            device,
+            self.renderer.shadow_maps.as_ref(),
+            moment_texture,
+        )?;
 
         // Execute moment generation compute pass
-        moment_pass.execute(
+        moment_pass.execute_checked(
             queue,
             encoder,
             self.config.technique,
@@ -338,20 +340,20 @@ impl ShadowManager {
             self.config.csm.shadow_map_size,
             self.config.csm.evsm_positive_exp,
             self.config.csm.evsm_negative_exp,
-        );
+        )?;
 
-        // P0.2/M3: Apply Gaussian blur to moment maps for soft shadows
+        // Apply Gaussian blur to all moment techniques.
         if let Some(blur_pass) = &mut self.blur_pass {
-            let moment_sample_view = self.renderer.moment_texture_view().unwrap();
             blur_pass.execute(
                 device,
                 queue,
                 encoder,
-                &moment_sample_view,
                 moment_texture,
                 self.config.csm.cascade_count,
                 self.config.csm.shadow_map_size,
                 self.config.blur_kernel_radius,
+                self.config.technique,
+                self.config.csm.evsm_positive_exp,
             )?;
         }
 
@@ -382,31 +384,19 @@ impl ShadowManager {
         self.renderer.uniforms.technique_reserved = [0.0; 4];
 
         if matches!(self.config.technique, ShadowTechnique::PCSS) {
-            self.clamp_pcss_radius();
+            self.clamp_pcss_radii();
         }
     }
 
-    fn clamp_pcss_radius(&mut self) {
-        let cascade_count = self.renderer.config.cascade_count as usize;
-        if cascade_count == 0 {
-            return;
-        }
-
-        let min_texel_size = self
-            .renderer
-            .uniforms
-            .cascades
-            .iter()
-            .take(cascade_count)
-            .map(|c| c.texel_size)
-            .fold(f32::MAX, f32::min);
-
-        let max_radius = min_texel_size * super::types::MAX_SEARCH_TEXELS;
-
-        self.renderer.uniforms.technique_params[0] =
-            self.config.pcss_blocker_radius.min(max_radius);
-        self.renderer.uniforms.technique_params[1] =
-            self.config.pcss_filter_radius.min(max_radius * 2.0);
+    fn clamp_pcss_radii(&mut self) {
+        self.renderer.uniforms.technique_params[0] = self
+            .config
+            .pcss_blocker_radius
+            .min(super::types::MAX_PCSS_BLOCKER_RADIUS_TEXELS);
+        self.renderer.uniforms.technique_params[1] = self
+            .config
+            .pcss_filter_radius
+            .min(super::types::MAX_PCSS_FILTER_RADIUS_TEXELS);
     }
 
     fn compute_flags(technique: ShadowTechnique, requires_moments: bool) -> u32 {
@@ -433,7 +423,7 @@ impl ShadowManager {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: TextureDimension::D2,
-                format: TextureFormat::Rgba32Float,
+                format: TextureFormat::Rgba16Float,
                 usage: TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },

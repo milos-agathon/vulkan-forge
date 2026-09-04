@@ -188,6 +188,16 @@ pub(crate) fn global_memory_metrics(py: Python<'_>) -> PyResult<PyObject> {
     d.set_item("utilization_ratio", metrics.utilization_ratio)?;
     d.set_item("resident_tiles", metrics.resident_tiles)?;
     d.set_item("resident_tile_bytes", metrics.resident_tile_bytes)?;
+    for (slot, family) in ["albedo", "normal", "mask", "height"].iter().enumerate() {
+        d.set_item(
+            format!("resident_tiles_{family}"),
+            metrics.resident_tiles_by_family[slot],
+        )?;
+        d.set_item(
+            format!("resident_bytes_{family}"),
+            metrics.resident_tile_bytes_by_family[slot],
+        )?;
+    }
     d.set_item("staging_bytes_in_flight", metrics.staging_bytes_in_flight)?;
     d.set_item("staging_ring_count", metrics.staging_ring_count)?;
     d.set_item("staging_buffer_size", metrics.staging_buffer_size)?;
@@ -338,6 +348,75 @@ pub(crate) fn native_degradations(py: Python<'_>) -> PyResult<PyObject> {
         list.append(dict)?;
     }
     Ok(list.into())
+}
+
+#[cfg(feature = "extension-module")]
+#[pyfunction]
+pub(crate) fn terrain_culling_stats(py: Python<'_>) -> PyResult<PyObject> {
+    let stats = crate::terrain::culling::two_phase::latest_stats();
+    let dict = pyo3::types::PyDict::new_bound(py);
+    dict.set_item("frustum_passing", stats.frustum_passing)?;
+    dict.set_item("phase1_drawn", stats.phase1_drawn)?;
+    dict.set_item("phase1_rejected", stats.phase1_rejected)?;
+    dict.set_item("phase2_recovered", stats.phase2_recovered)?;
+    dict.set_item("final_drawn", stats.final_drawn)?;
+    dict.set_item("culled", stats.culled)?;
+    dict.set_item("projection_bypassed", stats.projection_bypassed)?;
+    dict.set_item("background_bypassed", stats.background_bypassed)?;
+    let percent = if stats.frustum_passing == 0 {
+        0.0
+    } else {
+        100.0 * stats.culled as f64 / stats.frustum_passing as f64
+    };
+    dict.set_item("cull_percent", percent)?;
+    Ok(dict.into())
+}
+
+#[cfg(feature = "extension-module")]
+#[pyfunction]
+pub(crate) fn terrain_visibility_stats(py: Python<'_>) -> PyResult<PyObject> {
+    let stats = crate::terrain::renderer::visibility_buffer::latest_stats();
+    let dict = pyo3::types::PyDict::new_bound(py);
+    dict.set_item("visible_pixels", stats.visible_pixels)?;
+    dict.set_item("feedback_records", stats.feedback_records)?;
+    dict.set_item(
+        "visibility_feedback_records",
+        stats.visibility_feedback_records,
+    )?;
+    dict.set_item("forward_feedback_records", stats.forward_feedback_records)?;
+    dict.set_item("material_invocations", stats.material_invocations)?;
+    dict.set_item("background_pixels", stats.background_pixels)?;
+    dict.set_item("fallback_texels", stats.fallback_texels)?;
+    dict.set_item(
+        "forward_material_invocations",
+        stats.forward_material_invocations,
+    )?;
+    Ok(dict.into())
+}
+
+#[cfg(feature = "extension-module")]
+#[pyfunction]
+pub(crate) fn terrain_vt_stats(py: Python<'_>) -> PyResult<PyObject> {
+    let dict = pyo3::types::PyDict::new_bound(py);
+    for (key, value) in crate::terrain::renderer::virtual_texture::latest_stats() {
+        dict.set_item(key, value)?;
+    }
+    Ok(dict.into())
+}
+
+#[cfg(feature = "extension-module")]
+#[pyfunction]
+pub(crate) fn terrain_seam_stats(py: Python<'_>) -> PyResult<PyObject> {
+    let stats = crate::terrain::clipmap::geomorph::latest_seam_analysis();
+    let dict = pyo3::types::PyDict::new_bound(py);
+    dict.set_item("boundary_vertex_count", stats.boundary_vertex_count)?;
+    dict.set_item("depth_sample_count", stats.depth_sample_count)?;
+    dict.set_item("max_gap", stats.max_gap)?;
+    dict.set_item("avg_gap", stats.avg_gap)?;
+    dict.set_item("t_junction_count", stats.t_junction_count)?;
+    dict.set_item("crack_count", stats.crack_count)?;
+    dict.set_item("seams_valid", stats.seams_valid)?;
+    Ok(dict.into())
 }
 
 #[cfg(feature = "extension-module")]

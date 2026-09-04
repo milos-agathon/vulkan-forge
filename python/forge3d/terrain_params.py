@@ -5,11 +5,25 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import math
 from numbers import Integral
-from typing import List, Optional, Tuple, Sequence
+from typing import TYPE_CHECKING, List, Optional, Tuple, Sequence
 
 import numpy as np
 from pathlib import Path
+
+if TYPE_CHECKING:
+    from . import AtmosphereLutHandle
+
+
+_UNSET = object()
+
+
+def _as_f32(value: object) -> float:
+    """Normalize public scalar settings exactly as their native f32 seam."""
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        return float(np.asarray(value, dtype=np.float32).item())
 
 
 @dataclass
@@ -65,8 +79,14 @@ class ShadowSettings:
     light_bleed_reduction: float
     evsm_exponent: float
     fade_start: float
-    # Optional PCSS light radius (world units). Defaults to hard shadows when zero.
+    # Legacy PCSS light radius in world units. When non-zero it takes precedence
+    # over light_size and is converted per cascade using that cascade's texel size.
     pcss_light_radius: float = 0.0
+    # PCSS search radius, maximum adaptive filter radius, and area-light radius
+    # in shadow-map texels.
+    pcss_blocker_radius: float = 6.0
+    pcss_filter_radius: float = 4.0
+    light_size: float = 1.0
 
     # Shadow technique constants matching Rust ShadowTechnique enum
     # ALL_TECHNIQUES: Full set recognized by config layer
@@ -99,7 +119,6 @@ class ShadowSettings:
         valid_resolutions = {512, 1024, 2048, 4096, 8192}
         if self.resolution not in valid_resolutions:
             raise ValueError("resolution must be power of 2 between 512-8192")
-
         if not 1 <= self.cascades <= 4:
             raise ValueError("cascades must be 1-4")
 
@@ -109,8 +128,17 @@ class ShadowSettings:
         if self.softness < 0.0:
             raise ValueError("softness must be >= 0")
 
-        if self.pcss_light_radius < 0.0:
-            raise ValueError("pcss_light_radius must be >= 0")
+        for name, value, allow_zero in (
+            ("pcss_light_radius", self.pcss_light_radius, True),
+            ("pcss_blocker_radius", self.pcss_blocker_radius, True),
+            ("pcss_filter_radius", self.pcss_filter_radius, True),
+            ("light_size", self.light_size, False),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+            if value < 0.0 or (not allow_zero and value == 0.0):
+                operator = ">=" if allow_zero else ">"
+                raise ValueError(f"{name} must be {operator} 0")
 
         if self.intensity < 0.0:
             raise ValueError("intensity must be >= 0")
@@ -138,11 +166,10 @@ class ShadowSettings:
         """Estimate GPU memory for shadow resources."""
         pixels = self.resolution * self.resolution * self.cascades
         depth_bytes = pixels * 4  # Depth32Float
-        # Moment maps for VSM/EVSM/MSM techniques
-        if self.technique == "VSM":
-            moment_bytes = pixels * 8  # 2 channels * 4 bytes
-        elif self.technique in {"EVSM", "MSM"}:
-            moment_bytes = pixels * 16  # 4 channels * 4 bytes
+        # All moment techniques use an Rgba16Float atlas and an equally-sized
+        # persistent intermediate for the separable blur.
+        if self.technique in {"VSM", "EVSM", "MSM"}:
+            moment_bytes = pixels * 16  # atlas (8) + blur intermediate (8)
         else:
             moment_bytes = 0
         return depth_bytes + moment_bytes
@@ -1267,12 +1294,13 @@ class VolumetricsSettings:
 
 @dataclass
 class SkySettings:
-    """M6: Analytic procedural sky and aerial perspective configuration.
+    """Procedural or AETHER spectral sky and aerial-perspective configuration.
     
     Renders procedural sky with:
     - Sun disc rendering
     - Hosek-Wilkie RGB coefficient-table sky model
     - Optional Preetham or legacy approximate gradients for migration
+    - AETHER shipped spectral LUTs with explicit ozone and Mie anisotropy
     - Aerial perspective for distant terrain using the same sky tint path
     
     Applied as a rendered sky background in mesh-mode terrain views and sampled
@@ -1280,11 +1308,16 @@ class SkySettings:
     """
     
     enabled: bool = False  # Disabled by default
-    model: str = "hosek-wilkie"  # "hosek-wilkie", "preetham", or "approximate"
+    model: str = "hosek-wilkie"  # includes the spectral "aether" model
     
     # Sky model parameters
-    turbidity: float = 2.0        # Atmospheric haziness [1.0-10.0]
-    ground_albedo: float = 0.3    # Ground reflectance for bounce light
+    # Private sentinel defaults let the handle distinguish omitted values from
+    # explicit conflicting values while leaving normalized instances as floats.
+    turbidity: float = field(default=_UNSET)       # type: ignore[assignment]
+    ground_albedo: float = field(default=_UNSET)   # type: ignore[assignment]
+    ozone_du: float = field(default=_UNSET)        # type: ignore[assignment]
+    mie_g: float = field(default=_UNSET)           # type: ignore[assignment]
+    lut_handle: AtmosphereLutHandle | None = None
     
     # Sun parameters (uses global sun direction if not overridden)
     sun_intensity: float = 1.0    # Sun disc brightness multiplier
@@ -1292,27 +1325,66 @@ class SkySettings:
     
     # Aerial perspective
     aerial_perspective: bool = True  # Apply atmospheric scattering to terrain
-    aerial_density: float = 1.0      # Aerial perspective strength
+    aerial_density: float = 1.0      # Aerial perspective strength [0.0-10.0]
     
     # Exposure
     sky_exposure: float = 1.0     # Sky brightness adjustment
     
     def __post_init__(self) -> None:
-        valid_models = ("hosek-wilkie", "preetham", "approximate")
+        valid_models = ("hosek-wilkie", "preetham", "approximate", "aether")
         if self.model not in valid_models:
             raise ValueError(f"model must be one of {valid_models}")
-        if self.turbidity < 1.0 or self.turbidity > 10.0:
-            raise ValueError("turbidity must be in [1.0, 10.0]")
-        if self.ground_albedo < 0.0 or self.ground_albedo > 1.0:
-            raise ValueError("ground_albedo must be in [0.0, 1.0]")
-        if self.sun_intensity < 0.0:
-            raise ValueError("sun_intensity must be >= 0")
-        if self.sun_size < 0.0:
-            raise ValueError("sun_size must be >= 0")
-        if self.aerial_density < 0.0:
-            raise ValueError("aerial_density must be >= 0")
-        if self.sky_exposure < 0.0:
-            raise ValueError("sky_exposure must be >= 0")
+
+        physical_defaults = {
+            "turbidity": 2.0,
+            "ground_albedo": 0.3,
+            "ozone_du": 300.0,
+            "mie_g": 0.8,
+        }
+        if self.lut_handle is None:
+            for name, default in physical_defaults.items():
+                value = getattr(self, name)
+                setattr(self, name, float(default if value is _UNSET else value))
+        else:
+            if self.model != "aether":
+                raise ValueError("lut_handle requires model='aether'")
+            try:
+                handle_values = {
+                    name: _as_f32(getattr(self.lut_handle, name))
+                    for name in physical_defaults
+                }
+            except (AttributeError, OverflowError, TypeError, ValueError) as error:
+                raise TypeError(
+                    "lut_handle must be an AtmosphereLutHandle returned by "
+                    "forge3d.atmosphere_bake_luts()"
+                ) from error
+            for name, expected in handle_values.items():
+                supplied = getattr(self, name)
+                if supplied is not _UNSET and _as_f32(supplied) != expected:
+                    raise ValueError(
+                        f"{name}={supplied} does not match lut_handle.{name}={expected}"
+                    )
+                setattr(self, name, expected)
+
+        if not math.isfinite(self.turbidity) or not 1.0 <= self.turbidity <= 10.0:
+            raise ValueError("turbidity must be in [1.0, 10.0] and finite")
+        if not math.isfinite(self.ground_albedo) or not 0.0 <= self.ground_albedo <= 1.0:
+            raise ValueError("ground_albedo must be in [0.0, 1.0] and finite")
+        if not math.isfinite(self.ozone_du) or self.ozone_du < 0.0 or self.ozone_du > 600.0:
+            raise ValueError("ozone_du must be finite and in [0.0, 600.0]")
+        if not math.isfinite(self.mie_g) or not 0.0 <= self.mie_g <= 0.99:
+            raise ValueError("mie_g must be finite and in [0.0, 0.99]")
+        if not math.isfinite(self.sun_intensity) or self.sun_intensity < 0.0:
+            raise ValueError("sun_intensity must be finite and >= 0")
+        if not math.isfinite(self.sun_size) or self.sun_size < 0.0:
+            raise ValueError("sun_size must be finite and >= 0")
+        if (
+            not math.isfinite(self.aerial_density)
+            or not 0.0 <= self.aerial_density <= 10.0
+        ):
+            raise ValueError("aerial_density must be finite and in [0.0, 10.0]")
+        if not math.isfinite(self.sky_exposure) or self.sky_exposure < 0.0:
+            raise ValueError("sky_exposure must be finite and >= 0")
     
     @property
     def has_aerial_perspective(self) -> bool:
@@ -1329,24 +1401,52 @@ class VTLayerFamily:
     normal feeds terrain normal perturbation; mask gates per-texel material-map
     effects.
     """
-    """Describes one paged terrain material family."""
     family: str                        # "albedo" | "normal" | "mask"
     virtual_size_px: Tuple[int, int] = (4096, 4096)  # family-wide invariant
     tile_size: int = 248               # content pixels per tile edge
     tile_border: int = 4               # gutter pixels per tile edge (slot_size = 256)
-    fallback: Tuple[float, ...] = (0.5, 0.5, 0.5, 1.0)  # last-resort per-family fallback
+    fallback: Optional[Tuple[float, ...]] = None  # family-safe last-resort value
 
     def __post_init__(self) -> None:
-        VALID_FAMILIES = {"albedo", "normal", "mask"}
-        if self.family not in VALID_FAMILIES:
-            raise ValueError(f"family must be one of {VALID_FAMILIES}")
+        valid_families = ("albedo", "normal", "mask")
+        if self.family not in valid_families:
+            raise ValueError(f"family must be one of {valid_families}")
+        if isinstance(self.tile_size, bool) or not isinstance(self.tile_size, Integral):
+            raise ValueError("tile_size must be an integer")
         if self.tile_size < 16:
             raise ValueError("tile_size must be >= 16")
+        if isinstance(self.tile_border, bool) or not isinstance(self.tile_border, Integral):
+            raise ValueError("tile_border must be an integer")
         if self.tile_border < 0:
             raise ValueError("tile_border must be >= 0")
+        if (
+            not isinstance(self.virtual_size_px, Sequence)
+            or isinstance(self.virtual_size_px, (str, bytes))
+            or len(self.virtual_size_px) != 2
+        ):
+            raise ValueError("virtual_size_px must contain exactly two dimensions")
         w, h = self.virtual_size_px
+        if any(isinstance(value, bool) or not isinstance(value, Integral) for value in (w, h)):
+            raise ValueError("virtual_size_px dimensions must be integers")
         if w < self.tile_size or h < self.tile_size:
             raise ValueError("virtual_size_px must be >= tile_size in both dimensions")
+        default_fallbacks = {
+            "albedo": (0.5, 0.5, 0.5, 1.0),
+            "normal": (0.5, 0.5, 1.0, 1.0),
+            "mask": (1.0, 1.0, 1.0, 1.0),
+        }
+        if self.fallback is None:
+            self.fallback = default_fallbacks[self.family]
+        if (
+            not isinstance(self.fallback, Sequence)
+            or isinstance(self.fallback, (str, bytes))
+            or len(self.fallback) != 4
+        ):
+            raise ValueError("fallback must contain exactly four channels")
+        fallback = tuple(float(value) for value in self.fallback)
+        if not all(math.isfinite(value) and 0.0 <= value <= 1.0 for value in fallback):
+            raise ValueError("fallback channels must be finite values in [0, 1]")
+        self.fallback = fallback
 
     @property
     def slot_size(self) -> int:
@@ -1389,7 +1489,6 @@ class TerrainVTSettings:
     normal, and mask families share one page-table layout and must use matching
     virtual size and tile geometry when enabled together.
     """
-    """Terrain material virtual texturing configuration."""
     enabled: bool = False
     layers: List[VTLayerFamily] = field(default_factory=lambda: [
         VTLayerFamily(family="albedo")
@@ -1410,13 +1509,17 @@ class TerrainVTSettings:
         return tuple(layer.family for layer in self.layers)
 
     def __post_init__(self) -> None:
+        if self.enabled and not self.layers:
+            raise ValueError("enabled terrain VT requires at least one family")
         families = [l.family for l in self.layers]
         if len(families) != len(set(families)):
             raise ValueError("duplicate family in layers")
         if self.atlas_size < 256:
             raise ValueError("atlas_size must be >= 256")
-        if self.residency_budget_mb <= 0:
-            raise ValueError("residency_budget_mb must be > 0")
+        if not math.isfinite(float(self.residency_budget_mb)) or self.residency_budget_mb <= 0:
+            raise ValueError("residency_budget_mb must be a positive finite value")
+        if self.residency_budget_mb > 512.0:
+            raise ValueError("residency_budget_mb must not exceed the 512 MiB host-visible limit")
         if self.max_mip_levels < 1:
             raise ValueError("max_mip_levels must be >= 1")
         for layer in self.layers:
@@ -1424,6 +1527,34 @@ class TerrainVTSettings:
                 raise ValueError(
                     f"atlas_size ({self.atlas_size}) must be divisible by "
                     f"slot_size ({layer.slot_size}) for family '{layer.family}'"
+                )
+        if self.layers:
+            geometry = {
+                (layer.virtual_size_px, layer.tile_size, layer.tile_border)
+                for layer in self.layers
+            }
+            if len(geometry) != 1:
+                raise ValueError(
+                    "enabled terrain VT families must share virtual_size_px, "
+                    "tile_size, and tile_border"
+                )
+            # The runtime splits the total budget evenly. Reject a setting
+            # that cannot hold one raw RGBA logical slot for every requested
+            # family; silently rounding each share up would exceed the budget.
+            slot_size = self.layers[0].slot_size
+            atlas_slots = (self.atlas_size // slot_size) ** 2
+            if atlas_slots < len(self.layers):
+                raise ValueError(
+                    "atlas_size must provide at least one physical slot per "
+                    f"enabled family ({len(self.layers)} required, {atlas_slots} available)"
+                )
+            minimum_bytes = len(self.layers) * slot_size * slot_size * 4
+            budget_bytes = int(self.residency_budget_mb * 1024.0 * 1024.0)
+            if budget_bytes < minimum_bytes:
+                minimum_mb = minimum_bytes / (1024.0 * 1024.0)
+                raise ValueError(
+                    "residency_budget_mb must hold at least one logical tile "
+                    f"per enabled family ({minimum_mb:.6g} MiB required)"
                 )
 
     def actual_mip_count(self, family: str = "albedo") -> int:
@@ -1901,6 +2032,17 @@ class TerrainRenderParams:
     # the polar angle from +Z (0 = top-down, 90 = horizon) and cam_phi_deg the
     # azimuth within the terrain plane; plain "mesh" keeps legacy output.
     camera_mode: str = "screen"
+    # Terrain submission policy. HZB mode is conservative and only active for clipmap/MSAA1.
+    culling: str = "frustum"
+    # Material evaluation path. "visibility" performs a depth/ID prepass and
+    # one full-screen barycentric material resolve per visible pixel.
+    shading: str = "forward"
+    # Optional disk-backed store returned by forge3d.terrain.open_vt_store().
+    vt_store: Optional[object] = None
+    # One-frame camera-velocity extrapolation horizon for lower-priority pages.
+    prefetch_horizon_ms: float = 100.0
+    # Hard per-frame page upload cap.
+    vt_upload_budget_bytes: int = 16 * 1024 * 1024
     # P7: Debug mode for projection probes (0=normal, 40=view-depth, 41=NDC depth, 42=view-pos XYZ)
     debug_mode: int = 0
     # M1: Accumulation AA sample count (1 = no AA, 16/64/256 typical for offline)
@@ -2096,6 +2238,22 @@ class TerrainRenderParams:
                 raise ValueError("terrain_data_revision must be >= 0")
             if self.terrain_data_revision > 0xFFFF_FFFF_FFFF_FFFF:
                 raise ValueError("terrain_data_revision must fit in u64")
+        if self.culling not in {"none", "frustum", "hzb_two_phase"}:
+            raise ValueError("culling must be one of: none, frustum, hzb_two_phase")
+        if self.shading not in {"forward", "visibility"}:
+            raise ValueError("shading must be one of: forward, visibility")
+        if not np.isfinite(self.prefetch_horizon_ms) or self.prefetch_horizon_ms < 0.0:
+            raise ValueError("prefetch_horizon_ms must be finite and >= 0")
+        if (
+            isinstance(self.vt_upload_budget_bytes, bool)
+            or not isinstance(self.vt_upload_budget_bytes, Integral)
+            or self.vt_upload_budget_bytes <= 0
+        ):
+            raise ValueError("vt_upload_budget_bytes must be a positive integer")
+        if self.vt_store is not None and not (
+            hasattr(self.vt_store, "path") or isinstance(self.vt_store, (str, Path))
+        ):
+            raise ValueError("vt_store must be a path or forge3d.terrain.VTStore")
 
 
 def load_height_curve_lut(path: str | Path) -> np.ndarray:
@@ -2142,8 +2300,14 @@ def make_terrain_params_config(
     cam_radius: float = 1200.0,
     cam_phi_deg: float = 135.0,
     cam_theta_deg: float = 45.0,
+    cam_target: Sequence[float] = (0.0, 0.0, 0.0),
     fov_y_deg: float = 55.0,
     camera_mode: str = "screen",  # "screen", "mesh", or "mesh:zup" (Z-up orbit, see TerrainParams)
+    culling: str = "frustum",  # "none", "frustum", or "hzb_two_phase"
+    shading: str = "forward",  # "forward" or "visibility"
+    vt_store: Optional[object] = None,
+    prefetch_horizon_ms: float = 100.0,
+    vt_upload_budget_bytes: int = 16 * 1024 * 1024,
     debug_mode: int = 0,  # 0=normal, 40=view-depth probe, 41=NDC depth, 42=view-pos XYZ
     clip: Optional[Tuple[float, float]] = None,
     height_curve_mode: str = "linear",
@@ -2274,7 +2438,7 @@ def make_terrain_params_config(
         terrain_span=float(terrain_span),
         msaa_samples=msaa_samples,
         z_scale=z_scale,
-        cam_target=[0.0, 0.0, 0.0],
+        cam_target=[float(value) for value in cam_target],
         cam_radius=float(cam_radius),
         cam_phi_deg=float(cam_phi_deg),
         cam_theta_deg=float(cam_theta_deg),
@@ -2321,6 +2485,11 @@ def make_terrain_params_config(
         probes=probes,
         reflection_probes=reflection_probes,
         camera_mode=str(camera_mode),
+        culling=str(culling),
+        shading=str(shading),
+        vt_store=vt_store,
+        prefetch_horizon_ms=float(prefetch_horizon_ms),
+        vt_upload_budget_bytes=int(vt_upload_budget_bytes),
         debug_mode=int(debug_mode),
         aa_samples=int(aa_samples),
         aa_seed=aa_seed,

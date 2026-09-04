@@ -26,6 +26,7 @@ def _recipe(text: str) -> dict:
     }
 
 
+@pytest.mark.slow
 def test_600_frame_incremental_matches_cold_and_recomputes_exact_set(tmp_path):
     warm_store = tmp_path / "warm"
     cold_store = tmp_path / "cold-modified"
@@ -95,6 +96,7 @@ def test_structured_scheduler_executes_only_changed_passes(tmp_path):
         label: f"test-executor:{label}".encode("utf-8") for label in executors
     }
     options = {
+        "frames": [250],
         "verify_reads": False,
         "pass_executors": executors,
         "pass_executor_fingerprints": fingerprints,

@@ -180,27 +180,16 @@ impl Viewer {
                 }
             }
         }
-        // Recreate sky output
+        // Recreate sky output. Built from the same descriptor as init so the
+        // night overlay's RENDER_ATTACHMENT usage cannot be lost on resize.
         self.sky_output = tracked_create_texture(
             &self.device,
-            &wgpu::TextureDescriptor {
-                label: Some("viewer.sky.output"),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            },
+            &crate::viewer::init::sky_output_descriptor(width, height),
         )?;
         self.sky_output_view = self
             .sky_output
             .create_view(&wgpu::TextureViewDescriptor::default());
+        self.sky_present_bg_cache.borrow_mut().take();
         // Recreate depth buffer for geometry pass
         if self.geom_pipeline.is_some() {
             let z_texture = tracked_create_texture(

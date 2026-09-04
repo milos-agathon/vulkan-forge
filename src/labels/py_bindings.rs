@@ -12,6 +12,41 @@ use pyo3::types::PyDict;
 use super::optimal::RationaleRecord;
 use super::types::{LabelFlags, LabelStyle};
 
+/// Internal scoped reservation used by `_DepthOcclusionSampler`. It is not
+/// re-exported from the public `forge3d` package.
+#[cfg(feature = "extension-module")]
+#[pyclass(module = "forge3d._forge3d", name = "_LabelDepthHostAllocation")]
+pub struct PyLabelDepthHostAllocation {
+    pub(crate) reservation: super::optimal::DepthHostAllocationReservation,
+}
+
+#[cfg(feature = "extension-module")]
+#[pymethods]
+impl PyLabelDepthHostAllocation {
+    #[getter]
+    fn bytes(&self) -> u64 {
+        self.reservation.bytes()
+    }
+
+    #[getter]
+    fn active(&self) -> bool {
+        self.reservation.is_active()
+    }
+
+    /// Release now; returns true exactly once.
+    fn close(&mut self) -> bool {
+        self.reservation.release()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "_LabelDepthHostAllocation(bytes={}, active={})",
+            self.reservation.bytes(),
+            self.reservation.is_active()
+        )
+    }
+}
+
 /// Python wrapper for LabelFlags.
 #[cfg(feature = "extension-module")]
 #[pyclass(module = "forge3d._forge3d", name = "LabelFlags")]
@@ -225,7 +260,7 @@ impl From<&PyLabelStyle> for LabelStyle {
 const AREA_SCALE: f64 = super::optimal::COORD_SCALE * super::optimal::COORD_SCALE;
 
 #[cfg(feature = "extension-module")]
-fn conflict_to_dict(py: Python<'_>, entry: &(u64, u32, i64)) -> PyResult<Py<PyDict>> {
+fn conflict_to_dict(py: Python<'_>, entry: &(u64, u32, i128)) -> PyResult<Py<PyDict>> {
     let d = PyDict::new_bound(py);
     d.set_item("label_id", entry.0)?;
     d.set_item("candidate_index", entry.1)?;
@@ -234,7 +269,7 @@ fn conflict_to_dict(py: Python<'_>, entry: &(u64, u32, i64)) -> PyResult<Py<PyDi
 }
 
 #[cfg(feature = "extension-module")]
-fn conflicts_to_text(entries: &[(u64, u32, i64)]) -> String {
+fn conflicts_to_text(entries: &[(u64, u32, i128)]) -> String {
     entries
         .iter()
         .map(|(label_id, candidate_index, area_q)| {
@@ -309,23 +344,29 @@ impl PyLabelRationale {
                                 .collect::<PyResult<Vec<_>>>()?,
                         )?;
                     }
-                    RationaleRecord::OccludedCandidate {
+                    RationaleRecord::VisibilityFilteredCandidate {
                         label_id,
                         candidate_index,
                     } => {
-                        d.set_item("kind", "occluded_candidate")?;
+                        d.set_item("kind", "visibility_filtered_candidate")?;
                         d.set_item("label_id", label_id)?;
                         d.set_item("candidate_index", candidate_index)?;
                     }
                     RationaleRecord::Solver {
                         nodes_explored,
                         certified,
+                        budget_exhausted,
+                        objective_q,
+                        upper_bound_q,
                         gap,
                         gap_tolerance,
                     } => {
                         d.set_item("kind", "solver")?;
                         d.set_item("nodes_explored", nodes_explored)?;
                         d.set_item("certified", certified)?;
+                        d.set_item("budget_exhausted", budget_exhausted)?;
+                        d.set_item("objective", *objective_q as f64 / weight_scale)?;
+                        d.set_item("upper_bound", *upper_bound_q as f64 / weight_scale)?;
                         d.set_item("gap", gap)?;
                         d.set_item("gap_tolerance", gap_tolerance)?;
                     }
@@ -371,21 +412,30 @@ impl PyLabelRationale {
                     if *priority_lost { "priority_lost" } else { "collision" },
                     conflicts_to_text(blocking)
                 ),
-                RationaleRecord::OccludedCandidate {
+                RationaleRecord::VisibilityFilteredCandidate {
                     label_id,
                     candidate_index,
                 } => format!(
-                    "occluded anchor: label {} candidate {} excluded by silhouette/depth visibility",
+                    "label {} candidate {} excluded by the caller-supplied visibility gate",
                     label_id, candidate_index
                 ),
                 RationaleRecord::Solver {
                     nodes_explored,
                     certified,
+                    budget_exhausted,
+                    objective_q,
+                    upper_bound_q,
                     gap,
                     gap_tolerance,
                 } => format!(
-                    "solver: {} nodes explored, certified={}, gap={:.6} (tolerance {:.6})",
-                    nodes_explored, certified, gap, gap_tolerance
+                    "solver: {} nodes explored, certified={}, budget_exhausted={}, objective={:.3}, upper_bound={:.3}, gap={:.6} (tolerance {:.6})",
+                    nodes_explored,
+                    certified,
+                    budget_exhausted,
+                    *objective_q as f64 / super::optimal::WEIGHT_SCALE,
+                    *upper_bound_q as f64 / super::optimal::WEIGHT_SCALE,
+                    gap,
+                    gap_tolerance
                 ),
             })
             .collect()

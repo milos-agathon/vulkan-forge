@@ -1,26 +1,29 @@
 # tests/test_label_optimal_solver.py
 # CARTOGRAPHER-PRIME: bounded-optimal, silhouette-aware, explainable label solver.
 # Gated DoD: optimality gap <= 2% vs brute force, zero occluded-anchor
-# placements, and byte-identical plan hashes against the committed
-# cross-device golden triplet.
+# placements, and a canonical plan hash emitted for the dependent three-runner
+# verifier to compare against the committed golden.
 
 from __future__ import annotations
 
 import itertools
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-_native = pytest.importorskip("forge3d._forge3d")
+from forge3d import _forge3d as _native
 
-pytestmark = pytest.mark.skipif(
-    not hasattr(_native, "declutter_optimal"),
-    reason="native declutter_optimal not available in this build",
-)
+if not hasattr(_native, "declutter_optimal"):
+    raise RuntimeError(
+        "CARTOGRAPHER-PRIME requires a freshly built native extension with "
+        "declutter_optimal; absence is a gate failure, not a skip"
+    )
 
 GOLDEN_PATH = Path(__file__).parent / "golden" / "labels" / "optimal_plan_hash.json"
 GAP_TOLERANCE = 0.02
+POINT_CANDIDATE_SUFFIXES = ("center", "above", "below", "left", "right")
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +35,7 @@ def _quantize_coord(value: float) -> int:
 
 
 def _effective_weight(weight: float) -> int:
-    return round(weight * 1024.0) + 1
+    return round(weight * 1024.0)
 
 
 def _quantized_box(bounds) -> tuple[int, int, int, int]:
@@ -99,8 +102,8 @@ SOLVER_INSTANCES = [
     CHAIN_INSTANCE,
     # Same-position pair: keep the heavier label.
     [
-        (1, 0, (50.0, 50.0, 50.0, 50.0), 5.0, True),
-        (2, 0, (50.0, 50.0, 50.0, 50.0), 9.0, True),
+        (1, 0, (49.0, 49.0, 51.0, 51.0), 5.0, True),
+        (2, 0, (49.0, 49.0, 51.0, 51.0), 9.0, True),
     ],
     # Multi-candidate labels with cross conflicts.
     [
@@ -141,12 +144,20 @@ class RidgelineDepthSampler:
 
     NEAR_RIDGE_DEPTH = 6.0
     FAR_TERRAIN_DEPTH = 10.0
+    requires_projected_anchor = True
+    depth_convention = "linear_eye_depth"
+    depth_domain = (0.0, 10.0)
 
     def scene_depth(self, y: float) -> float:
         return self.NEAR_RIDGE_DEPTH if y < 45.0 else self.FAR_TERRAIN_DEPTH
 
     def sample_label(self, coords, *, record=None, label_id=None):
         del label_id
+        assert record is not None
+        assert record["projection_authority"] == "serialized_projected_anchor"
+        assert record["projected_depth_convention"] == self.depth_convention
+        assert tuple(record["projected_depth_domain"]) == self.depth_domain
+        assert len(coords) == 3
         y = float(coords[1])
         label_depth = float(coords[2]) if len(coords) > 2 else 0.0
         scene_depth = self.scene_depth(y)
@@ -156,6 +167,9 @@ class RidgelineDepthSampler:
             "visible": bool(label_depth <= scene_depth),
             "occlusion": "depth_silhouette",
             "source": "synthetic_ridgeline",
+            "depth_authority": "pre_supplied_authoritative",
+            "depth_convention": self.depth_convention,
+            "depth_domain": list(self.depth_domain),
         }
 
 
@@ -165,6 +179,10 @@ def _ridgeline_labels():
             "id": label_id,
             "text": label_id.upper(),
             "geometry": {"type": "Point", "coordinates": [x, y, z]},
+            "projected_anchor": [x, y, z],
+            "projected_depth_convention": "linear_eye_depth",
+            "projected_depth_domain": [0.0, 10.0],
+            "label_size": [10.0, 8.0],
             "priority": priority,
             "requires_terrain": True,
             "terrain_mode": "terrain",
@@ -226,12 +244,16 @@ class TestOptimalSolverGap:
             if not visible
         }
         assert not hidden.intersection(set(placements))
-        occluded_records = [
+        filtered_records = [
             record
             for record in rationale.records()
-            if record["kind"] == "occluded_candidate"
+            if record["kind"] == "visibility_filtered_candidate"
         ]
-        assert {(r["label_id"], r["candidate_index"]) for r in occluded_records} == hidden
+        assert {(r["label_id"], r["candidate_index"]) for r in filtered_records} == hidden
+        assert (
+            "label 1 candidate 0 excluded by the caller-supplied visibility gate"
+            in rationale.render()
+        )
 
     def test_budget_exceeded_returns_honest_gap(self):
         placements, gap, rationale = _native.declutter_optimal(
@@ -266,6 +288,19 @@ class TestCompileTimeOcclusion:
         assert accepted_ids == {"front-a", "front-b", "edge-of-ridge"}
         for label in plan.accepted:
             assert label.candidate.terrain_sample.get("visible") is not False
+            assert {candidate.candidate_id for candidate in label.candidates} == {
+                f"{label.label_id}:{suffix}" for suffix in POINT_CANDIDATE_SUFFIXES
+            }
+            for candidate in label.candidates:
+                bounds_q = _quantized_box(candidate.bounds)
+                assert bounds_q[0] < bounds_q[2] and bounds_q[1] < bounds_q[3]
+                sample = candidate.terrain_sample
+                assert sample["depth_authority"] == "pre_supplied_authoritative"
+                assert sample["depth_convention"] == "linear_eye_depth"
+                assert sample["depth_domain"] == [0.0, 10.0]
+                assert sample["label_depth"] == candidate.anchor[2]
+                assert "projection_authority_missing" not in sample
+                assert "depth_convention_incompatible" not in sample
         rejected = {label.label_id: label.reason for label in plan.rejected}
         assert rejected == {
             "behind-ridge-a": "terrain_occluded",
@@ -275,34 +310,41 @@ class TestCompileTimeOcclusion:
     def test_occluded_ladder_candidate_is_gated(self):
         plan = _compile_ridgeline_plan()
         edge = next(label for label in plan.accepted if label.label_id == "edge-of-ridge")
-        above = next(
-            candidate
+        visibility = {
+            candidate.candidate_id: candidate.details.get("visible") is not False
             for candidate in edge.candidates
-            if candidate.candidate_id == "edge-of-ridge:above"
-        )
-        assert above.details.get("visible") is False, (
+        }
+        assert visibility == {
+            "edge-of-ridge:center": True,
+            "edge-of-ridge:above": False,
+            "edge-of-ridge:below": True,
+            "edge-of-ridge:left": True,
+            "edge-of-ridge:right": True,
+        }, (
             "'above' anchor (y=38) sits behind the ridgeline and must be gated"
         )
-        # The primary (center) anchor stays ungated.
-        center = next(
-            candidate
-            for candidate in edge.candidates
-            if candidate.candidate_id == "edge-of-ridge:center"
-        )
-        assert center.details.get("visible") is not False
 
     def test_rationale_cites_occluded_anchors_with_depths(self):
         plan = _compile_ridgeline_plan()
         occluded = [
             record for record in plan.rationale if record["kind"] == "occluded_anchor"
         ]
-        cited = {record["label_id"] for record in occluded}
-        assert {"behind-ridge-a", "behind-ridge-b", "edge-of-ridge"} <= cited
+        expected_candidates = {
+            (label_id, f"{label_id}:{suffix}")
+            for label_id in ("behind-ridge-a", "behind-ridge-b")
+            for suffix in POINT_CANDIDATE_SUFFIXES
+        }
+        expected_candidates.add(("edge-of-ridge", "edge-of-ridge:above"))
+        assert {
+            (record["label_id"], record["candidate_id"]) for record in occluded
+        } == expected_candidates
         for record in occluded:
             sample = record["terrain_sample"]
             assert sample["label_depth"] > sample["scene_depth"], (
                 "every occlusion record must cite the ridgeline depth vs anchor depth"
             )
+            assert sample["depth_convention"] == "linear_eye_depth"
+            assert sample["depth_domain"] == [0.0, 10.0]
         rendered = "\n".join(plan.render_rationale())
         assert "terrain depth 6.000 nearer than anchor depth 8.000" in rendered
 
@@ -339,23 +381,42 @@ class TestRationaleGrounding:
         ]
         return LabelPlan.compile(labels=labels, camera={}, viewport=(100, 100))
 
-    def test_rationale_cites_displaced_label_ids(self):
+    def test_rationale_cites_selected_and_displaced_candidates(self):
         plan = self._colliding_plan()
-        placed = next(
-            record
+        assert {
+            label.label_id: label.candidate.candidate_id for label in plan.accepted
+        } == {
+            "loser": "loser:below",
+            "winner": "winner:above",
+        }
+        assert plan.rejected == []
+
+        placed = {
+            record["label_id"]: record
             for record in plan.rationale
-            if record["kind"] == "placed" and record["label_id"] == "winner"
-        )
-        assert [entry["label_id"] for entry in placed["displaced"]] == ["loser"]
-        dropped = next(
-            record
-            for record in plan.rationale
-            if record["kind"] == "dropped" and record["label_id"] == "loser"
-        )
-        assert dropped["priority_lost"] is True
-        assert [entry["label_id"] for entry in dropped["blocking"]] == ["winner"]
+            if record["kind"] == "placed"
+        }
+        assert set(placed) == {"winner", "loser"}
+        assert placed["winner"]["candidate_id"] == "winner:above"
+        assert placed["loser"]["candidate_id"] == "loser:below"
+
+        winner_conflicts = {
+            entry["candidate_id"]: entry["overlap_area_px"]
+            for entry in placed["winner"]["displaced"]
+            if entry["label_id"] == "loser"
+        }
+        loser_conflicts = {
+            entry["candidate_id"]: entry["overlap_area_px"]
+            for entry in placed["loser"]["displaced"]
+            if entry["label_id"] == "winner"
+        }
+        assert winner_conflicts["loser:above"] > 0.0
+        assert loser_conflicts["winner:below"] > 0.0
+
         solver = next(
-            record for record in plan.rationale if record["kind"] == "solver"
+            record
+            for record in plan.rationale
+            if record["kind"] == "solver"
         )
         assert solver["algorithm"] == "optimal"
         assert solver["certified"] is True
@@ -370,8 +431,9 @@ class TestRationaleGrounding:
         )
         assert rehydrated.render_rationale() == plan.render_rationale()
         rendered = "\n".join(plan.render_rationale())
-        assert "placed 'winner'" in rendered
-        assert "dropped 'loser' (priority_lost)" in rendered
+        assert "placed 'winner' at candidate 'winner:above'" in rendered
+        assert "placed 'loser' at candidate 'loser:below'" in rendered
+        assert "dropped" not in rendered
 
 
 # ---------------------------------------------------------------------------
@@ -382,12 +444,14 @@ class TestCartographerPrimeDoDGate:
     def test_dod_gate(self):
         # (1) Optimality gap <= 2% versus the brute-force optimum on every
         # small instance solvable to optimality.
+        measured_gaps = []
         for candidates in SOLVER_INSTANCES:
             placements, gap, _rationale = _native.declutter_optimal(candidates)
             optimum = brute_force_optimum(candidates)
             achieved = solver_objective(candidates, placements)
             assert achieved >= (1.0 - GAP_TOLERANCE) * optimum
             assert gap <= GAP_TOLERANCE
+            measured_gaps.append(float(gap))
 
         # (2) Zero labels placed on occluded anchors.
         plan = _compile_ridgeline_plan()
@@ -400,18 +464,44 @@ class TestCartographerPrimeDoDGate:
         assert occluded_placements == [], (
             f"labels placed on occluded anchors: {occluded_placements}"
         )
+        occluded_candidate_ids = {
+            (record["label_id"], record["candidate_id"])
+            for record in plan.rationale
+            if record["kind"] == "occluded_anchor"
+        }
+        assert not occluded_candidate_ids.intersection(
+            (label.label_id, label.candidate.candidate_id) for label in plan.accepted
+        )
 
-        # (3) Byte-identical plan hashes across the 3-runner-config matrix:
-        # the committed golden triplet pins one hash per CI OS runner and the
-        # recomputed hash must equal all three.
+        # (3) This runner's canonical plan hash matches the committed golden.
+        # Cross-runner equality is proved only by the dependent CI verifier,
+        # after it has downloaded independently produced evidence from all
+        # three runner configurations.
         from forge3d._map_scene_common import _stable_hash
 
         plan_hash = _stable_hash(plan.to_dict())
         golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
-        triplet = golden["plan_hash"]
-        assert set(triplet) == {"windows-latest", "ubuntu-latest", "macos-latest"}
-        assert len(set(triplet.values())) == 1, "golden triplet must agree"
-        assert plan_hash == triplet["windows-latest"], (
+        assert golden["schema"] == "forge3d.cartographer-prime.golden.v1"
+        assert plan_hash == golden["plan_hash"], (
             f"compiled plan hash {plan_hash} diverges from the committed "
-            f"cross-device golden {triplet['windows-latest']}"
+            f"golden {golden['plan_hash']}"
         )
+
+        # The test itself emits only measured values. A post-pytest evidence
+        # step validates the zero-skip JUnit report and binds these measurements
+        # to the checked-out SHA and actual runner/runtime identity.
+        measurements_path = os.environ.get("CARTOGRAPHER_MEASUREMENTS_PATH")
+        if measurements_path:
+            payload = {
+                "schema": "forge3d.cartographer-prime.measurements.v1",
+                "plan_hash": plan_hash,
+                "optimality_gap": max(measured_gaps),
+                "occluded_placement_count": len(occluded_placements),
+                "tested_instance_count": len(SOLVER_INSTANCES),
+            }
+            path = Path(measurements_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )

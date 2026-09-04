@@ -1,8 +1,11 @@
 use super::helpers::calculate_texture_size;
+use super::MEMORY_BUDGET_LIMIT;
+use crate::core::error::RenderError;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::Mutex;
 use wgpu::TextureFormat;
 
-const MEMORY_BUDGET_LIMIT: u64 = 512 * 1024 * 1024;
 const BUDGET_POLICY_ENFORCE: u8 = 0;
 const BUDGET_POLICY_WARN: u8 = 1;
 
@@ -22,6 +25,10 @@ pub struct ResourceRegistry {
     pub(super) peak_total_bytes: AtomicU64,
     pub(super) resident_tiles: AtomicU32,
     pub(super) resident_tile_bytes: AtomicU64,
+    pub(super) resident_tiles_by_family: [AtomicU32; 4],
+    pub(super) resident_tile_bytes_by_family: [AtomicU64; 4],
+    resident_owner_next: AtomicU64,
+    resident_owners: Mutex<HashMap<u64, [(u32, u64); 4]>>,
     pub(super) staging_bytes_in_flight: AtomicU64,
     pub(super) staging_ring_count: AtomicU32,
     pub(super) staging_buffer_size: AtomicU64,
@@ -44,6 +51,10 @@ impl ResourceRegistry {
             peak_total_bytes: AtomicU64::new(0),
             resident_tiles: AtomicU32::new(0),
             resident_tile_bytes: AtomicU64::new(0),
+            resident_tiles_by_family: std::array::from_fn(|_| AtomicU32::new(0)),
+            resident_tile_bytes_by_family: std::array::from_fn(|_| AtomicU64::new(0)),
+            resident_owner_next: AtomicU64::new(1),
+            resident_owners: Mutex::new(HashMap::new()),
             staging_bytes_in_flight: AtomicU64::new(0),
             staging_ring_count: AtomicU32::new(0),
             staging_buffer_size: AtomicU64::new(0),
@@ -81,16 +92,69 @@ impl ResourceRegistry {
         }
     }
 
-    pub fn track_buffer_allocation(&self, size: u64, is_host_visible: bool) {
+    /// Atomically enforce and reserve the process-wide host-visible budget,
+    /// then register the buffer counters. Every authoritative host-visible
+    /// allocation path uses this primitive so concurrent callers cannot each
+    /// pass a stale read of the same remaining budget.
+    pub fn track_buffer_allocation_labeled(
+        &self,
+        size: u64,
+        is_host_visible: bool,
+        label: &str,
+    ) -> Result<(), RenderError> {
+        if is_host_visible {
+            let mut current = self.host_visible_bytes.load(Ordering::Acquire);
+            loop {
+                let next = current.checked_add(size).ok_or_else(|| {
+                    RenderError::Budget(format!(
+                        "Memory budget exceeded: allocation '{label}' requesting {size} bytes overflows aggregate host-visible accounting"
+                    ))
+                })?;
+                let exceeds_budget = next > self.budget_limit;
+                if exceeds_budget && self.get_budget_policy() == "enforce" {
+                    let top5 = crate::core::resource_tracker::ledger_top_consumers_string(5);
+                    return Err(RenderError::Budget(format!(
+                        "Memory budget exceeded: allocation '{label}' requesting {size} bytes would exceed the 512 MiB host-visible limit (current: {current} bytes); top consumers: {top5}"
+                    )));
+                }
+                match self.host_visible_bytes.compare_exchange_weak(
+                    current,
+                    next,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => {
+                        if exceeds_budget {
+                            log::warn!(
+                                "Memory budget exceeded: allocation '{}' requesting {} bytes exceeds the 512 MiB host-visible limit (current: {} bytes)",
+                                label,
+                                size,
+                                current
+                            );
+                        }
+                        self.record_peak_host_visible(next);
+                        break;
+                    }
+                    Err(observed) => current = observed,
+                }
+            }
+        }
+
         self.buffer_count.fetch_add(1, Ordering::Relaxed);
         let buffer_bytes = self.buffer_bytes.fetch_add(size, Ordering::Relaxed) + size;
         let texture_bytes = self.texture_bytes.load(Ordering::Relaxed);
         self.record_peak_total(buffer_bytes.saturating_add(texture_bytes));
 
-        if is_host_visible {
-            let host_visible = self.host_visible_bytes.fetch_add(size, Ordering::Relaxed) + size;
-            self.record_peak_host_visible(host_visible);
-        }
+        Ok(())
+    }
+
+    /// Register a buffer under the same authoritative aggregate primitive.
+    pub fn track_buffer_allocation(
+        &self,
+        size: u64,
+        is_host_visible: bool,
+    ) -> Result<(), RenderError> {
+        self.track_buffer_allocation_labeled(size, is_host_visible, "unlabeled tracked buffer")
     }
 
     pub fn free_buffer_allocation(&self, size: u64, is_host_visible: bool) {
@@ -180,7 +244,73 @@ impl ResourceRegistry {
             .store(tile_bytes, Ordering::Relaxed);
     }
 
+    pub fn allocate_resident_owner(&self) -> u64 {
+        self.resident_owner_next.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Publish one owner's terrain VT family residency and recompute the true
+    /// global per-family/aggregate footprint across every live renderer.
+    pub fn set_resident_family_for_owner(
+        &self,
+        owner_id: u64,
+        family_slot: usize,
+        count: u32,
+        tile_bytes: u64,
+    ) {
+        let slot = family_slot.min(self.resident_tiles_by_family.len() - 1);
+        let mut owners = self
+            .resident_owners
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        owners.entry(owner_id).or_insert([(0, 0); 4])[slot] = (count, tile_bytes);
+        if owners
+            .get(&owner_id)
+            .is_some_and(|families| families.iter().all(|value| *value == (0, 0)))
+        {
+            owners.remove(&owner_id);
+        }
+        self.refresh_resident_totals(&owners);
+    }
+
+    pub fn clear_resident_owner(&self, owner_id: u64) {
+        let mut owners = self
+            .resident_owners
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        owners.remove(&owner_id);
+        self.refresh_resident_totals(&owners);
+    }
+
+    fn refresh_resident_totals(&self, owners: &HashMap<u64, [(u32, u64); 4]>) {
+        let mut family_tiles = [0u32; 4];
+        let mut family_bytes = [0u64; 4];
+        for families in owners.values() {
+            for (slot, (count, bytes)) in families.iter().copied().enumerate() {
+                family_tiles[slot] = family_tiles[slot].saturating_add(count);
+                family_bytes[slot] = family_bytes[slot].saturating_add(bytes);
+            }
+        }
+        for slot in 0..4 {
+            self.resident_tiles_by_family[slot].store(family_tiles[slot], Ordering::Relaxed);
+            self.resident_tile_bytes_by_family[slot].store(family_bytes[slot], Ordering::Relaxed);
+        }
+        self.set_resident_tiles(
+            family_tiles.iter().copied().sum(),
+            family_bytes.iter().copied().sum(),
+        );
+    }
+
     pub fn clear_resident_tiles(&self) {
+        self.resident_owners
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+        for counter in &self.resident_tiles_by_family {
+            counter.store(0, Ordering::Relaxed);
+        }
+        for counter in &self.resident_tile_bytes_by_family {
+            counter.store(0, Ordering::Relaxed);
+        }
         self.set_resident_tiles(0, 0);
     }
 

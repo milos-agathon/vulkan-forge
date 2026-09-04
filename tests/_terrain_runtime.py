@@ -74,8 +74,8 @@ def _build_overlay():
 
 
 def _running_on_unsupported_hosted_macos_ci() -> bool:
-    # The dedicated Metal golden lane enables this explicitly after its terrain
-    # probe succeeds. Other hosted macOS jobs retain the conservative skip.
+    # An explicitly selected Metal support diagnostic may opt in after its
+    # terrain probe succeeds. Hosted macOS is never an acceptance prerequisite.
     return (
         os.environ.get("GITHUB_ACTIONS") == "true"
         and platform.system() == "Darwin"
@@ -95,16 +95,25 @@ def _running_on_unsupported_hosted_windows_ci() -> bool:
 
 
 @lru_cache(maxsize=1)
-def terrain_rendering_available() -> bool:
-    if _running_on_unsupported_hosted_macos_ci() or _running_on_unsupported_hosted_windows_ci():
-        return False
+def _terrain_rendering_unavailable_reason() -> "str | None":
+    """Return None when terrain rendering is available, else why it is not.
 
-    if not f3d.has_gpu() or not all(hasattr(f3d, name) for name in REQUIRED_SYMBOLS):
-        return False
+    The reason is what makes ``FORGE3D_TESSELLA_REQUIRED_GPU`` load-bearing:
+    on the required hardware lane an absent GPU must fail with a cause, not
+    silently degrade into a skip.
+    """
+    if _running_on_unsupported_hosted_macos_ci() or _running_on_unsupported_hosted_windows_ci():
+        return "hosted CI runner without a terrain-safe GPU"
+
+    if not f3d.has_gpu():
+        return "forge3d.has_gpu() reported no usable adapter"
+    missing = [name for name in REQUIRED_SYMBOLS if not hasattr(f3d, name)]
+    if missing:
+        return f"native terrain symbols missing: {', '.join(missing)}"
 
     probe = f3d.device_probe(os.environ.get("WGPU_BACKEND"))
     if not _adapter_is_terrain_safe(probe):
-        return False
+        return f"adapter is not terrain-safe: {probe}"
 
     env = os.environ.copy()
     env["FORGE3D_TERRAIN_PROBE_CHILD"] = "1"
@@ -131,9 +140,25 @@ def terrain_rendering_available() -> bool:
             stderr=subprocess.DEVNULL,
             timeout=120,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
+    except OSError as error:
+        return f"terrain probe child failed to start: {error}"
+    except subprocess.TimeoutExpired:
+        return "terrain probe child timed out after 120s"
+    if result.returncode != 0:
+        return f"terrain probe child exited with status {result.returncode}"
+    return None
+
+
+def terrain_rendering_available() -> bool:
+    reason = _terrain_rendering_unavailable_reason()
+    if reason is None:
+        return True
+    if os.environ.get("FORGE3D_TESSELLA_REQUIRED_GPU") == "1":
+        raise RuntimeError(
+            "FORGE3D_TESSELLA_REQUIRED_GPU=1 requires the TESSELLA hardware lane, "
+            f"but terrain rendering is unavailable: {reason}"
+        )
+    return False
 
 
 def _terrain_rendering_available_inprocess() -> bool:

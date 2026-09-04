@@ -417,6 +417,11 @@ impl Viewer {
             }
         }
 
+        // The PBR setter stages its fallible shadow replacement transactionally.
+        // Run it only after every other candidate is ready, but before any
+        // overlay, BVH, label, camera, sky, or registry state is committed.
+        self.apply_scene_review_pbr_preset(effective.preset.as_ref())?;
+
         // Commit: no fallible work remains. Drop old managed BVHs, atomically
         // swap both complete stacks, then update labels and registry last.
         for id in &old_vector_ids {
@@ -539,6 +544,70 @@ fn review_vector_layer(overlay: &ViewerVectorOverlayLayerConfig) -> VectorOverla
 }
 
 impl Viewer {
+    fn apply_scene_review_pbr_preset(
+        &mut self,
+        preset: Option<&Map<String, Value>>,
+    ) -> Result<(), String> {
+        let Some(preset) = preset else {
+            return Ok(());
+        };
+
+        let enabled = first_bool(preset, &["enabled", "terrain_pbr_enabled"]);
+        let hdr_path = first_string(preset, &["hdr_path", "hdr"]);
+        let ibl_intensity = first_f32(preset, &["ibl_intensity"]);
+        let hdr_rotate_deg = first_f32(preset, &["hdr_rotate_deg", "hdr_rotate"]);
+        let shadow_technique = first_string(preset, &["shadow_technique"]);
+        let shadow_map_res = first_u32(preset, &["shadow_map_res"]);
+        let exposure = first_f32(preset, &["exposure"]);
+        let msaa = first_u32(preset, &["msaa"]);
+        let normal_strength = first_f32(preset, &["normal_strength"]);
+        let height_ao = preset.get("height_ao").and_then(parse_height_ao_config);
+        let sun_visibility = preset
+            .get("sun_visibility")
+            .and_then(parse_sun_visibility_config);
+        let materials = preset.get("materials").and_then(parse_materials_config);
+        let vector_overlay = preset
+            .get("vector_overlay")
+            .and_then(parse_vector_overlay_config);
+        let tonemap = preset.get("tonemap").and_then(parse_tonemap_config);
+        let dof = preset.get("dof").and_then(parse_dof_config);
+        let motion_blur = preset.get("motion_blur").and_then(parse_motion_blur_config);
+        let lens_effects = preset
+            .get("lens_effects")
+            .and_then(parse_lens_effects_config);
+        let denoise = preset.get("denoise").and_then(parse_denoise_config);
+        let volumetrics = preset.get("volumetrics").and_then(parse_volumetrics_config);
+        let debug_mode = first_u32(preset, &["debug_mode"]);
+
+        if let Some(terrain_viewer) = self.terrain_viewer.as_mut() {
+            terrain_viewer
+                .set_terrain_pbr(
+                    enabled,
+                    hdr_path,
+                    ibl_intensity,
+                    hdr_rotate_deg,
+                    shadow_technique,
+                    shadow_map_res,
+                    exposure,
+                    msaa,
+                    normal_strength,
+                    height_ao,
+                    sun_visibility,
+                    materials,
+                    vector_overlay,
+                    tonemap,
+                    lens_effects,
+                    dof,
+                    motion_blur,
+                    volumetrics,
+                    denoise,
+                    debug_mode,
+                )
+                .map_err(|error| format!("scene-review terrain PBR preset rejected: {error}"))?;
+        }
+        Ok(())
+    }
+
     fn apply_scene_review_preset(&mut self, preset: Option<&Map<String, Value>>) {
         let Some(preset) = preset else {
             return;
@@ -571,33 +640,7 @@ impl Viewer {
         let water_level = first_f32(preset, &["water_level"]);
         let water_color = first_array3(preset, &["water_color"]);
 
-        let enabled = first_bool(preset, &["enabled", "terrain_pbr_enabled"]);
-        let hdr_path = first_string(preset, &["hdr_path", "hdr"]);
-        let ibl_intensity = first_f32(preset, &["ibl_intensity"]);
-        let hdr_rotate_deg = first_f32(preset, &["hdr_rotate_deg", "hdr_rotate"]);
-        let shadow_technique = first_string(preset, &["shadow_technique"]);
-        let shadow_map_res = first_u32(preset, &["shadow_map_res"]);
-        let exposure = first_f32(preset, &["exposure"]);
-        let msaa = first_u32(preset, &["msaa"]);
-        let normal_strength = first_f32(preset, &["normal_strength"]);
-        let height_ao = preset.get("height_ao").and_then(parse_height_ao_config);
-        let sun_visibility = preset
-            .get("sun_visibility")
-            .and_then(parse_sun_visibility_config);
-        let materials = preset.get("materials").and_then(parse_materials_config);
-        let vector_overlay = preset
-            .get("vector_overlay")
-            .and_then(parse_vector_overlay_config);
-        let tonemap = preset.get("tonemap").and_then(parse_tonemap_config);
-        let dof = preset.get("dof").and_then(parse_dof_config);
-        let motion_blur = preset.get("motion_blur").and_then(parse_motion_blur_config);
-        let lens_effects = preset
-            .get("lens_effects")
-            .and_then(parse_lens_effects_config);
-        let denoise = preset.get("denoise").and_then(parse_denoise_config);
-        let volumetrics = preset.get("volumetrics").and_then(parse_volumetrics_config);
         let sky = preset.get("sky").and_then(parse_sky_config);
-        let debug_mode = first_u32(preset, &["debug_mode"]);
 
         if let Some(ref mut terrain_viewer) = self.terrain_viewer {
             if let Some(ref mut terrain) = terrain_viewer.terrain {
@@ -641,29 +684,6 @@ impl Viewer {
                     terrain.water_color = value;
                 }
             }
-
-            terrain_viewer.set_terrain_pbr(
-                enabled,
-                hdr_path,
-                ibl_intensity,
-                hdr_rotate_deg,
-                shadow_technique,
-                shadow_map_res,
-                exposure,
-                msaa,
-                normal_strength,
-                height_ao,
-                sun_visibility,
-                materials,
-                vector_overlay,
-                tonemap,
-                lens_effects,
-                dof,
-                motion_blur,
-                volumetrics,
-                denoise,
-                debug_mode,
-            );
         }
 
         if let Some(cfg) = sky {

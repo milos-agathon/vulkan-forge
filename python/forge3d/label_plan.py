@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import math
@@ -11,7 +11,6 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .diagnostics import (
     Diagnostic,
-    experimental_feature_diagnostic,
     label_rejection_summary_diagnostic,
     missing_glyphs_diagnostic,
     placeholder_fallback_diagnostic,
@@ -34,6 +33,10 @@ REJECTION_REASONS = (
     "font_chain_required",
     "malformed_font",
     "shaping_failed",
+    "missing_geometry_authority",
+    "missing_projection_authority",
+    "no_eligible_candidate",
+    "incompatible_depth_convention",
 )
 
 CARTOGRAPHIC_PRIORITY_PRESET = (
@@ -124,6 +127,83 @@ def _viewport_size(viewport: Any) -> tuple[float, float] | None:
     if width is not None and height is not None:
         return (_number(width), _number(height))
     return None
+
+
+def _strict_projected_anchor(value: Any) -> list[float] | None:
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or len(value) < 3
+    ):
+        return None
+    anchor = [_number(item, default=float("nan")) for item in value[:3]]
+    if not all(math.isfinite(item) for item in anchor):
+        return None
+    return anchor
+
+
+def _project_anchor(
+    record: Mapping[str, Any],
+    camera: Any,
+    viewport: Any,
+    world_anchor: Sequence[float],
+) -> tuple[list[float] | None, str | None]:
+    """Resolve the serialized/projected screen anchor used for visibility.
+
+    Callers may serialize ``projected_anchor`` directly, or supply a camera
+    object with a deterministic ``project`` method. Legacy screen-coordinate
+    inputs remain unchanged.
+    """
+    projected = _strict_projected_anchor(record.get("projected_anchor"))
+    if projected is not None:
+        if "projected_depth" in record:
+            projected[2] = _number(record["projected_depth"], default=projected[2])
+        if math.isfinite(projected[2]):
+            return projected, "serialized_projected_anchor"
+        return None, None
+    projector = getattr(camera, "project", None)
+    declared = str(getattr(camera, "projection_authority", "")).lower()
+    if callable(projector) and declared in {"deterministic", "authoritative"}:
+        try:
+            value = projector(tuple(float(item) for item in world_anchor), viewport=viewport)
+        except TypeError:
+            value = projector(tuple(float(item) for item in world_anchor))
+        projected = _strict_projected_anchor(value)
+        if projected is None:
+            raise ValueError("camera.project must return a finite screen x/y/depth anchor")
+        return projected, "deterministic_camera_projection"
+    return None, None
+
+
+def _projection_diagnostic(label_id: str) -> Diagnostic:
+    return Diagnostic(
+        code="label_projection_authority_missing",
+        severity="error",
+        message="Authoritative depth visibility requires a projected screen anchor and depth.",
+        remediation=(
+            "Serialize projected_anchor=[x, y, depth] for this label or provide a "
+            "camera.project implementation declared with projection_authority='deterministic'."
+        ),
+        support_level="unsupported",
+        layer_id="labels",
+        object_id=label_id,
+        details={"required": "finite projected_anchor[x,y,depth]"},
+    )
+
+
+def _depth_convention_diagnostic(label_id: str) -> Diagnostic:
+    return Diagnostic(
+        code="label_depth_convention_incompatible",
+        severity="error",
+        message="Projected label depth is not compatible with the authoritative depth input.",
+        remediation=(
+            "Use the same explicit depth_convention and finite increasing depth_domain "
+            "for projected anchors and the serialized depth image."
+        ),
+        support_level="unsupported",
+        layer_id="labels",
+        object_id=label_id,
+    )
 
 
 def _iter_label_records(labels: Any) -> Iterable[tuple[str, Mapping[str, Any]]]:
@@ -333,19 +413,33 @@ def _terrain_sample(
     terrain: Any,
     label_id: str,
     coords: Sequence[float] | None = None,
+    candidate_id: str | None = None,
 ) -> Mapping[str, Any]:
+    for key in ("candidate_terrain_samples", "terrain_samples"):
+        indexed = record.get(key)
+        if (
+            candidate_id is not None
+            and isinstance(indexed, Mapping)
+            and isinstance(indexed.get(candidate_id), Mapping)
+        ):
+            return dict(indexed[candidate_id])
     sample = record.get("terrain_sample")
-    if isinstance(sample, Mapping):
-        return dict(sample)
-    terrain_record = record.get("terrain")
-    if isinstance(terrain_record, Mapping):
-        return dict(terrain_record)
+    if (
+        candidate_id is not None
+        and isinstance(sample, Mapping)
+        and str(sample.get("candidate_id", "")) == candidate_id
+        and isinstance(sample.get("sample"), Mapping)
+    ):
+        return dict(sample["sample"])
     if isinstance(terrain, Mapping):
         samples = terrain.get("samples")
-        if isinstance(samples, Mapping) and isinstance(samples.get(label_id), Mapping):
-            return dict(samples[label_id])
-        if isinstance(terrain.get(label_id), Mapping):
-            return dict(terrain[label_id])
+        label_samples = samples.get(label_id) if isinstance(samples, Mapping) else None
+        if (
+            candidate_id is not None
+            and isinstance(label_samples, Mapping)
+            and isinstance(label_samples.get(candidate_id), Mapping)
+        ):
+            return dict(label_samples[candidate_id])
     if coords is not None and _requires_terrain(record):
         if terrain is None:
             return {"source": "terrain_sampler", "unavailable": True, "visible": False}
@@ -376,10 +470,136 @@ def _native_declutter_optimal() -> Any | None:
     return getattr(native, "declutter_optimal", None)
 
 
+_SUPPORTED_DEPTH_CONVENTIONS = frozenset(
+    {
+        "normalized_device_depth",
+        "reverse_normalized_device_depth",
+        "linear_eye_depth",
+    }
+)
+
+
+def _depth_domain(value: Any) -> tuple[float, float] | None:
+    if isinstance(value, (str, bytes)):
+        return None
+    try:
+        if len(value) != 2:
+            return None
+        domain = (float(value[0]), float(value[1]))
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not all(math.isfinite(item) for item in domain) or domain[0] >= domain[1]:
+        return None
+    return domain
+
+
+def _derive_authoritative_depth_sample(
+    record: Mapping[str, Any],
+    raw_sample: Mapping[str, Any],
+    sample_anchor: Sequence[float],
+) -> dict[str, Any]:
+    """Validate depth evidence and derive visibility inside the compiler.
+
+    The sampler owns the scene-depth measurement.  The compiler owns the
+    projected label depth and comparison semantics, so a caller-supplied
+    ``visible`` flag is intentionally ignored and overwritten.
+    """
+    sample = dict(raw_sample)
+    projection_authority = str(record.get("projection_authority", "")).lower()
+    if projection_authority not in {
+        "deterministic",
+        "authoritative",
+        "deterministic_camera_projection",
+        "serialized_projected_anchor",
+    }:
+        sample.update(
+            {
+                "visible": False,
+                "depth_tested": False,
+                "projection_authority_missing": True,
+            }
+        )
+        return sample
+
+    sample_convention = str(sample.get("depth_convention", "")).lower()
+    projected_convention = str(
+        record.get("projected_depth_convention", "")
+    ).lower()
+    sample_domain = _depth_domain(sample.get("depth_domain"))
+    projected_domain = _depth_domain(record.get("projected_depth_domain"))
+    if (
+        sample.get("depth_convention_incompatible") is True
+        or sample_convention not in _SUPPORTED_DEPTH_CONVENTIONS
+        or sample_convention != projected_convention
+        or sample_domain is None
+        or sample_domain != projected_domain
+    ):
+        sample.update(
+            {
+                "visible": False,
+                "depth_tested": False,
+                "depth_convention_incompatible": True,
+                "depth_convention": sample_convention or None,
+                "depth_domain": (
+                    list(sample_domain) if sample_domain is not None else None
+                ),
+            }
+        )
+        return sample
+
+    try:
+        scene_depth = float(sample["scene_depth"])
+        label_depth = float(sample_anchor[2])
+        bias = float(sample.get("bias", 0.0))
+    except (KeyError, TypeError, ValueError, IndexError):
+        scene_depth = label_depth = bias = float("nan")
+    numeric_values = (scene_depth, label_depth, bias)
+    if (
+        not all(math.isfinite(value) for value in numeric_values)
+        or not (sample_domain[0] <= scene_depth <= sample_domain[1])
+        or not (sample_domain[0] <= label_depth <= sample_domain[1])
+    ):
+        sample.update(
+            {
+                "scene_depth": scene_depth if math.isfinite(scene_depth) else None,
+                "label_depth": label_depth if math.isfinite(label_depth) else None,
+                "bias": bias if math.isfinite(bias) else None,
+                "visible": False,
+                "depth_tested": False,
+                "depth_sample_invalid": True,
+                "depth_convention": sample_convention,
+                "depth_domain": list(sample_domain),
+            }
+        )
+        return sample
+
+    if sample_convention == "reverse_normalized_device_depth":
+        visible = label_depth >= scene_depth - bias
+        comparison = "reverse_greater_equal"
+    else:
+        visible = label_depth <= scene_depth + bias
+        comparison = "forward_less_equal"
+    sample.update(
+        {
+            "scene_depth": scene_depth,
+            "label_depth": label_depth,
+            "bias": bias,
+            "visible": bool(visible),
+            "depth_tested": True,
+            "depth_convention": sample_convention,
+            "depth_domain": list(sample_domain),
+            "depth_comparison": comparison,
+            "visibility_authority": "label_plan.compile",
+        }
+    )
+    return sample
+
+
 def _candidate_visibility_records(
     record: Mapping[str, Any],
     terrain: Any,
     label_id: str,
+    source_id: str,
     candidates: Sequence["LabelCandidate"],
 ) -> list[dict[str, Any]]:
     """Compile-time silhouette/depth visibility gate over candidate anchors.
@@ -390,24 +610,406 @@ def _candidate_visibility_records(
     citing the sampled depth versus the anchor depth.
     """
     records: list[dict[str, Any]] = []
-    if terrain is None or not _requires_terrain(record):
+    if not _requires_terrain(record):
         return records
     for candidate in candidates:
-        sample = _terrain_sample(record, terrain, label_id, candidate.anchor)
+        sample_anchor = list(candidate.anchor)
+        projected_depth = record.get("projected_depth")
+        geometry = record.get("geometry") if isinstance(record.get("geometry"), Mapping) else {}
+        world_anchor = _coordinates(
+            geometry.get("coordinates", record.get("position", record.get("world_pos")))
+        )
+        if projected_depth is not None:
+            sample_anchor[2] = _number(projected_depth, default=sample_anchor[2])
+        elif world_anchor is not None:
+            sample_anchor[2] = world_anchor[2]
+        sample = _terrain_sample(
+            record,
+            terrain,
+            label_id,
+            sample_anchor,
+            candidate_id=candidate.candidate_id,
+        )
+        depth_authority = str(sample.get("depth_authority", ""))
+        is_authoritative_depth = (
+            "scene_depth" in sample
+            or depth_authority
+            in {"pre_supplied_authoritative", "deterministic_depth_proxy"}
+            or str(sample.get("occlusion", "")).lower()
+            in {"depth", "depth_aov", "depth_silhouette"}
+        )
+        if is_authoritative_depth:
+            sample = _derive_authoritative_depth_sample(
+                record, sample, sample_anchor
+            )
+        if (
+            sample.get("visible") is not False
+            and not sample.get("depth_tested", False)
+            and "elevation" in sample
+        ):
+            elevation = _number(sample["elevation"], default=float("nan"))
+            if math.isfinite(elevation):
+                candidate.anchor = (
+                    float(candidate.anchor[0]),
+                    float(candidate.anchor[1]),
+                    elevation,
+                )
+            else:
+                sample = {
+                    **dict(sample),
+                    "visible": False,
+                    "terrain_sample_invalid": True,
+                }
+        candidate.terrain_sample = _json_safe(dict(sample))
+        details = dict(candidate.details or {})
+        if sample.get("visible") is False:
+            details["visible"] = False
+            gates = list(details.get("visibility_gates") or ())
+            gates.append(
+                {
+                    "kind": "occlusion",
+                    "terrain_sample": _json_safe(dict(sample)),
+                }
+            )
+            details["visibility_gates"] = gates
+        else:
+            details.setdefault("visible", True)
+        candidate.details = _json_safe(details)
         if sample.get("visible") is not False:
             continue
-        details = dict(candidate.details or {})
-        details["visible"] = False
-        candidate.details = _json_safe(details)
         records.append(
             {
                 "kind": "occluded_anchor",
                 "label_id": label_id,
+                "source_id": source_id,
                 "candidate_id": candidate.candidate_id,
                 "terrain_sample": _json_safe(dict(sample)),
             }
         )
     return records
+
+
+def _candidate_constraint_records(
+    *,
+    label_id: str,
+    source_id: str,
+    candidates: Sequence["LabelCandidate"],
+    viewport_size: tuple[float, float] | None,
+    keepouts: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for candidate in candidates:
+        details = dict(candidate.details or {})
+        gates = list(details.get("visibility_gates") or ())
+        bounds = _rect_bounds(candidate.bounds)
+        if viewport_size is not None and bounds is not None:
+            width, height = viewport_size
+            if (
+                bounds[0] < 0.0
+                or bounds[1] < 0.0
+                or bounds[2] > width
+                or bounds[3] > height
+            ):
+                gate = {
+                    "kind": "viewport",
+                    "candidate_bounds": bounds,
+                    "viewport": [width, height],
+                }
+                gates.append(gate)
+                records.append(
+                    {
+                        **gate,
+                        "kind": "candidate_ineligible",
+                        "gate": "viewport",
+                        "label_id": label_id,
+                        "source_id": source_id,
+                        "candidate_id": candidate.candidate_id,
+                    }
+                )
+        for keepout in keepouts:
+            if not _rects_intersect(candidate.bounds, keepout.get("bounds")):
+                continue
+            gate = {
+                "kind": "keepout",
+                "candidate_bounds": list(bounds or ()),
+                "keepout_bounds": list(keepout["bounds"]),
+                "keepout_kind": keepout["kind"],
+                "keepout_region_id": keepout["region_id"],
+            }
+            gates.append(gate)
+            records.append(
+                {
+                    **gate,
+                    "kind": "candidate_ineligible",
+                    "gate": "keepout",
+                    "label_id": label_id,
+                    "source_id": source_id,
+                    "candidate_id": candidate.candidate_id,
+                }
+            )
+        if gates:
+            details["visible"] = False
+            details["visibility_gates"] = gates
+            candidate.details = _json_safe(details)
+    return records
+
+
+def _ineligible_rejection_reason(candidates: Sequence["LabelCandidate"]) -> str:
+    gate_sets = [
+        {str(gate.get("kind")) for gate in (candidate.details or {}).get("visibility_gates", ())}
+        for candidate in candidates
+    ]
+    if gate_sets and all("occlusion" in gates for gates in gate_sets):
+        return "terrain_occluded"
+    if gate_sets and all("viewport" in gates for gates in gate_sets):
+        return "outside_view"
+    if gate_sets and all("keepout" in gates for gates in gate_sets):
+        return "keepout_region"
+    return "no_eligible_candidate"
+
+
+def _label_screen_size(
+    record: Mapping[str, Any],
+    text: str,
+    shaping_details: Mapping[str, Any],
+    typography: Mapping[str, Any] | None,
+) -> tuple[float, float]:
+    """Return a deterministic, non-degenerate screen footprint.
+
+    An explicit ``screen_bounds``/``label_size`` is authoritative. Otherwise
+    the already-shaped advances are used; this sizes the solver box without
+    laying out glyphs a second time.
+    """
+    explicit = _rect_bounds(record.get("screen_bounds"))
+    if explicit is not None and explicit[2] > explicit[0] and explicit[3] > explicit[1]:
+        return explicit[2] - explicit[0], explicit[3] - explicit[1]
+    size = record.get("label_size")
+    if isinstance(size, Sequence) and not isinstance(size, (str, bytes)) and len(size) >= 2:
+        width, height = _number(size[0]), _number(size[1])
+        if width > 0.0 and height > 0.0:
+            return width, height
+    normalized = _normalize_typography(typography or record.get("typography") or {})
+    font_size = _number(
+        normalized.get("font_size", normalized.get("size", normalized.get("text_size", 12.0))),
+        default=12.0,
+    )
+    if not math.isfinite(font_size) or font_size <= 0.0:
+        font_size = 12.0
+    positioned = shaping_details.get("positioned_glyphs")
+    extents: list[float] = []
+    if isinstance(positioned, Sequence) and not isinstance(positioned, (str, bytes)):
+        for glyph in positioned:
+            if not isinstance(glyph, Mapping):
+                continue
+            origin = glyph.get("origin")
+            glyph_advance = glyph.get("advance")
+            if (
+                isinstance(origin, Sequence)
+                and isinstance(glyph_advance, Sequence)
+                and len(origin) >= 1
+                and len(glyph_advance) >= 1
+            ):
+                left = _number(origin[0])
+                extents.extend((left, left + _number(glyph_advance[0])))
+    if extents:
+        advance = max(extents) - min(extents)
+    else:
+        advances = shaping_details.get("advances")
+        if isinstance(advances, Sequence) and not isinstance(advances, (str, bytes)):
+            # HarfBuzz advances use the packaged font's 26.6 fixed-point scale.
+            advance = sum(abs(_number(value)) for value in advances) / 64.0
+        else:
+            advance = max(1.0, len(text) * 0.6)
+    return max(1.0, advance * font_size), max(1.0, font_size)
+
+
+def _bounds_at_anchor(anchor: Sequence[float], size: tuple[float, float]) -> list[float]:
+    width, height = size
+    return [
+        float(anchor[0]) - width * 0.5,
+        float(anchor[1]) - height * 0.5,
+        float(anchor[0]) + width * 0.5,
+        float(anchor[1]) + height * 0.5,
+    ]
+
+
+def _ensure_candidate_bounds(
+    candidates: Sequence["LabelCandidate"], size: tuple[float, float]
+) -> None:
+    for candidate in candidates:
+        bounds = _rect_bounds(candidate.bounds)
+        if bounds is None or bounds[2] <= bounds[0] or bounds[3] <= bounds[1]:
+            candidate.bounds = tuple(_bounds_at_anchor(candidate.anchor, size))
+        else:
+            candidate.bounds = tuple(bounds)
+
+
+def _validated_authority_glyphs(value: Any) -> list[dict[str, Any]] | None:
+    """Validate and normalize one geometry-authority glyph stream.
+
+    Authority geometry is render input, not advisory metadata.  Validate every
+    numeric value before it can enter a candidate or the canonical plan, while
+    preserving authority-provided fields verbatim apart from numeric
+    normalization of the required compositor fields.
+    """
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or not value
+    ):
+        return None
+
+    validated: list[dict[str, Any]] = []
+    for glyph in value:
+        if not isinstance(glyph, Mapping):
+            return None
+        try:
+            item = _json_safe(dict(glyph))
+        except TypeError:
+            return None
+
+        def all_finite(payload: Any) -> bool:
+            if isinstance(payload, Mapping):
+                return all(all_finite(child) for child in payload.values())
+            if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes)):
+                return all(all_finite(child) for child in payload)
+            return not isinstance(payload, float) or math.isfinite(payload)
+
+        if not all_finite(item):
+            return None
+
+        for key in ("glyph_id", "font_index"):
+            raw_integer = item.get(key)
+            if isinstance(raw_integer, bool) or not isinstance(raw_integer, int):
+                return None
+            if raw_integer < 0:
+                return None
+
+        origin = item.get("origin")
+        if (
+            not isinstance(origin, Sequence)
+            or isinstance(origin, (str, bytes))
+            or len(origin) < 2
+        ):
+            return None
+        normalized_origin = [
+            _number(component, default=float("nan")) for component in origin
+        ]
+        if not all(math.isfinite(component) for component in normalized_origin):
+            return None
+
+        rotation = _number(item.get("rotation"), default=float("nan"))
+        if not math.isfinite(rotation):
+            return None
+
+        if "advance" in item:
+            advance = item["advance"]
+            if (
+                not isinstance(advance, Sequence)
+                or isinstance(advance, (str, bytes))
+                or len(advance) < 2
+            ):
+                return None
+            normalized_advance = [
+                _number(component, default=float("nan")) for component in advance
+            ]
+            if not all(math.isfinite(component) for component in normalized_advance):
+                return None
+            item["advance"] = normalized_advance
+
+        if "scale" in item:
+            scale = _number(item["scale"], default=float("nan"))
+            if not math.isfinite(scale) or scale <= 0.0:
+                return None
+            item["scale"] = scale
+
+        for key in ("cluster", "line_index"):
+            if key not in item:
+                continue
+            raw_integer = item[key]
+            if isinstance(raw_integer, bool) or not isinstance(raw_integer, int):
+                return None
+            if raw_integer < 0:
+                return None
+        if "has_outline" in item and not isinstance(item["has_outline"], bool):
+            return None
+
+        item["origin"] = normalized_origin
+        item["rotation"] = rotation
+        validated.append(item)
+    return validated
+
+
+def _authority_candidates(
+    record: Mapping[str, Any],
+    *,
+    label_id: str,
+    score: float,
+    ordering_key: str,
+    terrain_sample: Mapping[str, Any],
+) -> tuple[list["LabelCandidate"], Sequence[Mapping[str, Any]]] | None:
+    """Decode geometry emitted by the curved/line geometry authorities.
+
+    The compiler consumes candidate anchors, bounds, and optional positioned
+    glyphs verbatim. It deliberately performs no curve or line re-layout.
+    """
+    authority = record.get("geometry_authority")
+    if not isinstance(authority, Mapping):
+        return None
+    raw_candidates = authority.get("candidates")
+    if not isinstance(raw_candidates, Sequence) or isinstance(raw_candidates, (str, bytes)):
+        return None
+    source = str(authority.get("source", ""))
+    if source not in {"layout_curved_text", "compute_line_label_placement"}:
+        return None
+
+    shared_positioned = _validated_authority_glyphs(
+        authority.get("positioned_glyphs")
+    )
+    if shared_positioned is None:
+        return None
+
+    candidates: list[LabelCandidate] = []
+    for index, raw in enumerate(raw_candidates):
+        if not isinstance(raw, Mapping):
+            return None
+        anchor = _strict_projected_anchor(raw.get("anchor"))
+        bounds = _rect_bounds(raw.get("bounds"))
+        if anchor is None or bounds is None or bounds[2] <= bounds[0] or bounds[3] <= bounds[1]:
+            return None
+        details = dict(raw.get("details") or {})
+        details["geometry_authority"] = source
+        if "visible" in raw:
+            details["visible"] = bool(raw["visible"])
+        if "positioned_glyphs" in raw:
+            positioned = _validated_authority_glyphs(raw["positioned_glyphs"])
+            if positioned is None:
+                return None
+        else:
+            positioned = shared_positioned
+        # Every candidate carries only geometry that has already passed the
+        # complete authority-stream validation.  This prevents an unselected
+        # malformed stream from entering the canonical plan/hash, and lets the
+        # native choice reconstruct the exact candidate-specific glyphs.
+        details["positioned_glyphs"] = positioned
+        candidates.append(
+            LabelCandidate(
+                candidate_id=str(raw.get("candidate_id") or f"{label_id}:authority-{index}"),
+                candidate_type=str(raw.get("candidate_type") or "geometry_authority"),
+                anchor=anchor,
+                score=max(
+                    0.0,
+                    _number(raw.get("priority", raw.get("score", score)), default=score),
+                ),
+                bounds=bounds,
+                terrain_sample=terrain_sample,
+                details=details,
+                ordering_key=f"{ordering_key}:{index:04d}:{source}",
+            )
+        )
+    if not candidates:
+        return None
+    return candidates, shared_positioned
 
 
 def _candidate_policy(record: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -419,7 +1021,11 @@ def _priority_score(record: Mapping[str, Any], priority_ranks: Mapping[str, int]
     priority_class = str(record.get("priority_class", "default"))
     rank = int(priority_ranks.get(priority_class, 0))
     local_priority = _number(record.get("priority", 0))
-    return (rank * 1_000_000.0) + local_priority
+    # A label with the default public priority still has positive placement
+    # utility.  Without this unit baseline every default candidate has zero
+    # objective weight after non-negative clamping, so an optimal solver may
+    # select an arbitrary alternative or drop a conflict-free label entirely.
+    return 1.0 + max(0.0, (rank * 1_000_000.0) + local_priority)
 
 
 def _point_label_candidates(
@@ -460,7 +1066,7 @@ def _point_label_candidates(
                 candidate_id=f"{label_id}:{suffix}",
                 candidate_type=candidate_type,
                 anchor=anchor,
-                score=score - (order * 0.001),
+                score=max(0.0, score - (order * 0.001)),
                 bounds=[anchor[0], anchor[1], anchor[0], anchor[1]],
                 terrain_sample=terrain_sample,
                 details=details or {},
@@ -519,91 +1125,6 @@ def _point_label_candidates(
         )
 
     return candidates
-
-
-def _line_points(geometry: Mapping[str, Any]) -> list[list[float]] | None:
-    coordinates = geometry.get("coordinates")
-    if not isinstance(coordinates, Sequence) or isinstance(coordinates, (str, bytes)):
-        return None
-    points = []
-    for value in coordinates:
-        coords = _coordinates(value)
-        if coords is None:
-            return None
-        points.append(coords)
-    return points if len(points) >= 2 else None
-
-
-def _interpolate_line(points: Sequence[Sequence[float]], distance: float) -> list[float]:
-    remaining = max(0.0, distance)
-    for left, right in zip(points, points[1:]):
-        dx = right[0] - left[0]
-        dy = right[1] - left[1]
-        dz = right[2] - left[2]
-        segment = math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
-        if segment <= 0.0:
-            continue
-        if remaining <= segment:
-            t = remaining / segment
-            return [left[0] + dx * t, left[1] + dy * t, left[2] + dz * t]
-        remaining -= segment
-    return list(points[-1])
-
-
-def _line_length(points: Sequence[Sequence[float]]) -> float:
-    total = 0.0
-    for left, right in zip(points, points[1:]):
-        total += math.sqrt(
-            ((right[0] - left[0]) ** 2)
-            + ((right[1] - left[1]) ** 2)
-            + ((right[2] - left[2]) ** 2)
-        )
-    return total
-
-
-def _line_label_candidates(
-    *,
-    label_id: str,
-    geometry: Mapping[str, Any],
-    score: float,
-    ordering_key: str,
-    record: Mapping[str, Any],
-    terrain_sample: Mapping[str, Any],
-) -> tuple[LabelCandidate, list[LabelCandidate]] | None:
-    points = _line_points(geometry)
-    if points is None:
-        return None
-    length = _line_length(points)
-    if length <= 0.0:
-        return None
-    repeat_distance = max(0.0, _number(record.get("repeat_distance"), default=0.0))
-    if repeat_distance <= 0.0:
-        distances = [length * 0.5]
-    else:
-        count = max(1, int(math.floor(length / repeat_distance)) + 1)
-        distances = [index * repeat_distance for index in range(count)]
-    candidates: list[LabelCandidate] = []
-    preset = str(record.get("placement_preset", "line"))
-    for index, distance in enumerate(distances):
-        anchor = _interpolate_line(points, distance)
-        candidates.append(
-            LabelCandidate(
-                candidate_id=f"{label_id}:repeat-{index}",
-                candidate_type="line_repeat",
-                anchor=anchor,
-                score=score - (index * 0.001),
-                bounds=[anchor[0], anchor[1], anchor[0], anchor[1]],
-                terrain_sample=terrain_sample,
-                details={
-                    "repeat_distance": repeat_distance,
-                    "distance_along": round(distance, 6),
-                    "line_length": round(length, 6),
-                    "placement_preset": preset,
-                },
-                ordering_key=f"{ordering_key}:{index:02d}:line-repeat",
-            )
-        )
-    return candidates[0], candidates
 
 
 def _polygon_ring(geometry: Mapping[str, Any]) -> list[list[float]] | None:
@@ -712,14 +1233,30 @@ def _polygon_label_candidates(
         score=score,
         bounds=[centroid[0], centroid[1], centroid[0], centroid[1]],
         terrain_sample=terrain_sample,
-        details={"area": abs(area), "inside_polygon": centroid_inside},
+        details={
+            "area": abs(area),
+            "inside_polygon": centroid_inside,
+            "visible": centroid_inside,
+            **(
+                {}
+                if centroid_inside
+                else {
+                    "visibility_gates": [
+                        {
+                            "kind": "geometry",
+                            "reason": "centroid_outside_polygon",
+                        }
+                    ]
+                }
+            ),
+        },
         ordering_key=f"{ordering_key}:00:centroid",
     )
     visual_candidate = LabelCandidate(
         candidate_id=f"{label_id}:visual-center",
         candidate_type="visual_center",
         anchor=visual_center,
-        score=score - 0.001,
+        score=max(0.0, score - 0.001),
         bounds=[visual_center[0], visual_center[1], visual_center[0], visual_center[1]],
         terrain_sample=terrain_sample,
         details={"area": abs(area), "fallback_for": "centroid"},
@@ -1040,7 +1577,6 @@ class LabelPlan:
         gap_tolerance: float = 0.02,
         declutter_node_budget: int = 200_000,
     ) -> "LabelPlan":
-        del camera
         if declutter not in {"optimal", "greedy"}:
             raise ValueError("LabelPlan.compile declutter must be 'optimal' or 'greedy'")
         try:
@@ -1053,6 +1589,11 @@ class LabelPlan:
                 f"of {MAX_LABEL_RECORDS}"
             )
         viewport_size = _viewport_size(viewport)
+        if (
+            viewport_size is None
+            or not all(math.isfinite(value) and value > 0.0 for value in viewport_size)
+        ):
+            raise ValueError("LabelPlan.compile viewport must be finite and positive")
         keepout_payload = [
             region.to_dict() if isinstance(region, KeepoutRegion) else KeepoutRegion.from_dict(region).to_dict()
             for region in keepouts
@@ -1066,12 +1607,27 @@ class LabelPlan:
         missing_by_label: dict[str, list[str]] = {}
         rationale_records: list[dict[str, Any]] = []
 
-        records = sorted(_iter_label_records(labels), key=lambda item: _label_sort_key(item[1], item[0]))
-        for fallback_key, record in records:
+        records = sorted(
+            _iter_label_records(labels),
+            key=lambda item: (
+                _label_sort_key(item[1], item[0]),
+                _stable_json(item[1]),
+            ),
+        )
+        instance_occurrences: dict[str, int] = {}
+        for fallback_key, raw_record in records:
+            # Compile against an owned copy because projection metadata is
+            # resolved below.  A deterministic occurrence ordinal below keeps
+            # byte-identical duplicate public/source ids distinct without
+            # making list input order affect otherwise different records.
+            record = dict(raw_record)
             label_id = str(record.get("id", fallback_key))
             source_id = str(record.get("source_id", label_id))
             text = str(record.get("text", ""))
-            ordering_key = f"{label_id}:{source_id}:{_stable_json(record)}"
+            instance_base = f"{label_id}:{source_id}:{_stable_json(record)}"
+            instance_ordinal = instance_occurrences.get(instance_base, 0)
+            instance_occurrences[instance_base] = instance_ordinal + 1
+            ordering_key = f"{instance_base}:{instance_ordinal:08d}"
             glyph_sequence, shaping_details = _shape_label_glyphs(
                 text, glyph_atlas, record.get("line_ranges")
             )
@@ -1126,30 +1682,106 @@ class LabelPlan:
             geometry = record.get("geometry") if isinstance(record.get("geometry"), Mapping) else {}
             geometry_type = str(geometry.get("type", record.get("geometry_type", "Point")))
             geometry_type_key = geometry_type.lower()
-            terrain_sample = _terrain_sample(record, terrain, label_id)
-
-            if bool(record.get("curved_text")) or str(record.get("placement_preset", "")).lower() == "curved":
+            terrain_sample: Mapping[str, Any] = {}
+            score = _priority_score(record, priority_ranks)
+            requires_projection = bool(
+                getattr(terrain, "requires_projected_anchor", False)
+            )
+            authority = _authority_candidates(
+                record,
+                label_id=label_id,
+                score=score,
+                ordering_key=ordering_key,
+                terrain_sample=terrain_sample,
+            )
+            is_line = geometry_type_key == "linestring"
+            is_curved = bool(record.get("curved_text")) or str(
+                record.get("placement_preset", "")
+            ).lower() == "curved"
+            required_authority = (
+                "layout_curved_text" if is_curved else "compute_line_label_placement"
+            )
+            authority_payload = record.get("geometry_authority")
+            authority_source = (
+                str(authority_payload.get("source", ""))
+                if isinstance(authority_payload, Mapping)
+                else ""
+            )
+            if (is_line or is_curved) and (
+                authority is None or authority_source != required_authority
+            ):
                 diagnostics.append(
-                    experimental_feature_diagnostic(
-                        "advanced curved labels",
+                    Diagnostic(
+                        code="label_geometry_authority_missing",
+                        severity="error",
+                        message="Line and curved labels require authoritative positioned glyph geometry.",
+                        remediation=(
+                            f"Provide geometry_authority.source={required_authority!r} with "
+                            "nonempty candidates and positioned_glyphs."
+                        ),
+                        support_level="unsupported",
                         layer_id="labels",
                         object_id=label_id,
+                        details={"required_authority": required_authority},
                     )
                 )
                 rejected.append(
                     RejectedLabel(
                         label_id=label_id,
                         source_id=source_id,
-                        reason="unsupported_geometry_type",
-                        diagnostic_refs=["experimental_feature"],
+                        reason="missing_geometry_authority",
+                        diagnostic_refs=["label_geometry_authority_missing"],
                         ordering_key=ordering_key,
-                        details={"placement": "curved_text"},
+                        details={"required_authority": required_authority},
                     )
                 )
                 continue
+            if authority is not None and requires_projection:
+                projection_declaration = str(
+                    authority_payload.get("projection_authority", "")
+                    if isinstance(authority_payload, Mapping)
+                    else ""
+                ).lower()
+                if projection_declaration not in {"deterministic", "authoritative"}:
+                    diagnostics.append(_projection_diagnostic(label_id))
+                    rejected.append(
+                        RejectedLabel(
+                            label_id=label_id,
+                            source_id=source_id,
+                            reason="missing_projection_authority",
+                            diagnostic_refs=["label_projection_authority_missing"],
+                            ordering_key=ordering_key,
+                            details={
+                                "required": "geometry_authority.projection_authority"
+                            },
+                        )
+                    )
+                    continue
+                record["projection_authority"] = projection_declaration
 
-            if geometry_type_key == "point":
-                coords = _coordinates(geometry.get("coordinates", record.get("position", record.get("world_pos"))))
+            authority_positioned: Sequence[Mapping[str, Any]] = ()
+            if authority is not None:
+                candidates, authority_positioned = authority
+                candidate = candidates[0]
+                authority_positioned = tuple(
+                    (candidate.details or {}).get("positioned_glyphs") or ()
+                )
+                x, y, z = candidate.anchor
+                screen_bounds = list(candidate.bounds or ())
+                world_coords = _coordinates(
+                    geometry.get("coordinates", record.get("position", record.get("world_pos")))
+                )
+                if world_coords is None or geometry_type_key != "point":
+                    world_bounds = [x, y, z, x, y, z]
+                else:
+                    world_bounds = [*world_coords, *world_coords]
+            elif geometry_type_key == "point":
+                world_coords = _coordinates(
+                    geometry.get(
+                        "coordinates", record.get("position", record.get("world_pos"))
+                    )
+                )
+                coords = world_coords
                 if coords is None:
                     rejected.append(
                         RejectedLabel(
@@ -1161,65 +1793,62 @@ class LabelPlan:
                     )
                     continue
 
-                terrain_sample = _terrain_sample(record, terrain, label_id, coords)
-                if terrain_sample.get("visible") is not False and "elevation" in terrain_sample:
-                    coords = [coords[0], coords[1], _number(terrain_sample["elevation"], default=coords[2])]
+                projected, projection_authority = _project_anchor(
+                    record, camera, viewport, coords
+                )
+                if requires_projection and projected is None:
+                    diagnostics.append(_projection_diagnostic(label_id))
+                    rejected.append(
+                        RejectedLabel(
+                            label_id=label_id,
+                            source_id=source_id,
+                            reason="missing_projection_authority",
+                            diagnostic_refs=["label_projection_authority_missing"],
+                            ordering_key=ordering_key,
+                            details={"required": "finite projected_anchor[x,y,depth]"},
+                        )
+                    )
+                    continue
+                coords = projected if projected is not None else list(coords)
+                if projected is not None:
+                    record["projected_depth"] = coords[2]
+                    record["projection_authority"] = projection_authority
 
                 x, y, z = coords
                 screen_bounds = [x, y, x, y]
-                world_bounds = [x, y, z, x, y, z]
+                if projected is not None:
+                    assert world_coords is not None
+                    world_bounds = [*world_coords, *world_coords]
+                else:
+                    world_bounds = [x, y, z, x, y, z]
                 candidates = _point_label_candidates(
                     label_id=label_id,
                     coords=coords,
-                    score=_priority_score(record, priority_ranks),
+                    score=score,
                     ordering_key=ordering_key,
                     record=record,
                     seed=int(seed),
                     terrain_sample=terrain_sample,
                 )
                 candidate = candidates[0]
-            elif geometry_type_key == "linestring":
-                preset = str(record.get("placement_preset", "")).lower()
-                if "repeat_distance" not in record and preset not in {"road", "river", "line"}:
-                    rejected.append(
-                        RejectedLabel(
-                            label_id=label_id,
-                            source_id=source_id,
-                            reason="unsupported_geometry_type",
-                            ordering_key=ordering_key,
-                            details={"geometry_type": geometry_type},
-                        )
-                    )
-                    continue
-                line_candidates = _line_label_candidates(
-                    label_id=label_id,
-                    geometry=geometry,
-                    score=_priority_score(record, priority_ranks),
-                    ordering_key=ordering_key,
-                    record=record,
-                    terrain_sample=terrain_sample,
-                )
-                if line_candidates is None:
-                    rejected.append(
-                        RejectedLabel(
-                            label_id=label_id,
-                            source_id=source_id,
-                            reason="invalid_geometry",
-                            ordering_key=ordering_key,
-                        )
-                    )
-                    continue
-                candidate, candidates = line_candidates
-                x, y, z = candidate.anchor
-                xs = [point[0] for point in _line_points(geometry) or [candidate.anchor]]
-                ys = [point[1] for point in _line_points(geometry) or [candidate.anchor]]
-                screen_bounds = [min(xs), min(ys), max(xs), max(ys)]
-                world_bounds = [min(xs), min(ys), z, max(xs), max(ys), z]
             elif geometry_type_key == "polygon":
+                if requires_projection:
+                    diagnostics.append(_projection_diagnostic(label_id))
+                    rejected.append(
+                        RejectedLabel(
+                            label_id=label_id,
+                            source_id=source_id,
+                            reason="missing_projection_authority",
+                            diagnostic_refs=["label_projection_authority_missing"],
+                            ordering_key=ordering_key,
+                            details={"required": "projected polygon candidates"},
+                        )
+                    )
+                    continue
                 polygon_candidates = _polygon_label_candidates(
                     label_id=label_id,
                     geometry=geometry,
-                    score=_priority_score(record, priority_ranks),
+                    score=score,
                     ordering_key=ordering_key,
                     terrain_sample=terrain_sample,
                 )
@@ -1249,30 +1878,83 @@ class LabelPlan:
                 )
                 continue
 
-            if viewport_size is not None:
-                width, height = viewport_size
-                if x < 0.0 or y < 0.0 or x > width or y > height:
-                    rejected.append(
-                        RejectedLabel(
-                            label_id=label_id,
-                            source_id=source_id,
-                            reason="outside_view",
-                            ordering_key=ordering_key,
-                            details={"viewport": [width, height]},
+            _ensure_candidate_bounds(
+                candidates,
+                _label_screen_size(record, text, shaping_details, typography),
+            )
+            candidate = next(
+                item for item in candidates if item.candidate_id == candidate.candidate_id
+            )
+            explicit_bounds = _rect_bounds(record.get("screen_bounds"))
+            if authority is None and explicit_bounds is not None:
+                primary_x, primary_y = candidate.anchor[:2]
+                for item in candidates:
+                    dx = float(item.anchor[0]) - float(primary_x)
+                    dy = float(item.anchor[1]) - float(primary_y)
+                    item.bounds = tuple(
+                        (
+                            explicit_bounds[0] + dx,
+                            explicit_bounds[1] + dy,
+                            explicit_bounds[2] + dx,
+                            explicit_bounds[3] + dy,
                         )
                     )
-                    continue
+            screen_bounds = list(candidate.bounds or screen_bounds)
 
-            if terrain_sample.get("visible") is False:
-                rationale_records.append(
-                    {
-                        "kind": "occluded_anchor",
-                        "label_id": label_id,
-                        "candidate_id": candidate.candidate_id,
-                        "terrain_sample": _json_safe(dict(terrain_sample)),
-                    }
+            visibility_records = _candidate_visibility_records(
+                record, terrain, label_id, source_id, candidates
+            )
+            terrain_sample = dict(candidate.terrain_sample or {})
+            if (
+                authority is None
+                and geometry_type_key == "point"
+                and not record.get("projection_authority")
+                and world_coords is not None
+                and terrain_sample.get("visible") is not False
+                and not terrain_sample.get("depth_tested", False)
+                and "elevation" in terrain_sample
+            ):
+                grounded_z = float(candidate.anchor[2])
+                world_bounds = [
+                    float(world_coords[0]),
+                    float(world_coords[1]),
+                    grounded_z,
+                    float(world_coords[0]),
+                    float(world_coords[1]),
+                    grounded_z,
+                ]
+            rationale_records.extend(visibility_records)
+            rationale_records.extend(
+                _candidate_constraint_records(
+                    label_id=label_id,
+                    source_id=source_id,
+                    candidates=candidates,
+                    viewport_size=viewport_size,
+                    keepouts=keepout_payload,
                 )
+            )
+            visible_candidates = [
+                item
+                for item in candidates
+                if (item.details or {}).get("visible") is not False
+                and (item.terrain_sample or {}).get("visible") is not False
+            ]
+            if not visible_candidates:
                 diagnostic_refs = ["label_rejection_summary"]
+                projection_missing = any(
+                    bool((item.terrain_sample or {}).get("projection_authority_missing"))
+                    for item in candidates
+                )
+                if projection_missing:
+                    diagnostics.append(_projection_diagnostic(label_id))
+                    diagnostic_refs.append("label_projection_authority_missing")
+                depth_incompatible = any(
+                    bool((item.terrain_sample or {}).get("depth_convention_incompatible"))
+                    for item in candidates
+                )
+                if depth_incompatible:
+                    diagnostics.append(_depth_convention_diagnostic(label_id))
+                    diagnostic_refs.append("label_depth_convention_incompatible")
                 if terrain_sample.get("unavailable") is True:
                     diagnostics.append(
                         placeholder_fallback_diagnostic(
@@ -1282,47 +1964,60 @@ class LabelPlan:
                         )
                     )
                     diagnostic_refs.append("placeholder_fallback")
+                reason = (
+                    "missing_projection_authority"
+                    if projection_missing
+                    else (
+                        "incompatible_depth_convention"
+                        if depth_incompatible
+                        else _ineligible_rejection_reason(candidates)
+                    )
+                )
+                gate_details = {
+                    item.candidate_id: list(
+                        (item.details or {}).get("visibility_gates") or ()
+                    )
+                    for item in candidates
+                }
+                rejection_details: dict[str, Any] = {
+                    "terrain_sample": terrain_sample,
+                    "candidate_gates": gate_details,
+                }
+                if reason == "keepout_region":
+                    keepout_gate = next(
+                        (
+                            gate
+                            for item in candidates
+                            for gate in (item.details or {}).get(
+                                "visibility_gates", ()
+                            )
+                            if gate.get("kind") == "keepout"
+                        ),
+                        None,
+                    )
+                    if keepout_gate is not None:
+                        rejection_details.update(
+                            {
+                                key: keepout_gate[key]
+                                for key in (
+                                    "keepout_bounds",
+                                    "keepout_kind",
+                                    "keepout_region_id",
+                                )
+                            }
+                        )
                 rejected.append(
                     RejectedLabel(
                         label_id=label_id,
                         source_id=source_id,
-                        reason="terrain_occluded",
+                        reason=reason,
                         candidate_id=candidate.candidate_id,
                         diagnostic_refs=diagnostic_refs,
                         ordering_key=ordering_key,
-                        details={"terrain_sample": terrain_sample},
+                        details=rejection_details,
                     )
                 )
                 continue
-
-            keepout_hit = next(
-                (
-                    keepout
-                    for keepout in keepout_payload
-                    if _rects_intersect(screen_bounds, keepout.get("bounds"))
-                ),
-                None,
-            )
-            if keepout_hit is not None:
-                rejected.append(
-                    RejectedLabel(
-                        label_id=label_id,
-                        source_id=source_id,
-                        reason="keepout_region",
-                        candidate_id=candidate.candidate_id,
-                        ordering_key=ordering_key,
-                        details={
-                            "keepout_bounds": keepout_hit["bounds"],
-                            "keepout_kind": keepout_hit["kind"],
-                            "keepout_region_id": keepout_hit["region_id"],
-                        },
-                    )
-                )
-                continue
-
-            rationale_records.extend(
-                _candidate_visibility_records(record, terrain, label_id, candidates)
-            )
             accepted.append(
                 AcceptedLabel(
                     label_id=label_id,
@@ -1344,7 +2039,11 @@ class LabelPlan:
                     },
                     glyphs=list(glyph_sequence),
                     line_ranges=shaping_details.get("line_ranges", ()),
-                    positioned_glyphs=shaping_details.get("positioned_glyphs", ()),
+                    positioned_glyphs=(
+                        authority_positioned
+                        if authority_positioned
+                        else shaping_details.get("positioned_glyphs", ())
+                    ),
                     ordering_key=ordering_key,
                 )
             )
@@ -1413,6 +2112,18 @@ class LabelPlan:
         areas, displaced label ids, sampled depths) captured at solve time.
         """
         return [_render_rationale_record(record) for record in self.rationale]
+
+    def canonical_bytes(self) -> bytes:
+        """Return the public canonical byte representation of this plan."""
+        from ._canonical_json import canonical_json_bytes
+
+        return canonical_json_bytes(
+            self.to_dict(), error_context="LabelPlan canonical serialization"
+        )
+
+    def plan_hash(self) -> str:
+        """Return SHA-256 over :meth:`canonical_bytes`."""
+        return hashlib.sha256(self.canonical_bytes()).hexdigest()
 
     def _payload_with_backend(
         self,
@@ -1518,6 +2229,7 @@ def _resolve_label_collisions(
                 ordering_key=label.ordering_key,
                 details={
                     "collides_with": winner.label_id,
+                    "collides_with_source_id": winner.source_id,
                     "candidate_bounds": list(label.screen_bounds or ()),
                     "winner_bounds": list(winner.screen_bounds or ()),
                     "candidate_priority": label_score,
@@ -1544,6 +2256,7 @@ def _collision_rejection(label: AcceptedLabel, winner: AcceptedLabel) -> Rejecte
         ordering_key=label.ordering_key,
         details={
             "collides_with": winner.label_id,
+            "collides_with_source_id": winner.source_id,
             "candidate_bounds": list(label.screen_bounds or ()),
             "winner_bounds": list(winner.screen_bounds or ()),
             "candidate_priority": label_score,
@@ -1554,27 +2267,78 @@ def _collision_rejection(label: AcceptedLabel, winner: AcceptedLabel) -> Rejecte
     )
 
 
-def _translate_native_rationale(native_rationale: Any, ordered: Sequence[AcceptedLabel]) -> list[dict[str, Any]]:
+def _translate_native_rationale(
+    native_rationale: Any,
+    ordered: Sequence[AcceptedLabel],
+    candidate_lookup: Mapping[tuple[int, int], LabelCandidate],
+) -> list[dict[str, Any]]:
     """Map native solver records (index-keyed) back to plan label ids."""
     records: list[dict[str, Any]] = []
     for raw in native_rationale.records():
         record = dict(raw)
         kind = str(record.get("kind", ""))
-        if kind in {"placed", "dropped", "occluded_candidate"}:
-            label = ordered[int(record.pop("label_id"))]
-            record.pop("candidate_index", None)
+        if kind in {
+            "placed",
+            "dropped",
+            "occluded_candidate",
+            "visibility_filtered_candidate",
+        }:
+            label_index = int(record.pop("label_id"))
+            candidate_index = int(record.pop("candidate_index", 0))
+            label = ordered[label_index]
+            candidate = candidate_lookup[(label_index, candidate_index)]
+            visibility_gates = list(
+                (candidate.details or {}).get("visibility_gates", ())
+            )
+            gates = {str(gate.get("kind")) for gate in visibility_gates}
+            if kind == "occluded_candidate":
+                # The compiler emits ``occluded_anchor`` with the actual
+                # sampled depths before solving; the native record is only a
+                # duplicate visibility-gate echo.
+                continue
+            if kind == "visibility_filtered_candidate":
+                # Compile-time visibility already emitted a more specific,
+                # grounded Python record for these gates.  Suppress the
+                # solver's generic echo so public rationale has one decision
+                # per eligibility fact.
+                if gates.intersection({"occlusion", "viewport", "keepout"}):
+                    continue
+                record["candidate_index"] = candidate_index
+                record["candidate_bounds"] = list(candidate.bounds or ())
+                record["visibility_gates"] = _json_safe(visibility_gates)
+                if visibility_gates:
+                    record["visibility_reason"] = ",".join(
+                        sorted(
+                            f"{gate.get('kind')}:{gate.get('reason', 'ineligible')}"
+                            for gate in visibility_gates
+                        )
+                    )
+                elif (candidate.details or {}).get("geometry_authority"):
+                    record["visibility_reason"] = "geometry_authority_visible_false"
+                else:
+                    record["visibility_reason"] = "compiled_visibility_gate"
             record["label_id"] = label.label_id
-            record["candidate_id"] = label.candidate.candidate_id
+            record["source_id"] = label.source_id
+            if kind != "visibility_filtered_candidate":
+                record["solver_label_index"] = label_index
+            record["candidate_id"] = candidate.candidate_id
             for key in ("displaced", "blocking"):
                 if key not in record:
                     continue
                 entries = []
                 for entry in record[key]:
-                    other = ordered[int(entry["label_id"])]
+                    other_label_index = int(entry["label_id"])
+                    other_candidate_index = int(entry.get("candidate_index", 0))
+                    other = ordered[other_label_index]
+                    other_candidate = candidate_lookup[
+                        (other_label_index, other_candidate_index)
+                    ]
                     entries.append(
                         {
                             "label_id": other.label_id,
-                            "candidate_id": other.candidate.candidate_id,
+                            "source_id": other.source_id,
+                            "solver_label_index": other_label_index,
+                            "candidate_id": other_candidate.candidate_id,
                             "overlap_area_px": float(entry.get("overlap_area_px", 0.0)),
                         }
                     )
@@ -1594,50 +2358,79 @@ def _resolve_label_placements_optimal(
 ) -> tuple[list[AcceptedLabel], list[RejectedLabel], list[dict[str, Any]]]:
     """Bounded-optimal select-or-drop placement over the compiled candidates.
 
-    Each label contributes its compiled primary candidate box; the native
-    branch-and-bound solver maximizes total placed priority weight under
-    pairwise non-overlap, with deterministic quantized arithmetic.
+    Every stable candidate is forwarded with its true per-label index,
+    authoritative non-degenerate bounds, priority, and visibility gate. The
+    native choice is then reconstructed exactly on the compiled label.
     """
     ordered = sorted(
         accepted,
         key=lambda label: (label.ordering_key or label.label_id, label.label_id),
     )
     solver_input = []
+    candidate_lookup: dict[tuple[int, int], LabelCandidate] = {}
     for index, label in enumerate(ordered):
-        bounds = _rect_bounds(label.screen_bounds)
-        if bounds is None:
-            anchor = label.candidate.anchor
-            bounds = [anchor[0], anchor[1], anchor[0], anchor[1]]
-        solver_input.append(
-            (
-                index,
-                0,
-                (float(bounds[0]), float(bounds[1]), float(bounds[2]), float(bounds[3])),
-                float(label.candidate.score),
-                True,
+        for candidate_index, candidate in enumerate(label.candidates):
+            bounds = _rect_bounds(candidate.bounds)
+            if bounds is None or bounds[2] <= bounds[0] or bounds[3] <= bounds[1]:
+                raise ValueError(
+                    f"label candidate {candidate.candidate_id!r} lacks non-degenerate "
+                    "screen-space bounds"
+                )
+            visible = (
+                (candidate.details or {}).get("visible") is not False
+                and (candidate.terrain_sample or {}).get("visible") is not False
             )
-        )
+            candidate_lookup[(index, candidate_index)] = candidate
+            solver_input.append(
+                (
+                    index,
+                    candidate_index,
+                    (float(bounds[0]), float(bounds[1]), float(bounds[2]), float(bounds[3])),
+                    float(candidate.score),
+                    bool(visible),
+                )
+            )
     placements, _gap, native_rationale = solver(
         solver_input,
         gap_tolerance=float(gap_tolerance),
         node_budget=int(node_budget),
         margin=0.0,
     )
-    placed_indices = {int(index) for index, _candidate in placements}
+    placed_choices = {(int(index), int(candidate)) for index, candidate in placements}
+    placed_by_label = {
+        label_index: candidate_index for label_index, candidate_index in placed_choices
+    }
 
     winners: list[AcceptedLabel] = []
     rejections: list[RejectedLabel] = []
-    placed_labels = [ordered[index] for index in sorted(placed_indices)]
+    placed_labels: list[AcceptedLabel] = []
+    placed_by_index: dict[int, AcceptedLabel] = {}
+    for label_index, candidate_index in sorted(placed_choices):
+        label = ordered[label_index]
+        candidate = candidate_lookup[(label_index, candidate_index)]
+        positioned = (candidate.details or {}).get("positioned_glyphs")
+        placed = replace(
+                label,
+                candidate=candidate,
+                screen_bounds=tuple(candidate.bounds or ()),
+                positioned_glyphs=(positioned if positioned is not None else label.positioned_glyphs),
+            )
+        placed_labels.append(placed)
+        placed_by_index[label_index] = placed
     for index, label in enumerate(ordered):
-        if index in placed_indices:
-            winners.append(label)
+        if index in placed_by_label:
+            winners.append(placed_by_index[index])
             continue
+        conflicts = [
+            (candidate, placed)
+            for candidate in label.candidates
+            if (candidate.details or {}).get("visible") is not False
+            and (candidate.terrain_sample or {}).get("visible") is not False
+            for placed in placed_labels
+            if _rects_intersect(candidate.bounds, placed.screen_bounds)
+        ]
         blockers = sorted(
-            (
-                placed
-                for placed in placed_labels
-                if _rects_intersect(label.screen_bounds, placed.screen_bounds)
-            ),
+            (placed for _candidate, placed in conflicts),
             key=lambda placed: (
                 -float(placed.candidate.score),
                 placed.ordering_key or placed.label_id,
@@ -1645,14 +2438,37 @@ def _resolve_label_placements_optimal(
             ),
         )
         if not blockers:
-            # The solve only drops a conflict-free label when its weight is
-            # negative; keep the greedy place-everything-that-fits contract.
-            winners.append(label)
-            placed_labels.append(label)
+            # Native may legitimately drop a non-positive candidate without a
+            # geometric blocker. Preserve that exact solve outcome.
+            rejections.append(
+                RejectedLabel(
+                    label_id=label.label_id,
+                    source_id=label.source_id,
+                    reason="priority_lost",
+                    candidate_id=label.candidate.candidate_id,
+                    diagnostic_refs=["label_rejection_summary"],
+                    ordering_key=label.ordering_key,
+                    details={"candidate_priority": float(label.candidate.score)},
+                )
+            )
             continue
-        rejections.append(_collision_rejection(label, blockers[0]))
+        rejected_candidate = next(
+            candidate for candidate, placed in conflicts if placed is blockers[0]
+        )
+        rejections.append(
+            _collision_rejection(
+                replace(
+                    label,
+                    candidate=rejected_candidate,
+                    screen_bounds=tuple(rejected_candidate.bounds or ()),
+                ),
+                blockers[0],
+            )
+        )
 
-    return winners, rejections, _translate_native_rationale(native_rationale, ordered)
+    return winners, rejections, _translate_native_rationale(
+        native_rationale, ordered, candidate_lookup
+    )
 
 
 def _resolve_label_placements(
@@ -1682,7 +2498,33 @@ def _resolve_label_placements(
         diagnostics.append(
             placeholder_fallback_diagnostic("optimal_declutter", layer_id="labels")
         )
-    winners, rejections = _resolve_label_collisions(accepted)
+    visible_fallback: list[AcceptedLabel] = []
+    for label in accepted:
+        candidate = next(
+            (
+                item
+                for item in label.candidates
+                if (item.details or {}).get("visible") is not False
+                and (item.terrain_sample or {}).get("visible") is not False
+            ),
+            None,
+        )
+        if candidate is None:
+            continue
+        positioned = (candidate.details or {}).get("positioned_glyphs")
+        visible_fallback.append(
+            replace(
+                label,
+                candidate=candidate,
+                screen_bounds=tuple(candidate.bounds or ()),
+                positioned_glyphs=(
+                    positioned
+                    if positioned is not None
+                    else label.positioned_glyphs
+                ),
+            )
+        )
+    winners, rejections = _resolve_label_collisions(visible_fallback)
     records: list[dict[str, Any]] = []
     for rejection in rejections:
         details = dict(rejection.details or {})
@@ -1690,9 +2532,15 @@ def _resolve_label_placements(
             {
                 "kind": "dropped",
                 "label_id": rejection.label_id,
+                "source_id": rejection.source_id,
                 "candidate_id": rejection.candidate_id,
                 "priority_lost": rejection.reason == "priority_lost",
-                "blocking": [{"label_id": details.get("collides_with")}],
+                "blocking": [
+                    {
+                        "label_id": details.get("collides_with"),
+                        "source_id": details.get("collides_with_source_id"),
+                    }
+                ],
             }
         )
     records.append(
@@ -1701,7 +2549,7 @@ def _resolve_label_placements(
             "algorithm": "greedy",
             "gap": None,
             "certified": False,
-            "nodes_explored": len(tuple(accepted)),
+            "nodes_explored": len(visible_fallback),
             "gap_tolerance": float(gap_tolerance),
         }
     )
@@ -1749,6 +2597,29 @@ def _render_rationale_record(record: Mapping[str, Any]) -> str:
         if scene_depth is not None:
             return f"occluded anchor {anchor!r}: terrain elevation {float(scene_depth):.3f} occludes anchor"
         return f"occluded anchor {anchor!r}: silhouette/depth visibility gate"
+    if kind == "visibility_filtered_candidate":
+        return (
+            f"filtered label {record.get('label_id')!r} "
+            f"(source {record.get('source_id')!r}) candidate "
+            f"{record.get('candidate_id')!r} at index "
+            f"{int(record.get('candidate_index', 0))}: "
+            f"{record.get('visibility_reason')}; bounds "
+            f"{record.get('candidate_bounds')}"
+        )
+    if kind == "candidate_ineligible":
+        candidate = record.get("candidate_id")
+        gate = record.get("gate")
+        if gate == "viewport":
+            return (
+                f"ineligible candidate {candidate!r}: bounds "
+                f"{record.get('candidate_bounds')} outside viewport {record.get('viewport')}"
+            )
+        if gate == "keepout":
+            return (
+                f"ineligible candidate {candidate!r}: overlaps keepout "
+                f"{record.get('keepout_region_id')!r} at {record.get('keepout_bounds')}"
+            )
+        return f"ineligible candidate {candidate!r}: {gate} visibility gate"
     if kind == "solver":
         gap = record.get("gap")
         gap_text = "n/a" if gap is None else f"{float(gap):.6f}"

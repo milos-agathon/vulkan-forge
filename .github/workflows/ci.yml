@@ -5,23 +5,177 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
-      update_recipe_certificates:
-        description: Refresh signed recipe certificates after a reviewed WGSL change.
-        required: false
-        default: false
-        type: boolean
+      scope:
+        description: Select the expensive acceptance scope; core is hosted CI only.
+        required: true
+        default: core
+        type: choice
+        options:
+          - core
+          - full
+          - determinism
+          - m06
+          - f3dz
+          - anamnesis
+          - tessella
+          - helios
 
 permissions:
   contents: read
   pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('manual-{0}', github.ref_name) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
+  # Cheap repository-native workflow contracts run before any Rust matrix,
+  # wheel build, LFS download, or physical-runner allocation.
+  preflight:
+    name: CI Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Pull-request activity payloads can retain an old base SHA and expose the
+      # legacy PR head as github.sha. Start from the live base branch instead,
+      # then integrate the immutable PR head locally. Every source/artifact job
+      # below remains exact-head.
+      - name: Checkout live policy base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && format('refs/heads/{0}', github.base_ref) || github.sha }}
+          fetch-depth: 0
+
+      # workflow_dispatch normally resolves github.sha to the selected
+      # candidate branch. Move policy evaluation back to the protected default
+      # branch before recording the trusted SHA; the candidate is merged below.
+      - name: Resolve protected policy base for manual acceptance
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          POLICY_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${POLICY_BRANCH}:refs/remotes/origin/${POLICY_BRANCH}"
+          git checkout --detach "refs/remotes/origin/${POLICY_BRANCH}"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/${POLICY_BRANCH})"
+
+      - name: Snapshot live policy base
+        id: policy-base
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Execute the validator from a second base-owned checkout so a candidate
+      # cannot weaken the tests or helper modules that judge its merged tree.
+      - name: Checkout trusted CI contracts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.policy-base.outputs.sha }}
+          path: .ci-contracts
+
+      - name: Materialize current-base candidate tree
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          POLICY_BASE_SHA: ${{ steps.policy-base.outputs.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$POLICY_BASE_SHA"
+          git fetch --no-tags origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/pull/${PR_NUMBER}/head"
+          test "$(git rev-parse refs/remotes/pull/${PR_NUMBER}/head)" = "$PR_HEAD_SHA"
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge --no-commit --no-ff "$PR_HEAD_SHA"
+          test "$(git rev-parse HEAD)" = "$POLICY_BASE_SHA"
+          test "$(git rev-parse MERGE_HEAD)" = "$PR_HEAD_SHA"
+          printf 'policy_base_sha=%s\ncandidate_head_sha=%s\n' \
+            "$POLICY_BASE_SHA" "$PR_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Materialize manual-dispatch candidate tree
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          POLICY_BASE_SHA: ${{ steps.policy-base.outputs.sha }}
+          CANDIDATE_HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$POLICY_BASE_SHA"
+          git fetch --no-tags origin "$CANDIDATE_HEAD_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$CANDIDATE_HEAD_SHA"
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge --no-commit --no-ff "$CANDIDATE_HEAD_SHA"
+          test "$(git rev-parse HEAD)" = "$POLICY_BASE_SHA"
+          test "$(git rev-parse MERGE_HEAD)" = "$CANDIDATE_HEAD_SHA"
+          printf 'policy_base_sha=%s\ncandidate_head_sha=%s\n' \
+            "$POLICY_BASE_SHA" "$CANDIDATE_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate workflow and cost-control contracts
+        working-directory: .ci-contracts
+        env:
+          FORGE3D_NO_BOOTSTRAP: '1'
+          FORGE3D_CI_CONTRACT_ROOT: ${{ github.workspace }}
+          PYTHONPATH: ${{ github.workspace }}/.ci-contracts
+        run: |
+          python -m pip install pytest pyyaml
+          python -m pytest \
+            tests/test_assert_junit_zero_skips.py \
+            tests/test_ci_cost_controls.py \
+            tests/test_ci_lfs_fanout.py \
+            tests/test_determinism_matrix.py \
+            -k "not determinism_record_persists_strict_adapter_identity" \
+            -q
+
+  # Stable routine branch-protection lane. Expensive platform, rendering,
+  # signing, and physical evidence remain in the acceptance scopes below.
+  test-fast-contract:
+    name: Fast Contract
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+      - name: Install focused build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev pkg-config
+          python -m venv .venv
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          .venv/bin/python -m pip install -U pip maturin pytest numpy pillow
+      - name: Check formatting and routine Rust contracts
+        run: |
+          cargo fmt --check
+          cargo forge3d-clippy
+      - name: Build the development extension once
+        run: maturin develop
+      - name: Run focused CENSOR truth contracts
+        env:
+          FORGE3D_NO_BOOTSTRAP: '1'
+        run: python scripts/ci_pytest_lane.py --profile fast -v --tb=short
+
   # ============================================================================
   # Shared Git LFS fixtures
   #
@@ -32,6 +186,12 @@ jobs:
   # ============================================================================
   prepare-lfs-fixtures:
     name: Prepare LFS Fixtures
+    needs: preflight
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.scope == 'core' || inputs.scope == 'full' || inputs.scope == 'm06' ||
+        inputs.scope == 'helios'))
     runs-on: ubuntu-latest
 
     steps:
@@ -42,16 +202,30 @@ jobs:
       - name: Download the required LFS objects once
         shell: bash
         run: |
-          git lfs install --local
-          git lfs pull \
-            --include="assets/tif/Mount_Fuji_30m.tif,assets/tif/dem_rainier.tif,assets/tif/switzerland_dem.tif,assets/tif/switzerland_land_cover.tif" \
-            --exclude=""
+          media_base="https://media.githubusercontent.com/media/milos-agathon/forge3d/92a86baa3c8f6ba3c3a7368e4f80d4004905a433"
+          selene_media_base="https://media.githubusercontent.com/media/milos-agathon/forge3d/19028116dfbe9b954eac63e0a211be0d544226aa"
+          while read -r sha256 fixture; do
+            fixture_base="$media_base"
+            if [ "$fixture" = "assets/tif/moon_south_pole_lola.tif" ]; then
+              fixture_base="$selene_media_base"
+            fi
+            curl --fail --location --retry 3 \
+              --output "$fixture" "$fixture_base/$fixture"
+            echo "$sha256  $fixture" | sha256sum --check -
+          done <<'EOF'
+          cff39b4e02d7ba13c48f3d8b1a4080d40ada753ade62fa951459fe4e01e98b48 assets/tif/Mount_Fuji_30m.tif
+          875b243474b151175f76037acd60c2149ac2e46fba9ba2bbce0c9a6998015dd3 assets/tif/dem_rainier.tif
+          d09d229fa265749720a6b4bd40c440799f43286bf2d401d732ea77f89d0bd478 assets/tif/switzerland_dem.tif
+          6b254585be4982ed9e8da63b8536ecc2f5fa4c64c6545db06c73eb1fe39a8f7f assets/tif/switzerland_land_cover.tif
+          575e4b57d69d5db1bc16d5cd7edc8c83c570e280717e9e7ca225c060fd0aeb3d assets/tif/moon_south_pole_lola.tif
+          EOF
 
           for fixture in \
             assets/tif/Mount_Fuji_30m.tif \
             assets/tif/dem_rainier.tif \
             assets/tif/switzerland_dem.tif \
-            assets/tif/switzerland_land_cover.tif; do
+            assets/tif/switzerland_land_cover.tif \
+            assets/tif/moon_south_pole_lola.tif; do
             if [ "$(wc -c < "$fixture")" -le 1024 ]; then
               echo "::error::$fixture is still an LFS pointer"
               exit 1
@@ -66,7 +240,8 @@ jobs:
             assets/tif/Mount_Fuji_30m.tif \
             assets/tif/dem_rainier.tif \
             assets/tif/switzerland_dem.tif \
-            assets/tif/switzerland_land_cover.tif
+            assets/tif/switzerland_land_cover.tif \
+            assets/tif/moon_south_pole_lola.tif
           zip -q lfs-fixture-bundles/m06-dem.zip \
             assets/tif/switzerland_dem.tif
 
@@ -83,10 +258,19 @@ jobs:
   # ============================================================================
   terrain-golden-paths:
     name: Visual Golden Paths
+    needs: preflight
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       terrain_goldens: ${{ steps.filter.outputs.terrain_goldens }}
+      m06: ${{ steps.filter.outputs.m06 }}
       f3dz: ${{ steps.filter.outputs.f3dz }}
+      helios: ${{ steps.filter.outputs.helios }}
+      anamnesis: ${{ steps.filter.outputs.anamnesis }}
+      determinism_render: ${{ steps.filter.outputs.determinism_render }}
+      determinism_f3dz: ${{ steps.filter.outputs.determinism_f3dz }}
+      determinism_anamnesis: ${{ steps.filter.outputs.determinism_anamnesis }}
+      tessella: ${{ steps.filter.outputs.tessella }}
 
     steps:
       - uses: actions/checkout@v4
@@ -125,30 +309,271 @@ jobs:
               - 'tests/golden/adjudication/**'
               - 'tests/golden/hybrid_terrain/**'
               - 'docs/gallery/**'
+            m06:
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/build-wheel.yml'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'build.rs'
+              - '.cargo/config.toml'
+              - 'pyproject.toml'
+              - 'pytest.ini'
+              - 'conftest.py'
+              - 'src/**'
+              - 'python/forge3d/**'
+              - 'scripts/install_compatible_wheel.py'
+              - 'scripts/terrain_ci_probe.py'
+              - 'scripts/assert_junit_zero_skips.py'
+              - 'scripts/summarize_m06_evidence.py'
+              - 'scripts/ci_pytest_lane.py'
+              - 'tests/*.py'
+              - 'tests/*.toml'
+              - 'tests/golden/certificates/**'
+              - 'tests/golden/recipes/mapscene_terrain_raster.png'
+              - 'tests/data/vector_torture/cases.json'
+              - 'assets/lidar/MtStHelens.laz'
+              - 'assets/tif/switzerland_dem.tif'
+              - 'assets/fonts/**'
+              - 'assets/geoid/egm96_n120.bin'
             f3dz:
               - '.github/workflows/ci.yml'
+              - '.github/workflows/build-wheel.yml'
               - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'build.rs'
+              - 'pyproject.toml'
               - 'benches/f3dz_bench.rs'
-              - 'docs/formats/f3dz.md'
               - 'python/forge3d/codec.py'
               - 'python/forge3d/__init__.py'
-              - 'python/forge3d/__init__.pyi'
+              - 'python/forge3d/_native.py'
+              - 'python/forge3d/_gpu.py'
               - 'src/codec/**'
+              - 'src/lib.rs'
+              - 'src/core/mod.rs'
+              - 'src/core/error.rs'
               - 'src/core/certificate.rs'
               - 'src/core/degradation.rs'
+              - 'src/core/gpu.rs'
+              - 'src/core/capabilities.rs'
+              - 'src/core/resource_tracker.rs'
+              - 'src/core/memory_tracker.rs'
+              - 'src/core/memory_tracker/**'
+              - 'src/core/shader_registry.rs'
+              - 'src/core/shader_contract_runtime.rs'
+              - 'src/core/provenance.rs'
               - 'src/py_functions/codec.rs'
+              - 'src/py_functions/diagnostics.rs'
+              - 'src/py_functions/mod.rs'
+              - 'src/py_module/mod.rs'
+              - 'src/py_module/functions.rs'
+              - 'src/py_module/functions/codec.rs'
+              - 'src/py_module/functions/diagnostics.rs'
               - 'src/shaders/f3dz_decode.wgsl'
-              - 'src/terrain/cog/cog_reader.rs'
-              - 'src/terrain/stream/height.rs'
+              - 'scripts/install_compatible_wheel.py'
+              - 'scripts/assert_junit_zero_skips.py'
               - 'tests/data/codec_corpus/**'
+              - 'tests/_toml_compat.py'
               - 'tests/test_f3dz_codec.py'
+            anamnesis:
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/build-wheel.yml'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'build.rs'
+              - 'pyproject.toml'
+              - '.cargo/**'
+              - 'src/core/anamnesis/**'
+              - 'src/core/framegraph_impl/**'
+              - 'src/core/ibl.rs'
+              - 'src/core/ibl/**'
+              - 'src/core/capabilities.rs'
+              - 'src/core/gpu.rs'
+              - 'src/core/session.rs'
+              - 'src/core/shader_registry.rs'
+              - 'src/core/hdr.rs'
+              - 'src/core/tonemap.rs'
+              - 'src/core/resource_tracker.rs'
+              - 'src/core/material.rs'
+              - 'src/core/hdr_readback.rs'
+              - 'src/core/provenance.rs'
+              - 'src/formats/hdr.rs'
+              - 'src/lighting/ibl_wrapper.rs'
+              - 'src/lighting/types.rs'
+              - 'src/lighting/light_buffer/**'
+              - 'src/offscreen/**'
+              - 'src/path_tracing/**'
+              - 'src/shader_sources.rs'
+              - 'src/shadows/**'
+              - 'src/py_functions/adjudication.rs'
+              - 'src/py_functions/mod.rs'
+              - 'src/render/material_set.rs'
+              - 'src/render/material_set/**'
+              - 'src/terrain/renderer.rs'
+              - 'src/terrain/renderer/**'
+              - 'src/terrain/render_params.rs'
+              - 'src/terrain/render_params/**'
+              - 'src/py_module/classes.rs'
+              - 'src/py_module/functions.rs'
+              - 'src/py_module/functions/anamnesis.rs'
+              - 'src/py_module/functions/rendering.rs'
+              - 'src/py_types/frame.rs'
+              - 'src/lib.rs'
+              - 'src/util/memory_budget.rs'
+              - 'python/forge3d/__init__.py'
+              - 'python/forge3d/_canonical_json.py'
+              - 'python/forge3d/anamnesis.py'
+              - 'python/forge3d/determinism.py'
+              - 'python/forge3d/terrain_params.py'
+              - 'python/forge3d/_native.py'
+              - 'python/forge3d/_gpu.py'
+              - 'src/shaders/adjudication_raster.wgsl'
+              - 'src/shaders/ao_from_aovs.wgsl'
+              - 'src/shaders/pt_*.wgsl'
+              - 'src/shaders/terrain_*.wgsl'
+              - 'src/shaders/heightfield_*.wgsl'
+              - 'src/shaders/sky.wgsl'
+              - 'src/shaders/lighting*.wgsl'
+              - 'src/shaders/lights.wgsl'
+              - 'src/shaders/brdf/**'
+              - 'src/shaders/includes/determinism.wgsl'
+              - 'src/shaders/includes/shadow_moments.wgsl'
+              - 'src/shaders/includes/tonemap_common.wgsl'
+              - 'src/shaders/shadows.wgsl'
+              - 'src/shaders/moment_generation.wgsl'
+              - 'src/shaders/shadow_blur.wgsl'
+              - 'src/shaders/offline_*.wgsl'
+              - 'src/shaders/tonemap_terrain_offline.wgsl'
+              - 'src/shaders/ibl_*.wgsl'
+              - 'scripts/check_anamnesis_portability.py'
+              - 'scripts/terrain_ci_probe.py'
+              - 'scripts/assert_junit_zero_skips.py'
+              - 'tests/anamnesis_gpu_acceptance.py'
+              - 'tests/anamnesis_irrelevant_inputs.toml'
+              - 'tests/test_anamnesis_*.py'
+              - 'tests/goldens/determinism/**'
+            determinism_render:
+              - '.github/workflows/determinism-matrix.yml'
+              - 'src/shaders/includes/determinism.wgsl'
+              - 'src/shaders/includes/shadow_moments.wgsl'
+              - 'src/shaders/includes/tonemap_common.wgsl'
+              - 'src/shaders/shadows.wgsl'
+              - 'src/shaders/lighting_ibl.wgsl'
+              - 'src/shaders/terrain_pbr_pom.wgsl'
+              - 'src/core/gpu.rs'
+              - 'src/core/dd.rs'
+              - 'src/core/dd/**'
+              - 'src/shaders/includes/dd.wgsl'
+              - 'src/shaders/dd_harness.wgsl'
+              - 'src/shaders/dd_jitter.wgsl'
+              - 'python/forge3d/precision.py'
+              - 'python/forge3d/precision.pyi'
+              - 'python/forge3d/determinism.py'
+              - 'scripts/run_dupla_proof.py'
+              - 'scripts/check_determinism_hashes.py'
+              - 'tests/test_dd_arithmetic.py'
+              - 'tests/test_dd_jitter.py'
+              - 'tests/test_determinism_hash.py'
+              - 'tests/test_determinism_matrix.py'
+              - 'tests/goldens/determinism/**'
+            determinism_f3dz:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'pyproject.toml'
+              - 'src/codec/f3dz/**'
+              - 'src/py_functions/codec.rs'
+              - 'python/forge3d/codec.py'
               - 'tools/f3dz_determinism_report.py'
+              - 'tests/test_f3dz_codec.py'
+              - 'tests/data/codec_corpus/**'
+              - '.github/workflows/determinism-matrix.yml'
+            helios:
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/build-wheel.yml'
+              - 'src/geo/refraction.rs'
+              - 'src/geo/solar.rs'
+              - 'src/geo/solar_coefficients.rs'
+              - 'src/geo/mod.rs'
+              - 'src/path_tracing/hybrid_compute/terrain_heightfield.rs'
+              - 'src/path_tracing/hybrid_compute/render_terrain.rs'
+              - 'src/py_functions/geodesy.rs'
+              - 'src/py_functions/path_tracing/terrain_reference.rs'
+              - 'src/py_module/functions/geodesy.rs'
+              - 'src/shaders/hybrid_terrain_traversal.wgsl'
+              - 'src/shaders/terrain_viewshed.wgsl'
+              - 'src/terrain/analysis/viewshed.rs'
+              - 'src/viewer/cmd/terrain_command.rs'
+              - 'src/viewer/ipc/protocol/translate/terrain.rs'
+              - 'src/viewer/state/viewer_helpers/core.rs'
+              - 'src/viewer/terrain/scene.rs'
+              - 'src/viewer/terrain/scene/terrain_load.rs'
+              - 'python/forge3d/geo.py'
+              - 'python/forge3d/geo.pyi'
+              - 'python/forge3d/path_tracing.py'
+              - 'python/forge3d/path_tracing.pyi'
+              - 'python/forge3d/terrain.py'
+              - 'python/forge3d/terrain.pyi'
+              - 'python/forge3d/viewer.py'
+              - 'python/forge3d/viewer.pyi'
+              - 'scripts/ci_pytest_lane.py'
+              - 'scripts/helios_evidence_report.py'
+              - 'scripts/terrain_ci_probe.py'
+              - 'scripts/assert_junit_zero_skips.py'
+              - 'scripts/install_compatible_wheel.py'
+              - 'tests/test_api_contracts.py'
+              - 'tests/test_solar_spa.py'
+              - 'tests/test_viewshed_curvature.py'
+              - 'tests/test_shadow_tip.py'
+              - 'tests/data/spa_reference.csv'
+              - 'tests/data/spa_reference.PROVENANCE.md'
+              - 'tests/golden/helios/**'
+              - 'tests/golden/viewshed/**'
+            determinism_anamnesis:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'pyproject.toml'
+              - 'src/core/anamnesis/**'
+              - 'python/forge3d/anamnesis.py'
+              - 'python/forge3d/determinism.py'
+              - 'scripts/check_anamnesis_portability.py'
+              - 'tests/test_anamnesis_*.py'
+              - 'tests/goldens/determinism/**'
+              - '.github/workflows/determinism-matrix.yml'
+            # The TESSELLA physical lane consumes this scope and remains behind
+            # the same explicit physical-runner selection policy as other
+            # expensive acceptance families.
+            tessella:
+              - 'src/terrain/clipmap/**'
+              - 'src/terrain/renderer/virtual_texture.rs'
+              - 'src/terrain/renderer/visibility_buffer.rs'
+              - 'src/terrain/renderer/py_api.rs'
+              - 'src/terrain/culling/two_phase.rs'
+              - 'src/core/feedback_buffer.rs'
+              - 'src/core/screen_space_effects/hzb.rs'
+              - 'src/shaders/hzb_build.wgsl'
+              - 'src/shaders/hzb_cull.wgsl'
+              - 'python/forge3d/__init__.pyi'
+              - 'scripts/tessella_evidence_contract.py'
+              - 'scripts/tessella_evidence_provenance.py'
+              - 'scripts/tessella_evidence_report.py'
+              - 'scripts/tessella_evidence_thresholds.py'
+              - 'tests/test_terrain_vt_pbr_families.py'
+              - 'tests/test_tv20_virtual_texturing.py'
+              - 'tests/test_vt_out_of_core.py'
+              - 'tests/test_hzb_culling.py'
+              - 'tests/test_visibility_buffer.py'
+              - 'tests/test_bc_encoders.py'
+              - 'tests/test_flythrough_popping.py'
+              - 'tests/test_vt_request_retention.py'
+              - 'tests/test_tessella_certificate_evidence.py'
+              - 'tests/test_tessella_evidence_report.py'
 
   # ============================================================================
   # Rust Tests (cargo test)
   # ============================================================================
   test-rust:
     name: Test Rust (${{ matrix.os }})
+    needs: preflight
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -202,6 +627,12 @@ jobs:
         env:
           RUST_TEST_THREADS: 1
 
+      - name: Run AETHER offline-bake acceptance tests
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --workspace --features atmosphere-bake core::atmosphere -- --test-threads=1
+        env:
+          RUST_TEST_THREADS: 1
+
       - name: Run doctests (proves the MENSURA compile_fail contracts)
         # Executes rustdoc examples, including the five `compile_fail` proofs in
         # src/geo/units.rs that make unit/height/CRS/epoch mismatches and the raw
@@ -209,19 +640,20 @@ jobs:
         run: cargo test --doc --workspace --features default,async_readback,copc_laz,cog_streaming,gis-remote,geos-topology,weighted-oit,wsI_bigbuf,wsI_double_buf,enable-pbr,enable-tbn,enable-normal-mapping,enable-hdr-offscreen,enable-renderer-config,enable-staging-rings,shader-contract-asserts
 
       - name: Run cargo clippy
-        run: cargo forge3d-clippy
+        run: cargo forge3d-clippy-acceptance
 
   # ============================================================================
   # Interactive Viewer E2E (macOS only; optional)
   #
   # INFORMATIONAL ONLY: this job is `continue-on-error: true` on its test step
-  # and is deliberately NOT in `ci-success` needs. Its result never gates the
+  # and is deliberately NOT in `PR Core Success` needs. Its result never gates the
   # build. The interactive lane's test files are accounted for by the
   # `interactive_viewer` marker in the UNRUN/(e)-gate bookkeeping, not here.
   # ============================================================================
   test-interactive-viewer-macos:
     name: Interactive Viewer (macOS)
-    needs: build-wheels
+    needs: build-wheel-macos
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
     runs-on: macos-latest
     timeout-minutes: 15
 
@@ -247,7 +679,7 @@ jobs:
       - name: Install wheel and pytest
         run: |
           python scripts/install_compatible_wheel.py dist
-          pip install pytest numpy
+          pip install pytest pyyaml numpy
 
       - name: Run interactive viewer tests
         env:
@@ -258,80 +690,180 @@ jobs:
         continue-on-error: true
 
   # ============================================================================
-  # Python Wheel Build (maturin)
+  # Exact-head platform wheels. Each named job is independently consumable, so
+  # a Linux consumer never waits for Windows, macOS, or aarch64.
   # ============================================================================
-  build-wheels:
-    name: Build Wheel (${{ matrix.platform.os }})
-    runs-on: ${{ matrix.platform.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - os: windows
-            runner: windows-latest
-            target: x86_64-pc-windows-msvc
-            maturin_args: --release --out dist
-            manylinux: auto
-          - os: linux
-            runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            maturin_args: --release --out dist -i python3.10
-            manylinux: off
-          - os: macos
-            runner: macos-latest
-            target: universal2-apple-darwin
-            maturin_args: --release --out dist
-            manylinux: auto
-          - os: linux-arm
-            runner: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            maturin_args: --release --out dist -i python3.10
-            manylinux: auto
+  build-wheel-windows:
+    name: Build Wheel (Windows)
+    needs: preflight
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/build-wheel.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      runner: windows-latest
+      target: x86_64-pc-windows-msvc
+      maturin_args: --release --out dist
+      manylinux: 'auto'
+      artifact: wheels-windows
+
+  build-wheel-linux:
+    name: Build Wheel (Linux)
+    needs: preflight
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.scope == 'core' || inputs.scope == 'full' || inputs.scope == 'determinism' ||
+        inputs.scope == 'f3dz' || inputs.scope == 'anamnesis'))
+    uses: ./.github/workflows/build-wheel.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      runner: ubuntu-latest
+      target: x86_64-unknown-linux-gnu
+      maturin_args: --release --out dist -i python3.10
+      manylinux: 'off'
+      artifact: wheels-linux
+
+  build-wheel-macos:
+    name: Build Wheel (macOS)
+    needs: preflight
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.scope == 'core' || inputs.scope == 'full' || inputs.scope == 'determinism'))
+    uses: ./.github/workflows/build-wheel.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      runner: macos-latest
+      target: universal2-apple-darwin
+      maturin_args: --release --out dist
+      manylinux: 'auto'
+      artifact: wheels-macos
+
+  build-wheel-linux-arm:
+    name: Build Wheel (Linux aarch64)
+    needs: preflight
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
+    uses: ./.github/workflows/build-wheel.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      runner: ubuntu-latest
+      target: aarch64-unknown-linux-gnu
+      maturin_args: --release --out dist -i python3.10
+      manylinux: 'auto'
+      artifact: wheels-linux-arm
+
+  # ============================================================================
+  # Python acceptance tests. Routine PRs use test-fast-contract above; manual
+  # core selects hosted compatibility, while the exhaustive matrix is nightly
+  # or explicit full.
+  # ============================================================================
+  test-python-core:
+    name: Python Core (Linux 3.11 full)
+    needs: [build-wheel-linux, prepare-lfs-fixtures]
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'core'
+    uses: ./.github/workflows/test-python-wheel.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      runner: ubuntu-latest
+      python_versions: '["3.11"]'
+      wheel_artifact: wheels-linux
+      test_mode: full
+      restore_lfs: true
+
+  test-python-compat-linux:
+    name: Python Compatibility (Linux boundaries)
+    needs: build-wheel-linux
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'core'
+    uses: ./.github/workflows/test-python-wheel.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      runner: ubuntu-latest
+      python_versions: '["3.10", "3.13"]'
+      wheel_artifact: wheels-linux
+      test_mode: compatibility
+
+  test-python-compat-windows:
+    name: Python Compatibility (Windows)
+    needs: build-wheel-windows
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'core'
+    uses: ./.github/workflows/test-python-wheel.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      runner: windows-latest
+      python_versions: '["3.11"]'
+      wheel_artifact: wheels-windows
+      test_mode: compatibility
+
+  test-python-compat-macos:
+    name: Python Compatibility (macOS)
+    needs: build-wheel-macos
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'core'
+    uses: ./.github/workflows/test-python-wheel.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      runner: macos-latest
+      python_versions: '["3.11"]'
+      wheel_artifact: wheels-macos
+      test_mode: compatibility
+
+  test-python-full-linux:
+    name: Python Full Matrix (Linux)
+    needs: [build-wheel-linux, prepare-lfs-fixtures]
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
+    uses: ./.github/workflows/test-python-wheel.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      runner: ubuntu-latest
+      python_versions: '["3.10", "3.11", "3.12", "3.13"]'
+      wheel_artifact: wheels-linux
+      test_mode: full
+      restore_lfs: true
+
+  test-python-full-windows:
+    name: Python Full Matrix (Windows)
+    needs: [build-wheel-windows, prepare-lfs-fixtures]
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
+    uses: ./.github/workflows/test-python-wheel.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      runner: windows-latest
+      python_versions: '["3.10", "3.11", "3.12", "3.13"]'
+      wheel_artifact: wheels-windows
+      test_mode: full
+      restore_lfs: true
+
+  test-python-full-macos:
+    name: Python Full Matrix (macOS)
+    needs: [build-wheel-macos, prepare-lfs-fixtures]
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
+    uses: ./.github/workflows/test-python-wheel.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      runner: macos-latest
+      python_versions: '["3.10", "3.11", "3.12", "3.13"]'
+      wheel_artifact: wheels-macos
+      test_mode: full
+      restore_lfs: true
+
+  # ============================================================================
+  # Accounted slow Python tests (one hosted representative)
+  # ============================================================================
+  test-python-slow:
+    name: Test Python Slow (ubuntu, 3.11)
+    needs: [build-wheel-linux, prepare-lfs-fixtures]
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Build wheel
-        uses: PyO3/maturin-action@v1
-        env:
-          # ring's aarch64 assembly expects this macro under the manylinux cross compiler.
-          CFLAGS_aarch64_unknown_linux_gnu: ${{ matrix.platform.target == 'aarch64-unknown-linux-gnu' && '-D__ARM_ARCH=8' || '' }}
-        with:
-          target: ${{ matrix.platform.target }}
-          args: ${{ matrix.platform.maturin_args }}
-          manylinux: ${{ matrix.platform.manylinux }}
-
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-${{ matrix.platform.os }}
-          path: dist/*.whl
-
-  # ============================================================================
-  # Python Tests (pytest)
-  # ============================================================================
-  test-python:
-    name: Test Python (${{ matrix.os }})
-    needs: [build-wheels, prepare-lfs-fixtures]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
-        python-version: ['3.10', '3.11', '3.12', '3.13']
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.11'
 
       - name: Download shared LFS fixture artifact
         uses: actions/download-artifact@v4
@@ -342,42 +874,21 @@ jobs:
       - name: Restore Python TIFF fixtures
         run: python -m zipfile -e lfs-fixture-bundles/python-tiffs.zip .
 
-      - name: Download wheel artifact
+      - name: Download Linux wheel artifact
         uses: actions/download-artifact@v4
         with:
-          name: wheels-${{ runner.os == 'Windows' && 'windows' || runner.os == 'Linux' && 'linux' || 'macos' }}
+          name: wheels-linux
           path: dist/
 
-      - name: Install wheel and test dependencies
+      - name: Install wheel and slow-lane dependencies
         run: |
           python scripts/install_compatible_wheel.py dist
-          # pyproj/rasterio back the mensura CRS-reproject and MapScene alignment
-          # tests in the default lane (the documented pyproj fallback path when the
-          # native `proj` feature is not compiled into the wheel). Other lanes
-          # already install pyproj; the default lane runs the WHOLE tests/ tree, so
-          # it needs both to exercise those paths instead of erroring on import.
-          pip install pytest numpy pillow mypy pyproj rasterio
+          pip install pytest pyyaml numpy pillow
 
-      - name: Install system fonts (Linux)
-        if: runner.os == 'Linux'
-        # Legend/label helpers resolve DejaVu on Linux; hosted images ship no
-        # fonts by default (found by the first exhaustive-lane CI run).
-        run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
-
-      - name: Run install smoke tests
+      - name: Run accounted slow Python lane
         env:
           FORGE3D_NO_BOOTSTRAP: '1'
-        run: pytest tests/test_install_smoke.py -v --tb=short
-
-      - name: Run license tests
-        env:
-          FORGE3D_NO_BOOTSTRAP: '1'
-        run: pytest tests/test_license.py -v --tb=short
-
-      - name: Run default Python test lane (CENSOR honesty gate)
-        env:
-          FORGE3D_NO_BOOTSTRAP: '1'
-        run: python scripts/ci_pytest_lane.py -v --tb=short
+        run: python scripts/ci_pytest_lane.py --profile full --slow-lane -v --tb=short
 
   # ============================================================================
   # TERMINUS deterministic CPU-only robustness fuzzer
@@ -388,7 +899,8 @@ jobs:
   # ============================================================================
   test-terminus-fuzz:
     name: TERMINUS 10k Deterministic Fuzzer (CPU)
-    needs: build-wheels
+    needs: build-wheel-linux
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -433,13 +945,15 @@ jobs:
           name: terminus-fuzzer-evidence
           path: target/terminus-fuzz-evidence/
           if-no-files-found: error
+          retention-days: 7
 
   # ============================================================================
   # Linux aarch64 Wheel Smoke Test (QEMU)
   # ============================================================================
   test-python-linux-arm:
     name: Install Smoke (linux-arm)
-    needs: build-wheels
+    needs: build-wheel-linux-arm
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
     runs-on: ubuntu-latest
 
     steps:
@@ -470,40 +984,201 @@ jobs:
   # ============================================================================
   # Visual Golden Image Tests
   # ============================================================================
+  # Optional backend diagnostic retained for macOS support. It is disabled by
+  # default and is never consumed by Full Acceptance Summary.
   test-golden-images:
-    name: Visual Goldens
-    needs: [build-wheels, terrain-golden-paths, prepare-lfs-fixtures]
-    # macos-14 is the repository's gated real-GPU lane (Metal). Hosted
-    # Windows runners only expose WARP here, which made this job perpetually
-    # report ABSENT and prevented an actual image mismatch from failing CI.
+    name: Visual Goldens (optional Metal diagnostic)
+    continue-on-error: true
+    needs: [build-wheel-macos, terrain-golden-paths]
     runs-on: macos-14
-    if: github.event_name == 'workflow_dispatch' || needs.terrain-golden-paths.outputs.terrain_goldens == 'true'
-    # Expose which lane actually executed so ci-success can print an honest
-    # `ran|absent` distinction instead of treating both as opaque success.
+    if: >-
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')) &&
+       vars.FORGE3D_RUN_METAL_DIAGNOSTIC == '1'
     outputs:
-      lane: ${{ steps.golden-absent.outputs.golden_lane || steps.golden-ran.outputs.golden_lane || 'unknown' }}
+      aether_lane: ${{ steps.aether-absent.outputs.aether_lane || steps.aether-ran.outputs.aether_lane || steps.aether-software-absent.outputs.aether_lane || 'unknown' }}
     env:
-      # Pin the hardware backend before the native module initializes.
       WGPU_BACKEND: metal
-      # Permit the real-metal golden job through the test helper's conservative
-      # hosted-macOS guard only after this job's terrain probe has succeeded.
       FORGE3D_ALLOW_HOSTED_MACOS_TERRAIN: '1'
-      # Explicit opt-in for non-GPU environments that may only run recipe-level CPU goldens.
-      FORGE3D_ALLOW_SOFTWARE_GOLDENS: ${{ vars.FORGE3D_ALLOW_SOFTWARE_GOLDENS }}
+      FORGE3D_NO_BOOTSTRAP: '1'
+      FORGE3D_TEST_INSTALLED_WHEEL: '1'
+      FORGE3D_SUBSTRATIA_GOLDEN_VARIANT: metal
+      FORGE3D_RUN_TERRAIN_GOLDENS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-macos
+          path: dist/
+      - name: Install optional diagnostic dependencies
+        run: |
+          python scripts/install_compatible_wheel.py dist
+          python -m pip install pytest numpy pillow
+      - name: Probe optional Metal backend
+        id: metal-probe
+        shell: bash
+        run: |
+          set +e
+          python scripts/terrain_ci_probe.py --mode terrain
+          code=$?
+          set -e
+          if [ "$code" = "0" ]; then
+            echo "probe=positive" >> "$GITHUB_OUTPUT"
+          elif [ "$code" = "2" ]; then
+            mkdir -p metal-diagnostic-out
+            echo "optional Metal diagnostic ABSENT" > metal-diagnostic-out/goldens.ABSENT
+            echo "probe=absent" >> "$GITHUB_OUTPUT"
+          else
+            exit "$code"
+          fi
+      - name: Run optional Metal terrain control
+        if: steps.metal-probe.outputs.probe == 'positive'
+        run: python -m pytest tests/test_terrain_visual_goldens.py -v --tb=short
+      - name: Probe AETHER physical Metal closure backend
+        if: ${{ !cancelled() }}
+        id: aether-metal-probe
+        shell: bash
+        run: |
+          set +e
+          python scripts/terrain_ci_probe.py --mode aether-metal --json tests/artifacts/aether/adapter-probe.json
+          code=$?
+          set -e
+          if [ "$code" = "0" ]; then
+            echo "probe=positive" >> "$GITHUB_OUTPUT"
+          elif [ "$code" = "2" ]; then
+            echo "probe=absent" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::AETHER physical Metal probe crashed (exit $code)"
+            exit "$code"
+          fi
+      - name: Verify exact AETHER wheel custom-bake provenance
+        if: ${{ !cancelled() && steps.aether-metal-probe.outputs.probe == 'positive' }}
+        id: aether_custom_bake
+        env:
+          FORGE3D_NO_BOOTSTRAP: '1'
+        run: python -c 'from forge3d._native import get_native_module; h=get_native_module().atmosphere_bake_luts(ozone_du=321.0, mie_g=0.71, ground_albedo=0.42, scattering_orders=2); assert h.precomputed is False'
+      - name: Run AETHER Metal closure and golden gates
+        if: ${{ !cancelled() && steps.aether-metal-probe.outputs.probe == 'positive' && steps.aether_custom_bake.outcome == 'success' }}
+        id: aether-ran
+        env:
+          FORGE3D_NO_BOOTSTRAP: '1'
+          FORGE3D_AETHER_PHYSICAL_METAL: '1'
+          FORGE3D_AETHER_METRICS_PATH: tests/artifacts/aether/metrics.json
+        run: |
+          mkdir -p tests/artifacts/aether
+          git rev-parse HEAD > tests/artifacts/aether/checked-out-head.txt
+          junit=tests/artifacts/aether/junit.xml
+          python -m pytest \
+            tests/test_atmosphere_spectral.py \
+            tests/test_atmosphere_reference.py \
+            tests/test_atmosphere_pt_reference.py \
+            tests/test_atmosphere_golden.py \
+            tests/test_atmosphere_lut_handoff.py \
+            -v --tb=short --junitxml="$junit"
+          python scripts/assert_junit_zero_skips.py "$junit"
+          python scripts/aether_acceptance_evidence.py tests/artifacts/aether \
+            --head-sha '${{ github.sha }}' \
+            --repository '${{ github.repository }}' \
+            --run-id '${{ github.run_id }}' \
+            --run-attempt '${{ github.run_attempt }}' \
+            --job '${{ github.job }}'
+          echo "aether_lane=ran" >> "$GITHUB_OUTPUT"
+      - name: Upload AETHER physical Metal evidence
+        if: always() && steps.aether-metal-probe.outputs.probe == 'positive'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-physical-metal-evidence
+          path: tests/artifacts/aether/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record AETHER Metal lane ABSENT
+        if: ${{ !cancelled() && steps.aether-metal-probe.outputs.probe == 'absent' }}
+        id: aether-absent
+        shell: bash
+        run: |
+          mkdir -p aether-out
+          echo "AETHER closure lane ABSENT: no proven physical Metal adapter" > aether-out/aether.ABSENT
+          echo "aether_lane=absent" >> "$GITHUB_OUTPUT"
+      - name: Record AETHER Metal lane ABSENT under software override
+        if: ${{ !cancelled() && env.FORGE3D_ALLOW_SOFTWARE_GOLDENS == '1' }}
+        id: aether-software-absent
+        shell: bash
+        run: |
+          mkdir -p aether-out
+          echo "AETHER closure lane ABSENT: software execution does not prove physical Metal" > aether-out/aether.ABSENT
+          echo "aether_lane=absent" >> "$GITHUB_OUTPUT"
+      - name: Upload AETHER Metal lane marker
+        if: always() && (steps.aether-absent.outcome == 'success' || steps.aether-software-absent.outcome == 'success')
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-metal-lane-marker
+          path: aether-out/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload optional Metal absence marker
+        if: steps.metal-probe.outputs.probe == 'absent'
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-lane-marker
+          path: metal-diagnostic-out/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload optional Metal diagnostic diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-golden-diffs
+          path: tests/artifacts/
+          retention-days: 7
+
+  test-golden-images-nvidia:
+    name: Visual Goldens (NVIDIA Vulkan)
+    # Candidate acceptance proves physical pixels without exposing production
+    # signing material to branch code. Signed certificate rotation remains the
+    # protected main-only responsibility of certificate-refresh.yml.
+    needs: [build-wheel-windows, prepare-lfs-fixtures, terrain-golden-paths]
+    runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
+    # Full Acceptance consumes explicit RAN outputs in addition to job success.
+    outputs:
+      lane: ${{ steps.golden-pass.outputs.golden_lane || 'unknown' }}
+      sidera_lane: ${{ steps.sidera-pass.outputs.sidera_lane || 'unknown' }}
+    env:
+      WGPU_BACKEND: vulkan
+      FORGE3D_ALLOW_HOSTED_WINDOWS_TERRAIN: '1'
+      FORGE3D_NO_BOOTSTRAP: '1'
+      FORGE3D_TEST_INSTALLED_WHEEL: '1'
+      FORGE3D_DETERMINISM_TEST_BACKEND: vulkan
+      FORGE3D_TERRAIN_GOLDEN_VARIANT: nvidia-vulkan
+      FORGE3D_RECIPE_GOLDEN_VARIANT: nvidia-vulkan
+      FORGE3D_SUBSTRATIA_GOLDEN_VARIANT: nvidia-vulkan
+      FORGE3D_SUBSTRATIA_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       FORGE3D_RUN_OBLIQUA_GPU: '1'
-      FORGE3D_OBLIQUA_ARTIFACT_DIR: 'tests/artifacts/obliqua'
-      # Internal/release runs are the protected production-signing lane.
-      # Fork PRs do not receive secrets and are explicitly marked untrusted
-      # below; they never masquerade as production-signed validation.
-      FORGE3D_CERT_SIGNING_KEY: ${{ secrets.FORGE3D_CERT_SIGNING_KEY }}
-      FORGE3D_REQUIRE_PRODUCTION_SIGNING: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '1' || '0' }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          # Pixel baselines under tests/golden are regular Git objects. The
-          # Swiss OBLIQUA fixtures are restored from the shared LFS artifact below.
+          fetch-depth: 0
+
+      - name: Initialize isolated visual evidence directory
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "forge3d-visual-${{ github.run_id }}-${{ github.run_attempt }}"
+          "FORGE3D_VISUAL_ARTIFACT_DIR=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FORGE3D_TERRAIN_GOLDEN_ARTIFACT_DIR=$(Join-Path $root 'terrain-goldens')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FORGE3D_RECIPE_GOLDEN_ARTIFACT_DIR=$(Join-Path $root 'recipe-goldens')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FORGE3D_SUBSTRATIA_ARTIFACT_DIR=$(Join-Path $root 'substratia')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FORGE3D_SIDERA_ARTIFACT_DIR=$(Join-Path $root 'sidera')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FORGE3D_OBLIQUA_ARTIFACT_DIR=$(Join-Path $root 'obliqua')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FORGE3D_EXPECTED_ADAPTER_PROBE=$(Join-Path $root 'adapter-probe.json')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -522,175 +1197,297 @@ jobs:
       - name: Download wheel artifact
         uses: actions/download-artifact@v4
         with:
-          name: wheels-macos
+          name: wheels-windows
           path: dist/
 
       - name: Install wheel and test dependencies
+        shell: pwsh
         run: |
           python scripts/install_compatible_wheel.py dist
-          pip install pytest numpy pyproj pillow rasterio
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install pytest numpy pyproj pillow rasterio
+          exit $LASTEXITCODE
 
-      - name: Require production certificate signing key
-        if: env.FORGE3D_REQUIRE_PRODUCTION_SIGNING == '1'
-        shell: bash
+      - name: Bind lane to exact clean candidate
+        shell: pwsh
         run: |
-          if [ -z "$FORGE3D_CERT_SIGNING_KEY" ]; then
-            echo "::error::protected golden lane requires FORGE3D_CERT_SIGNING_KEY"
-            exit 1
-          fi
+          $head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -ne $env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA) { throw "candidate SHA mismatch" }
+          $dirty = (git status --porcelain --untracked-files=no | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $dirty) { throw "candidate tracked worktree is dirty: $dirty" }
+          if ($env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA.Length -ne 40) { throw "candidate SHA is not full length" }
+          New-Item -ItemType Directory -Force -Path $env:FORGE3D_VISUAL_ARTIFACT_DIR | Out-Null
 
-      - name: Mark external PR certificate lane untrusted
-        if: env.FORGE3D_REQUIRE_PRODUCTION_SIGNING != '1'
-        shell: bash
-        run: echo "### Certificate provenance — UNTRUSTED external PR (production signing secret unavailable by policy)" >> "$GITHUB_STEP_SUMMARY"
-
-      # Probe contract (CENSOR F-10): exit 0 = probe positive, exit 2 = no
-      # CI-safe adapter (honest ABSENT), exit 3 = adapter present but the smoke
-      # render crashed — a renderer defect that must FAIL this job rather than
-      # masquerade as hardware absence. No continue-on-error: only the ABSENT
-      # case maps to a zero exit with probe=absent.
-      - name: Probe terrain golden backend
-        if: env.FORGE3D_ALLOW_SOFTWARE_GOLDENS != '1'
-        id: terrain-goldens-probe
-        shell: bash
-        env:
-          FORGE3D_NO_BOOTSTRAP: '1'
+      - name: Require physical NVIDIA Vulkan terrain adapter
+        shell: pwsh
         run: |
-          set +e
-          python scripts/terrain_ci_probe.py --mode terrain
-          code=$?
-          set -e
-          if [ "$code" = "0" ]; then
-            echo "probe=positive" >> "$GITHUB_OUTPUT"
-          elif [ "$code" = "2" ]; then
-            echo "probe=absent" >> "$GITHUB_OUTPUT"
-          else
-            echo "probe=crash" >> "$GITHUB_OUTPUT"
-            echo "::error::terrain probe crashed on a CI-safe adapter (exit $code); failing the golden job instead of recording ABSENT"
-            exit "$code"
-          fi
+          python scripts/terrain_ci_probe.py --mode terrain --require-nvidia-vulkan --json "$env:FORGE3D_EXPECTED_ADAPTER_PROBE"
+          exit $LASTEXITCODE
 
       - name: Run visual golden tests
-        if: env.FORGE3D_ALLOW_SOFTWARE_GOLDENS != '1' && steps.terrain-goldens-probe.outputs.probe == 'positive'
+        shell: pwsh
         env:
-          FORGE3D_NO_BOOTSTRAP: '1'
           FORGE3D_RUN_TERRAIN_GOLDENS: '1'
-          FORGE3D_TERRAIN_GOLDEN_ARTIFACT_DIR: tests/artifacts/terrain_goldens
-          FORGE3D_RECIPE_GOLDEN_ARTIFACT_DIR: tests/artifacts/recipe_goldens
           FORGE3D_UPDATE_RECIPE_CERTIFICATES: '0'
-          # This dedicated hardware lane anchors the CENSOR recipe-pixel gate
-          # on the Metal reference for its terrain control scene. The complete
-          # recipe catalog remains exercised by the normal GPU suite.
-          FORGE3D_RECIPE_GOLDEN_VARIANT: metal
-        run: pytest tests/test_terrain_visual_goldens.py tests/test_terrain_tv10_goldens.py tests/test_terrain_vt_pbr_families.py tests/test_recipe_goldens.py::test_recipe_golden_gate_rejects_pixel_regression 'tests/test_recipe_goldens.py::test_recipe_goldens_render_and_match[mapscene_terrain_raster]' -v --tb=short
+        run: |
+          $junit = Join-Path $env:FORGE3D_VISUAL_ARTIFACT_DIR "visual-junit.xml"
+          python scripts/run_nvidia_visual_acceptance.py --suite visual --junit "$junit"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/assert_junit_zero_skips.py "$junit"
+          exit $LASTEXITCODE
 
-      - name: OBLIQUA real-GPU gates
-        if: env.FORGE3D_ALLOW_SOFTWARE_GOLDENS != '1' && steps.terrain-goldens-probe.outputs.probe == 'positive'
+      - name: Run SIDERA NVIDIA Vulkan night golden
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:FORGE3D_SIDERA_ARTIFACT_DIR | Out-Null
+          $junit = Join-Path $env:FORGE3D_SIDERA_ARTIFACT_DIR "junit.xml"
+          python -m pytest tests/test_astro_night_golden.py -v --tb=short --junitxml="$junit"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/assert_junit_zero_skips.py "$junit"
+          exit $LASTEXITCODE
+
+      - name: Run strict OBLIQUA NVIDIA Vulkan gates
+        shell: pwsh
         env:
-          WGPU_BACKEND: metal
-          FORGE3D_ALLOW_HOSTED_MACOS_TERRAIN: '1'
+          WGPU_BACKEND: vulkan
+          FORGE3D_ALLOW_HOSTED_WINDOWS_TERRAIN: '1'
           FORGE3D_RUN_OBLIQUA_GPU: '1'
-          FORGE3D_OBLIQUA_ARTIFACT_DIR: 'tests/artifacts/obliqua'
         run: |
           python -m pytest tests/test_obliqua_camera.py tests/test_obliqua_albedo.py tests/test_obliqua_poster.py tests/test_api_contracts.py tests/test_render_certificate_contract.py -v --tb=short
+          exit $LASTEXITCODE
 
       - name: Upload OBLIQUA artifacts
-        if: always() && env.FORGE3D_ALLOW_SOFTWARE_GOLDENS != '1' && steps.terrain-goldens-probe.outputs.probe == 'positive'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: obliqua-artifacts
-          path: tests/artifacts/obliqua/
+          path: ${{ env.FORGE3D_OBLIQUA_ARTIFACT_DIR }}/
           if-no-files-found: error
 
-      - name: Record golden lane RAN
-        if: env.FORGE3D_ALLOW_SOFTWARE_GOLDENS != '1' && steps.terrain-goldens-probe.outputs.probe == 'positive'
-        id: golden-ran
-        shell: bash
-        run: echo "golden_lane=ran" >> "$GITHUB_OUTPUT"
+      - name: Record visual golden lane RAN
+        id: golden-pass
+        shell: pwsh
+        run: '"golden_lane=ran" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'
 
-      - name: Record golden lane ABSENT
-        if: env.FORGE3D_ALLOW_SOFTWARE_GOLDENS != '1' && steps.terrain-goldens-probe.outputs.probe == 'absent'
-        id: golden-absent
+      - name: Record SIDERA lane RAN
+        id: sidera-pass
+        shell: pwsh
+        run: '"sidera_lane=ran" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'
+
+      - name: Upload SHA- and adapter-bound visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-gpu-evidence
+          path: ${{ runner.temp }}/forge3d-visual-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Clean visual evidence scratch
+        if: always()
+        shell: pwsh
+        run: |
+          $scratch = Join-Path $env:RUNNER_TEMP "forge3d-visual-${{ github.run_id }}-${{ github.run_attempt }}"
+          if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
+
+  # Optional Metal support diagnostic. It remains available for explicit
+  # backend investigation but is not an acceptance dependency.
+  test-substratia-gpu:
+    name: SUBSTRATIA Physical GPU (optional Metal diagnostic)
+    continue-on-error: true
+    needs: [build-wheel-macos, terrain-golden-paths]
+    if: >-
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')) &&
+      vars.FORGE3D_RUN_METAL_DIAGNOSTIC == '1'
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      WGPU_BACKEND: metal
+      FORGE3D_ALLOW_HOSTED_MACOS_TERRAIN: '1'
+      FORGE3D_NO_BOOTSTRAP: '1'
+      FORGE3D_SUBSTRATIA_GOLDEN_VARIANT: metal
+      FORGE3D_SUBSTRATIA_ARTIFACT_DIR: tests/artifacts/substratia-metal-diagnostic
+      FORGE3D_SUBSTRATIA_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      FORGE3D_EXPECTED_ADAPTER_PROBE: tests/artifacts/substratia-metal-diagnostic/adapter-probe.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-macos
+          path: dist/
+      - name: Install optional diagnostic dependencies
+        run: |
+          python scripts/install_compatible_wheel.py dist
+          python -m pip install pytest numpy pillow
+      - name: Bind optional diagnostic to exact candidate
         shell: bash
         run: |
-          mkdir -p golden-out
-          echo "golden lane ABSENT: no usable hardware adapter on this hosted runner" | tee golden-out/goldens.ABSENT
-          echo "golden_lane=absent" >> "$GITHUB_OUTPUT"
-
-      - name: Upload golden lane marker
-        if: steps.golden-absent.outcome == 'success'
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FORGE3D_SUBSTRATIA_CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          mkdir -p "$FORGE3D_SUBSTRATIA_ARTIFACT_DIR"
+      - name: Validate physical Metal adapter when diagnostic is enabled
+        shell: bash
+        run: python scripts/terrain_ci_probe.py --mode terrain --json "$FORGE3D_EXPECTED_ADAPTER_PROBE"
+      - name: Run optional Metal SUBSTRATIA controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest \
+            tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_normal_family_changes_lighting_ssim \
+            tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_all_families_page_within_budget \
+            tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_missing_family_is_fatal \
+            tests/test_terrain_vt_pbr_families.py::TestTerrainVTPbrFamilies::test_partial_normal_residency_degrades_gracefully \
+            --junitxml="$FORGE3D_SUBSTRATIA_ARTIFACT_DIR/pytest-junit.xml" -v --tb=short
+          python scripts/assert_junit_zero_skips.py "$FORGE3D_SUBSTRATIA_ARTIFACT_DIR/pytest-junit.xml"
+          python scripts/substratia_evidence_report.py \
+            --artifact-dir "$FORGE3D_SUBSTRATIA_ARTIFACT_DIR" \
+            --repository . \
+            --candidate-sha "$FORGE3D_SUBSTRATIA_CANDIDATE_SHA" \
+            --adapter-probe "$FORGE3D_EXPECTED_ADAPTER_PROBE" \
+            --render-adapter "$FORGE3D_SUBSTRATIA_ARTIFACT_DIR/render-process-adapter.json" \
+            --junit "$FORGE3D_SUBSTRATIA_ARTIFACT_DIR/pytest-junit.xml" \
+            --expected-backend metal
+      - name: Upload optional Metal SUBSTRATIA evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: golden-lane-marker
-          path: golden-out/
+          name: substratia-metal-diagnostic-evidence
+          path: tests/artifacts/substratia-metal-diagnostic/
           if-no-files-found: error
+          retention-days: 90
 
-      - name: Run software-allowed recipe goldens
-        if: env.FORGE3D_ALLOW_SOFTWARE_GOLDENS == '1'
-        env:
-          FORGE3D_NO_BOOTSTRAP: '1'
-          FORGE3D_RECIPE_GOLDEN_ARTIFACT_DIR: tests/artifacts/recipe_goldens
-        run: pytest tests/test_recipe_goldens.py -v --tb=short
-
-      - name: Upload golden image artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: visual-golden-diffs
-          path: tests/artifacts/
-
-  refresh-recipe-certificates:
-    name: Refresh Recipe Certificates
-    needs: build-wheels
-    if: github.event_name == 'workflow_dispatch' && inputs.update_recipe_certificates
+  # SUBSTRATIA's claims require physical pixels. This is deliberately separate
+  # from PR Core Success and has no software/ABSENT success path: a selected
+  # full-acceptance run must execute the four core tests on a physical NVIDIA Vulkan GPU,
+  # then pass the independent exact-SHA evidence verifier.
+  test-substratia-gpu-nvidia:
+    name: SUBSTRATIA Physical GPU (NVIDIA Vulkan)
+    needs: [build-wheel-windows, terrain-golden-paths]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
     runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
+    timeout-minutes: 30
+    outputs:
+      lane: ${{ steps.substratia-pass.outputs.lane || 'unknown' }}
+      verifier: ${{ steps.substratia-pass.outputs.verifier || 'unknown' }}
     env:
       WGPU_BACKEND: vulkan
       FORGE3D_ALLOW_HOSTED_WINDOWS_TERRAIN: '1'
-      FORGE3D_CERT_SIGNING_KEY: ${{ secrets.FORGE3D_CERT_SIGNING_KEY }}
-      FORGE3D_REQUIRE_PRODUCTION_SIGNING: '1'
+      FORGE3D_NO_BOOTSTRAP: '1'
+      FORGE3D_TEST_INSTALLED_WHEEL: '1'
+      FORGE3D_SUBSTRATIA_GOLDEN_VARIANT: nvidia-vulkan
+      FORGE3D_SUBSTRATIA_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Verify runner Python
-        run: python --version
-      - uses: actions/download-artifact@v4
+          fetch-depth: 0
+
+      - name: Initialize isolated SUBSTRATIA evidence directory
+        shell: pwsh
+        run: |
+          $artifactDir = Join-Path $env:RUNNER_TEMP "forge3d-substratia-${{ github.run_id }}-${{ github.run_attempt }}"
+          "FORGE3D_SUBSTRATIA_ARTIFACT_DIR=$artifactDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FORGE3D_EXPECTED_ADAPTER_PROBE=$(Join-Path $artifactDir 'adapter-probe.json')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download exact-candidate Windows wheel
+        uses: actions/download-artifact@v4
         with:
           name: wheels-windows
           path: dist/
-      - name: Install wheel and test dependencies
+
+      - name: Install wheel and evidence dependencies
+        shell: pwsh
         run: |
           python scripts/install_compatible_wheel.py dist
-          pip install pytest numpy pyproj pillow
-      - name: Require clean production GPU evidence
-        env:
-          FORGE3D_NO_BOOTSTRAP: '1'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install pytest numpy pillow
+          exit $LASTEXITCODE
+
+      - name: Bind lane to exact clean candidate
+        shell: pwsh
         run: |
-          if (-not $env:FORGE3D_CERT_SIGNING_KEY) { throw 'missing production signing key' }
-          python scripts/terrain_ci_probe.py --mode terrain
-      - name: Render and sign the recipe catalog
-        env:
-          FORGE3D_NO_BOOTSTRAP: '1'
-          FORGE3D_RUN_TERRAIN_GOLDENS: '1'
-          FORGE3D_UPDATE_RECIPE_CERTIFICATES: '1'
-        run: pytest tests/test_recipe_goldens.py::test_recipe_goldens_render_and_match -v --tb=short
-      - uses: actions/upload-artifact@v4
+          $head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -ne $env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA) { throw "candidate SHA mismatch" }
+          $dirty = (git status --porcelain --untracked-files=no | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $dirty) { throw "candidate tracked worktree is dirty: $dirty" }
+          if ($env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA.Length -ne 40) { throw "candidate SHA is not full length" }
+          New-Item -ItemType Directory -Force -Path $env:FORGE3D_SUBSTRATIA_ARTIFACT_DIR | Out-Null
+
+      - name: Require physical NVIDIA Vulkan terrain adapter
+        shell: pwsh
+        run: |
+          python scripts/terrain_ci_probe.py --mode terrain --require-nvidia-vulkan --json "$env:FORGE3D_EXPECTED_ADAPTER_PROBE"
+          exit $LASTEXITCODE
+
+      - name: Run exact SUBSTRATIA core acceptance tests
+        shell: pwsh
+        run: |
+          $junit = Join-Path $env:FORGE3D_SUBSTRATIA_ARTIFACT_DIR "pytest-junit.xml"
+          python scripts/run_nvidia_visual_acceptance.py --suite substratia --junit "$junit"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/assert_junit_zero_skips.py "$junit"
+          exit $LASTEXITCODE
+
+      - name: Independently verify SUBSTRATIA evidence
+        shell: pwsh
+        run: |
+          python scripts/substratia_evidence_report.py --artifact-dir "$env:FORGE3D_SUBSTRATIA_ARTIFACT_DIR" --repository . --candidate-sha "$env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA" --adapter-probe "$env:FORGE3D_EXPECTED_ADAPTER_PROBE" --render-adapter "$env:FORGE3D_SUBSTRATIA_ARTIFACT_DIR/render-process-adapter.json" --junit "$env:FORGE3D_SUBSTRATIA_ARTIFACT_DIR/pytest-junit.xml" --expected-backend vulkan
+          exit $LASTEXITCODE
+
+      - name: Record physical lane RAN and verifier PASS
+        id: substratia-pass
+        shell: pwsh
+        run: |
+          $lane = Get-Content (Join-Path $env:FORGE3D_SUBSTRATIA_ARTIFACT_DIR "lane-ran.json") -Raw | ConvertFrom-Json
+          $verification = Get-Content (Join-Path $env:FORGE3D_SUBSTRATIA_ARTIFACT_DIR "verification.json") -Raw | ConvertFrom-Json
+          if ($lane.status -ne "RAN" -or $verification.status -ne "PASS") { throw "SUBSTRATIA evidence did not record RAN/PASS" }
+          "lane=ran" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "verifier=pass" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload SHA- and adapter-bound SUBSTRATIA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: refreshed-recipe-certificates
-          path: tests/golden/certificates/*.json
+          name: substratia-nvidia-physical-gpu-evidence
+          path: ${{ runner.temp }}/forge3d-substratia-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
+          retention-days: 90
+
+      - name: Clean SUBSTRATIA evidence scratch
+        if: always()
+        shell: pwsh
+        run: |
+          $scratch = Join-Path $env:RUNNER_TEMP "forge3d-substratia-${{ github.run_id }}-${{ github.run_attempt }}"
+          if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 
   # ============================================================================
   # M-06 Option-2 Full Geospatial Viewer acceptance
   #
-  # This is a required, zero-skip hardware lane. An unavailable adapter, a
-  # stale/missing release viewer, or a skipped acceptance test is a hard error.
+  # This lane is required and zero-skip only on nightly runs or explicit manual
+  # M-06/full dispatches. An unavailable adapter, a stale/missing release viewer,
+  # or a skipped acceptance test is a hard error whenever the lane is selected.
   # ============================================================================
   test-m06-full-geospatial-viewer:
     name: M-06 Full Geospatial Viewer (NVIDIA Vulkan)
-    needs: [build-wheels, prepare-lfs-fixtures]
+    needs: [build-wheel-windows, prepare-lfs-fixtures, terrain-golden-paths]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'm06'))
     runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
     timeout-minutes: 35
     env:
@@ -699,7 +1496,6 @@ jobs:
       FORGE3D_TEST_INSTALLED_WHEEL: '1'
       RUN_M06_VIEWER_CI: '1'
       RUN_LIMES_GPU_CI: '1'
-      FORGE3D_VIEWER_BINARY: ${{ github.workspace }}/target/release/interactive_viewer.exe
       FORGE3D_TEST_DEM: ${{ github.workspace }}/assets/tif/switzerland_dem.tif
 
     steps:
@@ -713,6 +1509,22 @@ jobs:
           "FORGE3D_M06_ARTIFACT_DIR=$artifactDir" | Add-Content $env:GITHUB_ENV
           $env:FORGE3D_M06_ARTIFACT_DIR = $artifactDir
           New-Item -ItemType Directory -Force $env:FORGE3D_M06_ARTIFACT_DIR | Out-Null
+          $scratchDrive = Get-PSDrive -PSProvider FileSystem |
+            Where-Object { $null -ne $_.Free -and $_.Root } |
+            Sort-Object Free -Descending |
+            Select-Object -First 1
+          if ($null -eq $scratchDrive) { throw 'No filesystem drive is available for M-06 scratch data' }
+          $scratchScope = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_JOB"
+          $scratchDir = Join-Path $scratchDrive.Root "forge3d-ci-scratch/$scratchScope"
+          $targetDir = Join-Path $scratchDir 'cargo-target'
+          $viewerBinary = Join-Path $targetDir 'release/interactive_viewer.exe'
+          New-Item -ItemType Directory -Force $targetDir | Out-Null
+          "FORGE3D_M06_SCRATCH_DIR=$scratchDir" | Add-Content $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$targetDir" | Add-Content $env:GITHUB_ENV
+          "FORGE3D_VIEWER_BINARY=$viewerBinary" | Add-Content $env:GITHUB_ENV
+          $env:FORGE3D_M06_SCRATCH_DIR = $scratchDir
+          $env:CARGO_TARGET_DIR = $targetDir
+          $env:FORGE3D_VIEWER_BINARY = $viewerBinary
           "initialized=$(Get-Date -Format o)" | Set-Content "$env:FORGE3D_M06_ARTIFACT_DIR/sentinel.txt"
           @{
             repository = $env:GITHUB_REPOSITORY
@@ -727,6 +1539,7 @@ jobs:
             required_labels = @('self-hosted', 'Windows', 'X64', 'forge3d-gpu', 'gpu-nvidia')
             required_backend = 'vulkan'
             installed_wheel_required = $true
+            scratch_dir = $scratchDir
           } | ConvertTo-Json -Depth 4 | Set-Content "$env:FORGE3D_M06_ARTIFACT_DIR/run-context.json"
 
       - uses: actions/checkout@v4
@@ -800,20 +1613,6 @@ jobs:
           }
           exit $code
 
-      - name: Run M-06 Rust ABI and adapter gates
-        shell: pwsh
-        run: |
-          $features = 'default,async_readback,copc_laz,cog_streaming,gis-remote,geos-topology,weighted-oit,wsI_bigbuf,wsI_double_buf,enable-pbr,enable-tbn,enable-normal-mapping,enable-hdr-offscreen,enable-renderer-config,enable-staging-rings,shader-contract-asserts'
-          $filters = @('terrain_uniform_abi_tests', 'backend_request_tests', 'camera::anchor::tests')
-          $filters -join "`n" | Set-Content "$env:FORGE3D_M06_ARTIFACT_DIR/rust-test-filters.txt"
-          $failed = 0
-          foreach ($filter in $filters) {
-            cargo test --release --features $features $filter -- --test-threads=1 *>&1 | Tee-Object -Append "$env:FORGE3D_M06_ARTIFACT_DIR/rust-gates.log"
-            if ($LASTEXITCODE -ne 0) { $failed = $LASTEXITCODE; break }
-          }
-          "rust_gates=$failed" | Set-Content "$env:FORGE3D_M06_ARTIFACT_DIR/rust-gates-exit-code.txt"
-          exit $failed
-
       - name: Require the exact NVIDIA Vulkan adapter
         shell: pwsh
         run: |
@@ -829,27 +1628,9 @@ jobs:
           New-Item -ItemType Directory -Force $hdriDir | Out-Null
           python -c "from pathlib import Path; from tests.test_terrain_viewer_pbr import write_asymmetric_test_hdr; write_asymmetric_test_hdr(Path('assets/hdri/brown_photostudio_02_4k.hdr'))"
           $tests = @(
-            'tests/test_m06_anchoring_boundary.py',
-            'tests/test_world_coord_f32_gate.py',
-            'tests/test_m06_viewer_matrix_contract.py',
-            'tests/test_m06_single_rebase_contract.py',
-            'tests/test_m06_temporal_resource_contract.py',
-            'tests/test_m06_scene_review_transaction.py',
-            'tests/test_m06_command_transaction.py',
-            'tests/test_m06_python_viewer_contracts.py',
-            'tests/test_gis_raster.py',
-            'tests/test_gis_crs_affine.py',
-            'tests/test_3dtiles_parse.py',
-            'tests/test_buildings_cityjson.py',
-            'tests/test_viewer_ipc.py',
-            'tests/test_api_contracts.py',
-            'tests/test_install_smoke.py',
-            'tests/test_allocation_gate.py',
-            'tests/test_no_silent_degradation.py',
-            'tests/test_certificate_verifier.py',
-            'tests/test_render_certificate_contract.py',
-            'tests/test_recipe_goldens.py::test_certificate_refresh_rejects_capability_degradation',
-            'tests/test_recipe_goldens.py::test_recipe_golden_gate_rejects_pixel_regression',
+            'tests/test_shadow_techniques.py::TestEvsmExposureParity::test_evsm_is_not_black',
+            'tests/test_shadow_techniques.py::TestEvsmExposureParity::test_evsm_banding_is_bounded_in_raw_visibility',
+            'tests/test_picking_ipc.py',
             'tests/test_m06_full_geospatial_viewer.py',
             'tests/test_terrain_viewer_pbr.py',
             'tests/test_vector_overlay_rendering.py',
@@ -908,6 +1689,25 @@ jobs:
           name: m06-full-geospatial-viewer-evidence
           path: ${{ runner.temp }}/forge3d-m06-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
+          retention-days: 90
+      - name: Clean M-06 build scratch
+        if: always()
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:FORGE3D_M06_SCRATCH_DIR)) {
+            Write-Warning 'M-06 scratch was not initialized; there is no scoped path to clean'
+            exit 0
+          }
+          $scratchDir = [IO.Path]::GetFullPath($env:FORGE3D_M06_SCRATCH_DIR)
+          $expectedLeaf = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_JOB"
+          $parentDir = Split-Path -Parent $scratchDir
+          if ((Split-Path -Leaf $scratchDir) -ne $expectedLeaf -or
+              (Split-Path -Leaf $parentDir) -ne 'forge3d-ci-scratch') {
+            throw "Refusing to clean unexpected M-06 scratch path: $scratchDir"
+          }
+          if (Test-Path -LiteralPath $scratchDir) {
+            Remove-Item -LiteralPath $scratchDir -Recurse -Force
+          }
 
   # ============================================================================
   # COMPENDIUM F3DZ physical-GPU acceptance
@@ -919,8 +1719,10 @@ jobs:
   # ============================================================================
   test-f3dz-gpu:
     name: F3DZ Codec (NVIDIA Vulkan)
-    needs: [build-wheels, terrain-golden-paths]
-    if: github.event_name == 'workflow_dispatch' || needs.terrain-golden-paths.outputs.f3dz == 'true'
+    needs: [build-wheel-windows, terrain-golden-paths]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'f3dz'))
     runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
     timeout-minutes: 30
     env:
@@ -939,6 +1741,19 @@ jobs:
           "FORGE3D_F3DZ_ARTIFACT_DIR=$artifactDir" | Add-Content $env:GITHUB_ENV
           $env:FORGE3D_F3DZ_ARTIFACT_DIR = $artifactDir
           New-Item -ItemType Directory -Force $artifactDir | Out-Null
+          $scratchDrive = Get-PSDrive -PSProvider FileSystem |
+            Where-Object { $null -ne $_.Free -and $_.Root } |
+            Sort-Object Free -Descending |
+            Select-Object -First 1
+          if ($null -eq $scratchDrive) { throw 'No filesystem drive is available for F3DZ scratch data' }
+          $scratchScope = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_JOB"
+          $scratchDir = Join-Path $scratchDrive.Root "forge3d-ci-scratch/$scratchScope"
+          $targetDir = Join-Path $scratchDir 'cargo-target'
+          New-Item -ItemType Directory -Force $targetDir | Out-Null
+          "FORGE3D_F3DZ_SCRATCH_DIR=$scratchDir" | Add-Content $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$targetDir" | Add-Content $env:GITHUB_ENV
+          $env:FORGE3D_F3DZ_SCRATCH_DIR = $scratchDir
+          $env:CARGO_TARGET_DIR = $targetDir
           git rev-parse HEAD | Set-Content "$artifactDir/checked-out-head.txt"
           @{
             repository = $env:GITHUB_REPOSITORY
@@ -948,6 +1763,7 @@ jobs:
             runner_arch = $env:RUNNER_ARCH
             required_backend = 'vulkan'
             required_labels = @('self-hosted', 'Windows', 'X64', 'forge3d-gpu', 'gpu-nvidia')
+            scratch_dir = $scratchDir
           } | ConvertTo-Json -Depth 4 | Set-Content "$artifactDir/run-context.json"
       - uses: actions/download-artifact@v4
         with:
@@ -960,11 +1776,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip install pytest numpy *>&1 | Tee-Object "$env:FORGE3D_F3DZ_ARTIFACT_DIR/dependency-install.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Require the exact NVIDIA Vulkan adapter
-        shell: pwsh
-        run: |
-          python scripts/terrain_ci_probe.py --mode terrain --require-nvidia-vulkan --json "$env:FORGE3D_F3DZ_ARTIFACT_DIR/adapter-probe.json" *>&1 | Tee-Object "$env:FORGE3D_F3DZ_ARTIFACT_DIR/adapter-probe.log"
-          exit $LASTEXITCODE
       - name: Run all F3DZ corpus and CPU-GPU identity gates
         shell: pwsh
         run: |
@@ -974,9 +1785,24 @@ jobs:
           $verifyCode = $LASTEXITCODE
           if ($pytestCode -ne 0) { exit $pytestCode }
           exit $verifyCode
-      - name: Record F3DZ CPU and GPU throughput
+      - name: Select stable Rust toolchain for source benchmark
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
         shell: pwsh
         run: |
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup show active-toolchain *>&1 | Tee-Object "$env:FORGE3D_F3DZ_ARTIFACT_DIR/rust-toolchain.txt"
+          exit $LASTEXITCODE
+      - name: Record separate source benchmark (nightly/full only)
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
+        shell: pwsh
+        run: |
+          @{
+            evidence_scope = 'source-benchmark-not-installed-wheel-acceptance'
+            head_sha = (git rev-parse HEAD).Trim()
+            rustc = (rustc -Vv | Out-String).Trim()
+            cargo = (cargo -Vv | Out-String).Trim()
+          } | ConvertTo-Json -Depth 3 | Set-Content "$env:FORGE3D_F3DZ_ARTIFACT_DIR/benchmark-provenance.json"
           cargo bench --bench f3dz_bench *>&1 | Tee-Object "$env:FORGE3D_F3DZ_ARTIFACT_DIR/benchmark.log"
           exit $LASTEXITCODE
       - name: Upload F3DZ physical-GPU evidence
@@ -986,6 +1812,25 @@ jobs:
           name: f3dz-physical-gpu-evidence
           path: ${{ runner.temp }}/forge3d-f3dz-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
+          retention-days: 90
+      - name: Clean F3DZ build scratch
+        if: always()
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:FORGE3D_F3DZ_SCRATCH_DIR)) {
+            Write-Warning 'F3DZ scratch was not initialized; there is no scoped path to clean'
+            exit 0
+          }
+          $scratchDir = [IO.Path]::GetFullPath($env:FORGE3D_F3DZ_SCRATCH_DIR)
+          $expectedLeaf = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_JOB"
+          $parentDir = Split-Path -Parent $scratchDir
+          if ((Split-Path -Leaf $scratchDir) -ne $expectedLeaf -or
+              (Split-Path -Leaf $parentDir) -ne 'forge3d-ci-scratch') {
+            throw "Refusing to clean unexpected F3DZ scratch path: $scratchDir"
+          }
+          if (Test-Path -LiteralPath $scratchDir) {
+            Remove-Item -LiteralPath $scratchDir -Recurse -Force
+          }
 
   # ============================================================================
   # ANAMNESIS physical cross-backend portability
@@ -995,7 +1840,10 @@ jobs:
   # ============================================================================
   test-anamnesis-portability-seed:
     name: ANAMNESIS Physical Seed (Windows Vulkan)
-    needs: build-wheels
+    needs: [build-wheel-windows, terrain-golden-paths]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'anamnesis'))
     runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
     timeout-minutes: 20
     env:
@@ -1066,10 +1914,14 @@ jobs:
             anamnesis-portability-producer-adapter.json
             anamnesis-portability-producer-machine-id.txt
           if-no-files-found: error
+          retention-days: 90
 
   test-anamnesis-portability:
     name: ANAMNESIS Physical Consume (Windows DX12)
-    needs: [build-wheels, test-anamnesis-portability-seed]
+    needs: [build-wheel-windows, terrain-golden-paths, test-anamnesis-portability-seed]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'anamnesis'))
     runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
     timeout-minutes: 20
     env:
@@ -1128,6 +1980,7 @@ jobs:
             --cache seeded/anamnesis-portable-store `
             --record seeded/anamnesis-portable-record.json `
             --consumer-frame-blob anamnesis-portable-consumer.png `
+            --consumer-golden tests/goldens/determinism/terra_determinata_v1.dx12.sha256 `
             --consumer-adapter-record anamnesis-portable-consumer.jsonl `
             --machine-id-file anamnesis-portability-consumer-machine-id.txt `
             --runner-name '${{ runner.name }}' `
@@ -1149,6 +2002,7 @@ jobs:
             anamnesis-portability-consumer-adapter.json
             anamnesis-portability-consumer-machine-id.txt
           if-no-files-found: error
+          retention-days: 90
 
   # ============================================================================
   # ANAMNESIS production acceptance
@@ -1158,7 +2012,10 @@ jobs:
   # ============================================================================
   test-anamnesis-production:
     name: ANAMNESIS 600-frame Production (NVIDIA Vulkan)
-    needs: build-wheels
+    needs: [build-wheel-windows, terrain-golden-paths]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'anamnesis'))
     runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
     timeout-minutes: 50
     env:
@@ -1168,6 +2025,20 @@ jobs:
       FORGE3D_RUN_GPU_ANAMNESIS: '1'
 
     steps:
+      - name: Initialize isolated ANAMNESIS scratch
+        shell: pwsh
+        run: |
+          $scratchDrive = Get-PSDrive -PSProvider FileSystem |
+            Where-Object { $null -ne $_.Free -and $_.Root } |
+            Sort-Object Free -Descending |
+            Select-Object -First 1
+          if ($null -eq $scratchDrive) { throw 'No filesystem drive is available for ANAMNESIS scratch data' }
+          $scratchScope = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_JOB"
+          $scratchDir = Join-Path $scratchDrive.Root "forge3d-ci-scratch/$scratchScope"
+          $baseTemp = Join-Path $scratchDir 'pytest'
+          New-Item -ItemType Directory -Force $baseTemp | Out-Null
+          "FORGE3D_ANAMNESIS_SCRATCH_DIR=$scratchDir" | Add-Content $env:GITHUB_ENV
+          "FORGE3D_ANAMNESIS_BASE_TEMP=$baseTemp" | Add-Content $env:GITHUB_ENV
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -1198,7 +2069,7 @@ jobs:
         env:
           FORGE3D_ANAMNESIS_RESULT_PATH: ${{ runner.temp }}/anamnesis-production-result.json
         run: |
-          python -m pytest tests/test_anamnesis_incremental.py::test_real_gpu_600_frame_acceptance -v --tb=short
+          python -m pytest tests/test_anamnesis_incremental.py::test_real_gpu_600_frame_acceptance -v --tb=short --basetemp="$env:FORGE3D_ANAMNESIS_BASE_TEMP"
       - name: Reject native final-frame stale hits
         shell: pwsh
         run: |
@@ -1231,12 +2102,359 @@ jobs:
             ${{ runner.temp }}/anamnesis-p0-adapter.json
             ${{ runner.temp }}/anamnesis-checked-out-head.txt
           if-no-files-found: error
+          retention-days: 90
+      - name: Clean ANAMNESIS scratch
+        if: always()
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:FORGE3D_ANAMNESIS_SCRATCH_DIR)) {
+            Write-Warning 'ANAMNESIS scratch was not initialized; there is no scoped path to clean'
+            exit 0
+          }
+          $scratchDir = [IO.Path]::GetFullPath($env:FORGE3D_ANAMNESIS_SCRATCH_DIR)
+          $expectedLeaf = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_JOB"
+          $parentDir = Split-Path -Parent $scratchDir
+          if ((Split-Path -Leaf $scratchDir) -ne $expectedLeaf -or
+              (Split-Path -Leaf $parentDir) -ne 'forge3d-ci-scratch') {
+            throw "Refusing to clean unexpected ANAMNESIS scratch path: $scratchDir"
+          }
+          if (Test-Path -LiteralPath $scratchDir) {
+            Remove-Item -LiteralPath $scratchDir -Recurse -Force
+          }
+
+  # ============================================================================
+  # TESSELLA out-of-core terrain acceptance
+  #
+  # When selected, this lane is mandatory and zero-skip. It proves the six
+  # quantitative terrain gates on the exact scheduled/manual candidate SHA with
+  # a physical NVIDIA Vulkan adapter.
+  # ============================================================================
+  test-tessella-gpu:
+    name: TESSELLA Out-of-Core Terrain (NVIDIA Vulkan)
+    needs: [build-wheel-windows, terrain-golden-paths]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'tessella'))
+    runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
+    timeout-minutes: 90
+    env:
+      WGPU_BACKEND: vulkan
+      FORGE3D_ALLOW_HOSTED_WINDOWS_TERRAIN: '1'
+      FORGE3D_NO_BOOTSTRAP: '1'
+      FORGE3D_TEST_INSTALLED_WHEEL: '1'
+      FORGE3D_TESSELLA_REQUIRED_GPU: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Initialize exact-head evidence
+        shell: pwsh
+        run: |
+          $artifactDir = Join-Path $env:RUNNER_TEMP "forge3d-tessella-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          "FORGE3D_TESSELLA_ARTIFACT_DIR=$artifactDir" | Add-Content $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force $artifactDir | Out-Null
+          $expected = '${{ github.event.pull_request.head.sha || github.sha }}'
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $expected) {
+            throw "TESSELLA checkout mismatch: expected=$expected actual=$actual"
+          }
+          $actual | Set-Content "$artifactDir/checked-out-head.txt"
+          @{
+            repository = $env:GITHUB_REPOSITORY
+            head_sha = $expected
+            checked_out_head = $actual
+            runner_name = $env:RUNNER_NAME
+            runner_os = $env:RUNNER_OS
+            runner_arch = $env:RUNNER_ARCH
+            required_backend = 'vulkan'
+            required_labels = @('self-hosted', 'Windows', 'X64', 'forge3d-gpu', 'gpu-nvidia')
+          } | ConvertTo-Json -Depth 4 | Set-Content "$artifactDir/run-context.json"
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-windows
+          path: dist/
+      - name: Install exact-head wheel and test dependencies
+        shell: pwsh
+        run: |
+          python scripts/install_compatible_wheel.py dist *>&1 | Tee-Object "$env:FORGE3D_TESSELLA_ARTIFACT_DIR/wheel-install.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install pytest numpy pillow *>&1 | Tee-Object "$env:FORGE3D_TESSELLA_ARTIFACT_DIR/dependency-install.log"
+          exit $LASTEXITCODE
+      - name: Require the exact NVIDIA Vulkan adapter
+        shell: pwsh
+        run: |
+          python scripts/terrain_ci_probe.py --mode terrain --require-nvidia-vulkan --json "$env:FORGE3D_TESSELLA_ARTIFACT_DIR/adapter-probe.json" *>&1 | Tee-Object "$env:FORGE3D_TESSELLA_ARTIFACT_DIR/adapter-probe.log"
+          exit $LASTEXITCODE
+      - name: Select stable Rust toolchain for source differentials
+        shell: pwsh
+        run: |
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup show active-toolchain *>&1 | Tee-Object "$env:FORGE3D_TESSELLA_ARTIFACT_DIR/rust-toolchain.txt"
+          exit $LASTEXITCODE
+      - name: Require the 1,000-camera GPU CPU LOD differential
+        shell: pwsh
+        run: |
+          cargo test --release --lib `
+            terrain::clipmap::gpu_lod::tests::gpu_and_cpu_select_identical_tile_sets_for_1000_cameras `
+            -- --ignored --exact --nocapture *>&1 | Tee-Object "$env:FORGE3D_TESSELLA_ARTIFACT_DIR/gpu-cpu-lod-differential.log"
+          exit $LASTEXITCODE
+      - name: Require the real-shader HZB conservativeness differential
+        shell: pwsh
+        run: |
+          cargo test --release --lib `
+            terrain::culling::two_phase::tests::hzb_cull_shader_matches_the_cpu_occlusion_predicate `
+            -- --ignored --exact --nocapture *>&1 | Tee-Object "$env:FORGE3D_TESSELLA_ARTIFACT_DIR/hzb-conservativeness-differential.log"
+          exit $LASTEXITCODE
+      - name: Run all six TESSELLA acceptance gates
+        shell: pwsh
+        run: |
+          $junit = Join-Path $env:FORGE3D_TESSELLA_ARTIFACT_DIR "junit.xml"
+          python -m pytest `
+            tests/test_vt_out_of_core.py `
+            tests/test_hzb_culling.py `
+            tests/test_visibility_buffer.py `
+            tests/test_bc_encoders.py `
+            tests/test_flythrough_popping.py `
+            tests/test_vt_request_retention.py `
+            tests/test_tessella_certificate_evidence.py `
+            -v --tb=short --junitxml="$junit" *>&1 | Tee-Object "$env:FORGE3D_TESSELLA_ARTIFACT_DIR/pytest.log"
+          $pytestCode = $LASTEXITCODE
+          python scripts/assert_junit_zero_skips.py "$junit" *>&1 | Tee-Object "$env:FORGE3D_TESSELLA_ARTIFACT_DIR/junit-verifier.log"
+          $verifyCode = $LASTEXITCODE
+          if ($pytestCode -ne 0) { exit $pytestCode }
+          exit $verifyCode
+      - name: Consolidate the nine TESSELLA verification results
+        shell: pwsh
+        run: |
+          python scripts/tessella_evidence_report.py "$env:FORGE3D_TESSELLA_ARTIFACT_DIR" `
+            *>&1 | Tee-Object "$env:FORGE3D_TESSELLA_ARTIFACT_DIR/verification-report.log"
+          exit $LASTEXITCODE
+      - name: Upload TESSELLA physical-GPU evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessella-physical-gpu-evidence
+          path: ${{ runner.temp }}/forge3d-tessella-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 90
+
+  # ============================================================================
+  # HELIOS conservative-descent proof
+  # ============================================================================
+  test-helios-rust-conservative:
+    name: HELIOS Conservative Descent (Rust)
+    needs: terrain-golden-paths
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.scope == 'helios' || inputs.scope == 'full')) ||
+      (github.event_name == 'schedule' && needs.terrain-golden-paths.outputs.helios == 'true')
+    runs-on: ubuntu-latest
+    outputs:
+      gate: ${{ steps.helios-rust-pass.outputs.gate || 'unknown' }}
+    env:
+      FORGE3D_HELIOS_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Bind Rust proof to exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/forge3d-helios-rust-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$artifact_dir"
+          echo "FORGE3D_HELIOS_RUST_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$FORGE3D_HELIOS_CANDIDATE_SHA"
+          printf '%s\n' "$actual" > "$artifact_dir/rust-checked-out-head.txt"
+      - name: Run the exact conservative-descent proof
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --release --lib \
+            path_tracing::hybrid_compute::terrain_heightfield::tests::curvature_descent_is_conservative \
+            -- --exact --nocapture 2>&1 | tee "$FORGE3D_HELIOS_RUST_ARTIFACT_DIR/rust-conservative-descent.log"
+      - name: Record conservative-descent PASS
+        id: helios-rust-pass
+        shell: bash
+        run: echo "gate=pass" >> "$GITHUB_OUTPUT"
+      - name: Upload HELIOS Rust proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: helios-rust-conservative-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/forge3d-helios-rust-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 90
+
+  # ============================================================================
+  # HELIOS physical-GPU acceptance
+  # ============================================================================
+  test-helios-gpu:
+    name: HELIOS (NVIDIA DX12 + Vulkan)
+    needs: [build-wheel-windows, prepare-lfs-fixtures, terrain-golden-paths, test-helios-rust-conservative]
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.scope == 'helios' || inputs.scope == 'full')) ||
+      (github.event_name == 'schedule' && needs.terrain-golden-paths.outputs.helios == 'true')
+    runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
+    timeout-minutes: 20
+    outputs:
+      lane: ${{ steps.helios-pass.outputs.lane || 'unknown' }}
+      verifier: ${{ steps.helios-pass.outputs.verifier || 'unknown' }}
+    env:
+      FORGE3D_NO_BOOTSTRAP: '1'
+      FORGE3D_RUN_TERRAIN_GOLDENS: '1'
+      FORGE3D_TEST_INSTALLED_WHEEL: '1'
+      FORGE3D_HELIOS_REQUIRE_PHYSICAL_GPU: '1'
+      FORGE3D_HELIOS_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      WGPU_BACKEND: vulkan
+      WGPU_BACKENDS: vulkan
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Initialize exact-candidate HELIOS evidence
+        shell: pwsh
+        run: |
+          $artifactDir = Join-Path $env:RUNNER_TEMP "forge3d-helios-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          "FORGE3D_HELIOS_ARTIFACT_DIR=$artifactDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+          $actual = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $env:FORGE3D_HELIOS_CANDIDATE_SHA) {
+            throw "HELIOS checkout mismatch: expected=$env:FORGE3D_HELIOS_CANDIDATE_SHA actual=$actual"
+          }
+          $dirty = (git status --porcelain --untracked-files=no | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $dirty) { throw "HELIOS tracked worktree is dirty: $dirty" }
+          $actual | Set-Content "$artifactDir/checked-out-head.txt"
+          @{
+            repository = $env:GITHUB_REPOSITORY
+            head_sha = $env:FORGE3D_HELIOS_CANDIDATE_SHA
+            checked_out_head = $actual
+            runner_name = $env:RUNNER_NAME
+            runner_os = $env:RUNNER_OS
+            runner_arch = $env:RUNNER_ARCH
+            required_backend = 'vulkan'
+            required_labels = @('self-hosted', 'Windows', 'X64', 'forge3d-gpu', 'gpu-nvidia')
+          } | ConvertTo-Json -Depth 4 | Set-Content "$artifactDir/run-context.json"
+      - name: Download conservative-descent proof
+        uses: actions/download-artifact@v4
+        with:
+          name: helios-rust-conservative-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/forge3d-helios-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: lfs-fixture-bundles
+          path: lfs-fixture-bundles
+      - name: Restore HELIOS real-DEM fixture
+        shell: pwsh
+        run: python -m zipfile -e lfs-fixture-bundles/python-tiffs.zip .
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-windows
+          path: dist/
+      - name: Install exact-head wheel and acceptance dependencies
+        shell: pwsh
+        run: |
+          python scripts/install_compatible_wheel.py dist *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/wheel-install.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install pytest numpy rasterio pyproj *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/dependency-install.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import hashlib, json, pathlib, forge3d._forge3d as native; p=pathlib.Path(native.__file__).resolve(); print(json.dumps({'native_extension': str(p), 'native_sha256': hashlib.sha256(p.read_bytes()).hexdigest()}, indent=2))" | Set-Content "$env:FORGE3D_HELIOS_ARTIFACT_DIR/installed-wheel-runtime.json"
+      - name: Require physical NVIDIA Vulkan
+        shell: pwsh
+        run: |
+          python scripts/terrain_ci_probe.py --mode terrain --require-nvidia-vulkan --json "$env:FORGE3D_HELIOS_ARTIFACT_DIR/adapter-probe.json" *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/adapter-probe.log"
+          exit $LASTEXITCODE
+      - name: Dispatch exact production terrain_trace proof on physical GPU
+        shell: pwsh
+        run: |
+          cargo test --release --lib path_tracing::hybrid_compute::terrain_heightfield::tests::curvature_descent_production_gpu_is_conservative -- --exact --nocapture *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/production-gpu-conservative-descent.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run all HELIOS wins with zero skips
+        shell: pwsh
+        run: |
+          $junit = Join-Path $env:FORGE3D_HELIOS_ARTIFACT_DIR "pytest-junit.xml"
+          python -m pytest tests/test_solar_spa.py tests/test_viewshed_curvature.py tests/test_shadow_tip.py -v --tb=short --capture=tee-sys --junitxml="$junit" *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/pytest.log"
+          $pytestCode = $LASTEXITCODE
+          python scripts/assert_junit_zero_skips.py "$junit" *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/junit-verifier.log"
+          $verifyCode = $LASTEXITCODE
+          if ($pytestCode -ne 0) { exit $pytestCode }
+          exit $verifyCode
+      - name: Verify and consolidate HELIOS evidence
+        shell: pwsh
+        run: |
+          python scripts/helios_evidence_report.py --artifact-dir "$env:FORGE3D_HELIOS_ARTIFACT_DIR" --candidate-sha "$env:FORGE3D_HELIOS_CANDIDATE_SHA" *>&1 | Tee-Object "$env:FORGE3D_HELIOS_ARTIFACT_DIR/evidence-verifier.log"
+          exit $LASTEXITCODE
+      - name: Record physical lane RAN and verifier PASS
+        id: helios-pass
+        shell: pwsh
+        run: |
+          $lane = Get-Content (Join-Path $env:FORGE3D_HELIOS_ARTIFACT_DIR "lane-ran.json") -Raw | ConvertFrom-Json
+          $verification = Get-Content (Join-Path $env:FORGE3D_HELIOS_ARTIFACT_DIR "verification.json") -Raw | ConvertFrom-Json
+          if ($lane.status -ne "RAN" -or $verification.status -ne "PASS") { throw "HELIOS evidence did not record RAN/PASS" }
+          "lane=ran" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "verifier=pass" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Upload SHA-, adapter-, and metric-bound HELIOS evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: helios-physical-gpu-evidence
+          path: ${{ runner.temp }}/forge3d-helios-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 90
+
+  # ============================================================================
+  # Hosted determinism families. These consume the exact platform wheels above
+  # and run only for nightly acceptance or an explicit manual scope. ABSENT
+  # hosted GPU evidence never substitutes for the physical NVIDIA acceptance
+  # jobs.
+  # ============================================================================
+  determinism-render:
+    name: Hosted Render Determinism
+    needs: [build-wheel-linux, build-wheel-windows, build-wheel-macos, terrain-golden-paths]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'determinism'))
+    uses: ./.github/workflows/determinism-matrix.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      run_render: true
+
+  determinism-f3dz:
+    name: Hosted F3DZ Determinism
+    needs: [build-wheel-linux, build-wheel-windows, terrain-golden-paths]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'determinism' || inputs.scope == 'f3dz'))
+    uses: ./.github/workflows/determinism-matrix.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      run_f3dz: true
+
+  determinism-anamnesis:
+    name: Hosted ANAMNESIS Determinism
+    needs: [build-wheel-linux, build-wheel-windows, terrain-golden-paths]
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'determinism' || inputs.scope == 'anamnesis'))
+    uses: ./.github/workflows/determinism-matrix.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      run_anamnesis: true
 
   # ============================================================================
   # Documentation Build
   # ============================================================================
   build-docs:
     name: Build Documentation
+    needs: preflight
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
     runs-on: ubuntu-latest
 
     steps:
@@ -1250,66 +2468,119 @@ jobs:
       - name: Build Rust docs
         run: cargo doc --workspace --features default,async_readback,copc_laz,cog_streaming,gis-remote,geos-topology,weighted-oit,wsI_bigbuf,wsI_double_buf,enable-pbr,enable-tbn,enable-normal-mapping,enable-hdr-offscreen,enable-renderer-config,enable-staging-rings,shader-contract-asserts --no-deps
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Install Sphinx dependencies
-        run: |
-          pip install sphinx sphinx-rtd-theme myst-parser numpy pillow ipywidgets pooch
-
-      - name: Build Sphinx docs
-        run: |
-          cd docs
-          make html
-
-      - name: Upload docs artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: documentation
-          path: |
-            target/doc/
-            docs/_build/html/
-
   # ============================================================================
-  # Final Status
+  # Stable hosted gate for every existing and future PR. Configure branch
+  # protection to require only this context; physical evidence remains separate.
   # ============================================================================
-  ci-success:
-    name: CI Success
-    needs: [prepare-lfs-fixtures, terrain-golden-paths, test-rust, build-wheels, test-python, test-terminus-fuzz, test-python-linux-arm, test-golden-images, refresh-recipe-certificates, test-m06-full-geospatial-viewer, test-f3dz-gpu, test-anamnesis-portability-seed, test-anamnesis-portability, test-anamnesis-production, build-docs]
+  pr-core-success:
+    name: PR Core Success
+    needs: [preflight, test-fast-contract]
     runs-on: ubuntu-latest
     if: always()
-
     steps:
-      - name: Check all jobs succeeded
+      - name: Enforce the hosted core contract
+        shell: bash
         run: |
-          # Golden lane honesty: `test-golden-images` is gated by the
-          # `terrain-golden-paths` paths filter via its job-level `if:`. When no
-          # golden-relevant path changed the job is `skipped` — that is the ONLY
-          # reason `skipped` is acceptable here. Whenever the paths filter DID
-          # run the job, a golden pytest mismatch fails the job (no
-          # continue-on-error shields the pytest step) and therefore fails this
-          # aggregator. `absent` (no usable adapter) still reports as job
-          # `success` and is surfaced by the lane line below, not swallowed.
-          echo "golden lane: ${{ needs.test-golden-images.outputs.lane || 'skipped(paths)' }}"
-          if [ "${{ needs.prepare-lfs-fixtures.result }}" != "success" ] || \
-             [ "${{ needs.terrain-golden-paths.result }}" != "success" ] || \
-             [ "${{ needs.test-rust.result }}" != "success" ] || \
-             [ "${{ needs.build-wheels.result }}" != "success" ] || \
-             [ "${{ needs.test-python.result }}" != "success" ] || \
-             [ "${{ needs.test-terminus-fuzz.result }}" != "success" ] || \
-             [ "${{ needs.test-python-linux-arm.result }}" != "success" ] || \
-             { [ "${{ needs.test-golden-images.result }}" != "success" ] && [ "${{ needs.test-golden-images.result }}" != "skipped" ]; } || \
-             { [ "${{ needs.refresh-recipe-certificates.result }}" != "success" ] && [ "${{ needs.refresh-recipe-certificates.result }}" != "skipped" ]; } || \
-             [ "${{ needs.test-m06-full-geospatial-viewer.result }}" != "success" ] || \
-             { [ "${{ needs.test-f3dz-gpu.result }}" != "success" ] && [ "${{ needs.test-f3dz-gpu.result }}" != "skipped" ]; } || \
-             [ "${{ needs.test-anamnesis-portability-seed.result }}" != "success" ] || \
-             [ "${{ needs.test-anamnesis-portability.result }}" != "success" ] || \
-             [ "${{ needs.test-anamnesis-production.result }}" != "success" ] || \
-             [ "${{ needs.build-docs.result }}" != "success" ]; then
-            echo "❌ CI failed"
-            exit 1
-          else
-            echo "✅ CI passed"
+          test '${{ needs.preflight.result }}' = success
+          test '${{ needs.test-fast-contract.result }}' = success
+
+  # This aggregate is intentionally separate from PR Core Success. It validates
+  # selected high-cost hosted and physical claims without delaying every merge.
+  full-acceptance-summary:
+    name: Full Acceptance Summary
+    needs: [pr-core-success, terrain-golden-paths, test-rust, test-python-full-linux, test-python-full-windows, test-python-full-macos, test-python-slow, test-terminus-fuzz, test-python-linux-arm, test-golden-images-nvidia, test-substratia-gpu-nvidia, build-docs, determinism-render, determinism-f3dz, determinism-anamnesis, test-m06-full-geospatial-viewer, test-f3dz-gpu, test-anamnesis-portability-seed, test-anamnesis-portability, test-anamnesis-production, test-tessella-gpu, test-helios-rust-conservative, test-helios-gpu]
+    runs-on: ubuntu-latest
+    if: >-
+      always() &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.scope != 'core'))
+    steps:
+      - name: Enforce every selected acceptance family
+        shell: bash
+        run: |
+          failed=0
+          check_selected() {
+            selected="$1"
+            result="$2"
+            label="$3"
+            if [ "$selected" = "true" ] && [ "$result" != "success" ]; then
+              echo "::error::$label was selected but finished as $result"
+              failed=1
+            elif [ "$selected" != "true" ] && [ "$result" != "skipped" ]; then
+              echo "::error::$label was not selected but finished as $result"
+              failed=1
+            fi
+          }
+          if [ '${{ needs.pr-core-success.result }}' != 'success' ]; then
+            echo "::error::PR Core Success finished as ${{ needs.pr-core-success.result }}"
+            failed=1
           fi
+          full_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full') }}"
+          m06_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'm06')) }}"
+          f3dz_physical_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'f3dz')) }}"
+          anamnesis_physical_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'anamnesis')) }}"
+          tessella_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'tessella')) }}"
+          helios_selected="${{ (github.event_name == 'schedule' && needs.terrain-golden-paths.outputs.helios == 'true') || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'helios')) }}"
+          render_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'determinism')) }}"
+          f3dz_hosted_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'determinism' || inputs.scope == 'f3dz')) }}"
+          anamnesis_hosted_selected="${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'determinism' || inputs.scope == 'anamnesis')) }}"
+
+          check_selected "$full_selected" '${{ needs.test-rust.result }}' rust-full
+          check_selected "$full_selected" '${{ needs.test-python-full-linux.result }}' python-full-linux
+          check_selected "$full_selected" '${{ needs.test-python-full-windows.result }}' python-full-windows
+          check_selected "$full_selected" '${{ needs.test-python-full-macos.result }}' python-full-macos
+          check_selected "$full_selected" '${{ needs.test-python-slow.result }}' python-slow
+          check_selected "$full_selected" '${{ needs.test-terminus-fuzz.result }}' terminus-fuzz
+          check_selected "$full_selected" '${{ needs.test-python-linux-arm.result }}' python-linux-arm
+          check_selected "$full_selected" '${{ needs.test-golden-images-nvidia.result }}' visual-goldens-nvidia
+          check_selected "$full_selected" '${{ needs.test-substratia-gpu-nvidia.result }}' substratia-physical-nvidia
+          if [ "$full_selected" = "true" ]; then
+            if [ '${{ needs.test-golden-images-nvidia.outputs.lane }}' != 'ran' ]; then
+              echo "::error::visual NVIDIA Vulkan lane did not record RAN"
+              failed=1
+            fi
+            if [ '${{ needs.test-substratia-gpu-nvidia.outputs.lane }}' != 'ran' ]; then
+              echo "::error::SUBSTRATIA physical lane did not record RAN"
+              failed=1
+            fi
+            if [ '${{ needs.test-substratia-gpu-nvidia.outputs.verifier }}' != 'pass' ]; then
+              echo "::error::SUBSTRATIA evidence verifier did not record PASS"
+              failed=1
+            fi
+          fi
+          check_selected "$full_selected" '${{ needs.build-docs.result }}' docs
+          if [ "$full_selected" = "true" ]; then
+            sidera_lane='${{ needs.test-golden-images-nvidia.outputs.sidera_lane }}'
+            echo "SIDERA physical NVIDIA Vulkan lane: $sidera_lane"
+            if [ "$sidera_lane" != "ran" ]; then
+              echo "::error::SIDERA physical NVIDIA Vulkan lane was selected but reported $sidera_lane"
+              failed=1
+            fi
+          fi
+
+          check_selected "$render_selected" '${{ needs.determinism-render.result }}' determinism-render
+          check_selected "$f3dz_hosted_selected" '${{ needs.determinism-f3dz.result }}' determinism-f3dz
+          check_selected "$anamnesis_hosted_selected" '${{ needs.determinism-anamnesis.result }}' determinism-anamnesis
+          check_selected "$m06_selected" '${{ needs.test-m06-full-geospatial-viewer.result }}' m06-physical
+          check_selected "$f3dz_physical_selected" '${{ needs.test-f3dz-gpu.result }}' f3dz-physical
+          check_selected "$anamnesis_physical_selected" '${{ needs.test-anamnesis-portability-seed.result }}' anamnesis-seed
+          check_selected "$anamnesis_physical_selected" '${{ needs.test-anamnesis-portability.result }}' anamnesis-portability
+          check_selected "$anamnesis_physical_selected" '${{ needs.test-anamnesis-production.result }}' anamnesis-production
+          check_selected "$tessella_selected" '${{ needs.test-tessella-gpu.result }}' tessella-physical
+          check_selected "$helios_selected" '${{ needs.test-helios-rust-conservative.result }}' helios-rust-conservative
+          check_selected "$helios_selected" '${{ needs.test-helios-gpu.result }}' helios-physical
+          if [ "$helios_selected" = "true" ]; then
+            if [ '${{ needs.test-helios-rust-conservative.outputs.gate }}' != 'pass' ]; then
+              echo "::error::HELIOS conservative-descent proof did not record PASS"
+              failed=1
+            fi
+            if [ '${{ needs.test-helios-gpu.outputs.lane }}' != 'ran' ]; then
+              echo "::error::HELIOS physical lane did not record RAN"
+              failed=1
+            fi
+            if [ '${{ needs.test-helios-gpu.outputs.verifier }}' != 'pass' ]; then
+              echo "::error::HELIOS evidence verifier did not record PASS"
+              failed=1
+            fi
+          fi
+          exit "$failed"

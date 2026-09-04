@@ -84,8 +84,9 @@ impl TerrainScene {
             slope_bias: csm.slope_bias,
             shadow_map_size: csm.shadow_map_size,
             debug_mode: csm.debug_mode,
-            evsm_positive_exp: csm.evsm_positive_exp,
-            evsm_negative_exp: csm.evsm_negative_exp,
+            // Match MomentGenerationPass::execute's clamp for the Rgba16Float atlas.
+            evsm_positive_exp: crate::shadows::clamp_evsm_exponent(csm.evsm_positive_exp),
+            evsm_negative_exp: crate::shadows::clamp_evsm_exponent(csm.evsm_negative_exp),
             peter_panning_offset: csm.peter_panning_offset,
             enable_unclipped_depth: csm.enable_unclipped_depth,
             depth_clip_factor: csm.depth_clip_factor,

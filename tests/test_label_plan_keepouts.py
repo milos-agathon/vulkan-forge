@@ -6,6 +6,8 @@ def _label(label_id="label", x=20.0, y=20.0):
         "id": label_id,
         "text": "Keepout",
         "geometry": {"type": "Point", "coordinates": (x, y, 0.0)},
+        "label_size": (4.0, 4.0),
+        "candidate_policy": {"offset_px": 0.0, "radial_count": 0},
     }
 
 

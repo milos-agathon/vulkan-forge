@@ -5,6 +5,7 @@ use super::vertex::ClipmapVertex;
 use super::ClipmapConfig;
 use glam::Vec2;
 use numpy::{PyArray1, PyArray2};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 /// Python-exposed clipmap configuration.
@@ -24,16 +25,27 @@ impl PyClipmapConfig {
         center_resolution: Option<u32>,
         skirt_depth: f32,
         morph_range: f32,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        let center_resolution = center_resolution.unwrap_or(ring_resolution);
+        if ring_resolution == 0 || center_resolution == 0 {
+            return Err(PyValueError::new_err(
+                "ring_resolution and center_resolution must be positive",
+            ));
+        }
+        if !skirt_depth.is_finite() || !morph_range.is_finite() {
+            return Err(PyValueError::new_err(
+                "skirt_depth and morph_range must be finite",
+            ));
+        }
+        Ok(Self {
             inner: ClipmapConfig {
                 ring_count,
                 ring_resolution,
-                center_resolution: center_resolution.unwrap_or(ring_resolution),
+                center_resolution,
                 skirt_depth,
                 morph_range: morph_range.clamp(0.0, 1.0),
             },
-        }
+        })
     }
 
     #[getter]
@@ -167,12 +179,19 @@ pub fn clipmap_generate_py(
     center: (f32, f32),
     terrain_extent: f32,
 ) -> PyResult<PyClipmapMesh> {
+    if !center.0.is_finite() || !center.1.is_finite() {
+        return Err(PyValueError::new_err("clipmap center must be finite"));
+    }
+    if !terrain_extent.is_finite() || terrain_extent <= 0.0 {
+        return Err(PyValueError::new_err(
+            "terrain_extent must be finite and positive",
+        ));
+    }
     let center_vec = Vec2::new(center.0, center.1);
     let mesh = clipmap_generate(&config.inner, center_vec, terrain_extent);
 
     // Calculate full-res triangle count for comparison
-    let full_res = config.inner.center_resolution * 4;
-    let full_res_triangles = full_res * full_res * 2;
+    let full_res_triangles = super::level::full_resolution_triangle_count(&config.inner);
 
     Ok(PyClipmapMesh {
         vertices: mesh.vertices,

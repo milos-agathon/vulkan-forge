@@ -1,5 +1,19 @@
 use super::*;
 
+fn terrain_shadow_uniform_params(
+    settings: &crate::terrain::render_params::ShadowSettingsNative,
+) -> ([f32; 4], [f32; 4]) {
+    (
+        [
+            settings.pcss_blocker_radius,
+            settings.pcss_filter_radius,
+            0.0005,
+            settings.light_size,
+        ],
+        [settings.pcss_light_radius, 0.0, 0.0, 0.0],
+    )
+}
+
 pub(in crate::terrain::renderer) struct ShadowSetup {
     pub(in crate::terrain::renderer) eye: glam::Vec3,
     pub(in crate::terrain::renderer) view_matrix: glam::Mat4,
@@ -10,12 +24,108 @@ pub(in crate::terrain::renderer) struct ShadowSetup {
 }
 
 impl TerrainScene {
+    pub(in crate::terrain::renderer) fn generate_shadow_moments(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<()> {
+        let Some(moment_pass) = self.moment_pass.as_mut() else {
+            return Ok(());
+        };
+        let Some(moment_texture) = self.csm_renderer.evsm_maps.as_ref() else {
+            return Ok(());
+        };
+
+        let technique = crate::lighting::types::ShadowTechnique::from_u32(self.shadow_technique);
+        let cascade_count = self.csm_renderer.config.cascade_count;
+        let shadow_map_size = self.csm_renderer.config.shadow_map_size;
+        let positive_exponent = self.csm_renderer.uniforms.evsm_positive_exp;
+        let negative_exponent = self.csm_renderer.uniforms.evsm_negative_exp;
+        moment_pass.prepare_textures_checked(
+            &self.device,
+            self.csm_renderer.shadow_maps.as_ref(),
+            moment_texture,
+        )?;
+        moment_pass.execute_checked(
+            &self.queue,
+            encoder,
+            technique,
+            cascade_count,
+            shadow_map_size,
+            positive_exponent,
+            negative_exponent,
+        )?;
+        if let Some(blur_pass) = self.moment_blur_pass.as_mut() {
+            blur_pass.execute(
+                &self.device,
+                &self.queue,
+                encoder,
+                moment_texture,
+                cascade_count,
+                shadow_map_size,
+                crate::shadows::DEFAULT_MOMENT_BLUR_RADIUS,
+                technique,
+                positive_exponent,
+            )?;
+        }
+        log::debug!(
+            target: "terrain.shadow",
+            "Executed moment generation pass for technique {} with {} cascades",
+            self.shadow_technique,
+            cascade_count
+        );
+        Ok(())
+    }
+
+    pub(in crate::terrain::renderer) fn ensure_shadow_atlas(
+        &mut self,
+        settings: &crate::terrain::render_params::ShadowSettingsNative,
+    ) -> Result<()> {
+        let requires_moments = matches!(
+            settings.technique.to_uppercase().as_str(),
+            "VSM" | "EVSM" | "MSM"
+        );
+        crate::shadows::validate_shadow_device_limits(
+            &self.device,
+            settings.resolution,
+            settings.cascades,
+        )?;
+        let requested_bytes = crate::shadows::shadow_allocation_bytes(
+            settings.resolution,
+            settings.cascades,
+            requires_moments,
+        )?;
+        if requested_bytes > crate::shadows::MAX_SHADOW_ALLOCATION_BYTES {
+            return Err(crate::core::error::RenderError::budget(format!(
+                "shadow resources require {:.1} MiB, exceeding the 512 MiB terrain shadow budget",
+                requested_bytes as f64 / (1024.0 * 1024.0)
+            ))
+            .into());
+        }
+        let atlas_mismatch = self.csm_renderer.allocation_size != settings.resolution
+            || self.csm_renderer.allocation_layers != settings.cascades
+            || self.csm_renderer.evsm_maps.is_some() != requires_moments;
+        if atlas_mismatch {
+            let mut replacement_config = self.csm_renderer.config.clone();
+            replacement_config.shadow_map_size = settings.resolution;
+            replacement_config.cascade_count = settings.cascades;
+            replacement_config.enable_evsm = requires_moments;
+            let replacement = crate::shadows::CsmRenderer::new(&self.device, replacement_config)?;
+            // Moment passes may retain bind groups/views into the current CSM
+            // atlas. Drop those dependents before replacing the tracked owner.
+            self.moment_pass = None;
+            self.moment_blur_pass = None;
+            self.csm_renderer = replacement;
+        }
+        Ok(())
+    }
+
     pub(in crate::terrain::renderer) fn prepare_shadow_setup(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         params: &crate::terrain::render_params::TerrainRenderParams,
         decoded: &crate::terrain::render_params::DecodedTerrainSettings,
         heightmap_view: &wgpu::TextureView,
+        height_curve_view: &wgpu::TextureView,
         heightmap_width: u32,
         heightmap_height: u32,
     ) -> Result<ShadowSetup> {
@@ -48,10 +158,29 @@ impl TerrainScene {
 
         let shadow_settings = &decoded.shadow;
         self.shadow_pcss_radius = shadow_settings.pcss_light_radius.max(0.0);
-        let cascade_count = shadow_settings
-            .cascades
-            .max(1)
-            .min(self.csm_renderer.shadow_map_views.len() as u32);
+        use crate::lighting::types::ShadowTechnique;
+        let technique_enum = match shadow_settings.technique.to_uppercase().as_str() {
+            "HARD" => ShadowTechnique::Hard,
+            "PCF" => ShadowTechnique::PCF,
+            "PCSS" => ShadowTechnique::PCSS,
+            "VSM" => ShadowTechnique::VSM,
+            "EVSM" => ShadowTechnique::EVSM,
+            "MSM" => ShadowTechnique::MSM,
+            _ => {
+                log::warn!(
+                    target: "terrain.shadow",
+                    "Unknown shadow technique '{}', defaulting to PCF",
+                    shadow_settings.technique
+                );
+                ShadowTechnique::PCF
+            }
+        };
+        let requires_moments = matches!(
+            technique_enum,
+            ShadowTechnique::VSM | ShadowTechnique::EVSM | ShadowTechnique::MSM
+        );
+        self.ensure_shadow_atlas(shadow_settings)?;
+        let cascade_count = shadow_settings.cascades;
         let shadow_far = params
             .clip
             .1
@@ -91,30 +220,10 @@ impl TerrainScene {
         self.csm_renderer.config.pcf_kernel_size =
             if self.shadow_pcss_radius > 0.0 { 3 } else { 1 };
 
-        use crate::lighting::types::ShadowTechnique;
-        let technique_enum = match shadow_settings.technique.to_uppercase().as_str() {
-            "HARD" => ShadowTechnique::Hard,
-            "PCF" => ShadowTechnique::PCF,
-            "PCSS" => ShadowTechnique::PCSS,
-            "VSM" => ShadowTechnique::VSM,
-            "EVSM" => ShadowTechnique::EVSM,
-            "MSM" => ShadowTechnique::MSM,
-            _ => {
-                log::warn!(
-                    target: "terrain.shadow",
-                    "Unknown shadow technique '{}', defaulting to PCF",
-                    shadow_settings.technique
-                );
-                ShadowTechnique::PCF
-            }
-        };
         self.csm_renderer.uniforms.technique = technique_enum.as_u32();
         self.shadow_technique = technique_enum.as_u32();
 
-        let requires_moments = matches!(
-            technique_enum,
-            ShadowTechnique::VSM | ShadowTechnique::EVSM | ShadowTechnique::MSM
-        );
+        let requires_moment_blur = crate::shadows::requires_moment_blur(technique_enum);
         if requires_moments && self.moment_pass.is_none() {
             self.moment_pass = Some(crate::shadows::MomentGenerationPass::new(&self.device)?);
             log::info!(
@@ -122,22 +231,25 @@ impl TerrainScene {
                 "Created moment generation pass for technique: {:?}",
                 technique_enum
             );
-        } else if !requires_moments && self.moment_pass.is_some() {
+        }
+        if requires_moment_blur && self.moment_blur_pass.is_none() {
+            self.moment_blur_pass = Some(crate::shadows::ShadowBlurPass::new(&self.device)?);
+        }
+        if !requires_moment_blur {
+            self.moment_blur_pass = None;
+        }
+        if !requires_moments && self.moment_pass.is_some() {
             self.moment_pass = None;
             log::info!(target: "terrain.shadow", "Removed moment generation pass");
         }
-
         self.csm_renderer.config.pcf_kernel_size = match technique_enum {
             ShadowTechnique::Hard => 1,
             ShadowTechnique::PCSS => 5,
             _ => 3,
         };
-        self.csm_renderer.uniforms.technique_params = [
-            shadow_settings.softness * 10.0,
-            shadow_settings.softness * 20.0,
-            0.0005,
-            shadow_settings.pcss_light_radius.max(0.5),
-        ];
+        let (technique_params, technique_reserved) = terrain_shadow_uniform_params(shadow_settings);
+        self.csm_renderer.uniforms.technique_params = technique_params;
+        self.csm_renderer.uniforms.technique_reserved = technique_reserved;
 
         log::info!(
             target: "terrain.shadow",
@@ -169,6 +281,7 @@ impl TerrainScene {
             let bind_group = self.render_shadow_depth_passes(
                 encoder,
                 heightmap_view,
+                height_curve_view,
                 heightmap_width,
                 heightmap_height,
                 terrain_spacing,
@@ -183,31 +296,7 @@ impl TerrainScene {
                 height_curve,
             )?;
 
-            if let Some(ref mut moment_pass) = self.moment_pass {
-                if let Some(moment_texture) = &self.csm_renderer.evsm_maps {
-                    let depth_view = self.csm_renderer.shadow_texture_view();
-                    let moment_view = crate::shadows::create_moment_storage_view(
-                        moment_texture,
-                        self.csm_renderer.config.cascade_count,
-                    );
-                    moment_pass.prepare_bind_group(&self.device, &depth_view, &moment_view);
-                    moment_pass.execute(
-                        &self.queue,
-                        encoder,
-                        ShadowTechnique::from_u32(self.shadow_technique),
-                        self.csm_renderer.config.cascade_count,
-                        self.csm_renderer.config.shadow_map_size,
-                        self.csm_renderer.uniforms.evsm_positive_exp,
-                        self.csm_renderer.uniforms.evsm_negative_exp,
-                    );
-                    log::debug!(
-                        target: "terrain.shadow",
-                        "Executed moment generation pass for technique {} with {} cascades",
-                        self.shadow_technique,
-                        self.csm_renderer.config.cascade_count
-                    );
-                }
-            }
+            self.generate_shadow_moments(encoder)?;
 
             Some(bind_group)
         } else {
@@ -222,5 +311,38 @@ impl TerrainScene {
             height_min,
             shadow_bind_group,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_terrain_pcss_params_preserve_texel_controls() {
+        let settings = crate::terrain::render_params::ShadowSettingsNative {
+            pcss_blocker_radius: 7.25,
+            pcss_filter_radius: 3.5,
+            light_size: 2.75,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            terrain_shadow_uniform_params(&settings).0,
+            [7.25, 3.5, 0.0005, 2.75]
+        );
+    }
+
+    #[test]
+    fn legacy_world_radius_is_encoded_for_per_cascade_conversion() {
+        let settings = crate::terrain::render_params::ShadowSettingsNative {
+            light_size: 2.75,
+            pcss_light_radius: 0.75,
+            ..Default::default()
+        };
+
+        let (params, reserved) = terrain_shadow_uniform_params(&settings);
+        assert_eq!(params[3], 2.75);
+        assert_eq!(reserved, [0.75, 0.0, 0.0, 0.0]);
     }
 }

@@ -472,7 +472,9 @@ class ShadowParams:
         return self.technique in {"vsm", "evsm", "msm"}
 
     def atlas_memory_bytes(self) -> int:
-        bpp = 8 if self.requires_moments() else 4
+        # Depth32Float (4) plus the Rgba16Float moment atlas (8) and its
+        # persistent separable-blur intermediate (8).
+        bpp = 20 if self.requires_moments() else 4
         return int(self.map_size) * int(self.map_size) * bpp * max(1, int(self.cascades))
 
 
@@ -547,11 +549,18 @@ class RendererConfig:
             light.validate(idx)
         if self.shadows.enabled:
             if self.shadows.map_size <= 0:
-                raise ValueError("shadows.map_size must be greater than zero when shadows are enabled")
-            if self.shadows.map_size & (self.shadows.map_size - 1) != 0:
+                raise ValueError(
+                    "shadows.map_size must be greater than zero when shadows are enabled"
+                )
+            if self.shadows.map_size & (self.shadows.map_size - 1):
                 raise ValueError("shadows.map_size must be a power of two")
-            if self.shadows.technique in {"pcss", "pcf", "vsm", "evsm", "msm"} and self.shadows.map_size < 256:
-                raise ValueError("shadows.map_size should be at least 256 for filtered techniques")
+            if (
+                self.shadows.technique in {"pcss", "pcf", "vsm", "evsm", "msm"}
+                and self.shadows.map_size < 256
+            ):
+                raise ValueError(
+                    "shadows.map_size should be at least 256 for filtered techniques"
+                )
             if not (1 <= self.shadows.cascades <= 4):
                 raise ValueError("shadows.cascades must be within [1, 4]")
             if self.shadows.technique == "pcss":

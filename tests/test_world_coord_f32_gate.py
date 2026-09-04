@@ -31,23 +31,39 @@ SANCTIONED_DD_SPLITS = {
 
 # Updated only after reviewing the complete inventory printed by a failure.
 # The digest includes (file, function, operation, ordinal, normalized statement).
-EXPECTED_CONVERSION_COUNT = 1327
-# Re-frozen when ANAMNESIS merged with main. The site COUNT is unchanged, and a
-# site-by-site diff against main shows exactly five added and five removed --
-# the same five `as_f32` statements in src/offscreen/adjudication_raster.rs,
-# moved from `render_raster_reference` to `render_raster_reference_incremental`
-# by the incremental-render rename. A site record is
-# (file, function, operation, nth, statement) with no line numbers, so the
-# digest moved only because the enclosing function was renamed. No new
-# narrowing conversion was introduced by this merge.
-EXPECTED_CONVERSION_SHA256 = "d6368abc90af4f03c5d1a9f573e4d9efebd38767d9927098cdcc418fb0e42817"
+EXPECTED_CONVERSION_COUNT = 1545
+# The previous 1438-site freeze already covered the reviewed ANAMNESIS,
+# TESSELLA, and first SIDERA transitions described below. The d8313007 base
+# source actually contained 1446 sites because SIDERA's later adversarial
+# closure added twelve u32 viewport-dimension/reciprocal casts and one
+# normalized celestial unit-direction conversion without refreshing this
+# constant. SUBSTRATIA adds one u32 feedback-origin telemetry counter converted
+# for Python float stats. It also moves four existing tile-index-to-normalized-
+# UV casts from finish_frame to ingest_shader_feedback; that changes their
+# occurrence ownership, but not the count. The physical TESSELLA picking audit
+# also moved two existing screen-coordinate conversions from pixel corners to
+# raster pixel centres; their count is unchanged. Its visibility CPU oracle
+# adds seven raster-only conversions: pixel centres (2), normalized coarse
+# texel steps (2), a bounded LUT index (1), and viewport projection (2). All
+# reviewed primitives are render dimensions, normalized directions/UVs,
+# bounded raster indices, or telemetry. None stores absolute world coordinates
+# or bypasses the camera Anchor. The subsequent physical-terrain closure
+# consolidated repeated clipmap ring coordinate construction, reducing the
+# reviewed inventory without weakening the Anchor boundary. HELIOS (below)
+# adds the curvature-aware GPU viewshed, terrain-to-sun shadow mask, and
+# closed-form shadow-tip analysis plus earth-curvature traversal in the hybrid
+# terrain reference; see REVIEWED_HELIOS_INVENTORY_TRANSITION for the exact
+# reviewed additions. CARTOGRAPHER-PRIME then adds four f64-to-f32 conversions
+# for a validated finite silhouette bounding box in labels/optimal.rs; these
+# remain bounded screen-space coordinates and do not cross the Anchor boundary.
+EXPECTED_CONVERSION_SHA256 = "b60331341dbeeb3c24a16fe52b92f1c51f18d8dffcf51d7e4132ba79d35ee065"
 
 # The reviewed TERMINUS reader transition remains locked below. COMPENDIUM adds
 # four integer-to-f32 reconstruction conversions in predict.rs; those are
 # included in the current count and digest above without weakening the reader
 # transition assertion.
 REVIEWED_INVENTORY_TRANSITION = {
-    "current_count": 1327,
+    "current_count": 1545,
     "removed": (
         "src/terrain/cog/cog_reader.rs",
         "decode_heights",
@@ -71,7 +87,7 @@ REVIEWED_INVENTORY_TRANSITION = {
 REVIEWED_ANAMNESIS_INVENTORY_TRANSITION = {
     # Re-based on main at the merge: the pre-transition tree is now main rather
     # than this branch's original base, so the count and digest are main's.
-    "base_count": 1327,
+    "base_count": 1545,
     "base_digest": "9850587e94805c6d45e321cc54f5ea40dc54e6efa7facbcc45f17b00925283d4",
     "result_digest": EXPECTED_CONVERSION_SHA256,
     "path": "src/offscreen/adjudication_raster.rs",
@@ -83,6 +99,86 @@ REVIEWED_ANAMNESIS_INVENTORY_TRANSITION = {
         "u.misc = [desc.plane_half_extent, i as f32, 1.0, 0.0]",
         "let o = (k as f32 + 0.5) / SSAA as f32 - 0.5",
         "let o = (k as f32 + 0.5) / SSAA as f32 - 0.5",
+    ),
+}
+
+# HELIOS adds the curvature- and refraction-aware GPU viewshed, the direct
+# terrain-to-sun shadow mask, and the closed-form curved-Earth shadow-tip
+# analysis in src/terrain/analysis/viewshed.rs and src/py_functions/geodesy.rs,
+# plus earth-curvature traversal uniforms in the hybrid terrain reference
+# (src/path_tracing/hybrid_compute/terrain_heightfield.rs and render_terrain.rs).
+# The 39 reviewed additions are render-space narrowing conversions: grid
+# distances/azimuths, pixel-centre offsets, bounded observer coordinates,
+# normalized latitude/longitude radians, curvature radius coefficients, and
+# runtime-contract telemetry. The 3 removals are moved/consolidated module
+# constants (origin_x/origin_z) and a duplicated check_range occurrence; none
+# relaxes the Anchor world-coordinate boundary. None of the additions stores
+# absolute world coordinates or bypasses the camera Anchor.
+REVIEWED_HELIOS_INVENTORY_TRANSITION = {
+    # Re-based on main at the merge: the pre-transition tree is now main rather
+    # than this branch's original base, so the count and digest are main's.
+    "base_count": 1545,
+    "base_digest": "9850587e94805c6d45e321cc54f5ea40dc54e6efa7facbcc45f17b00925283d4",
+    "result_digest": EXPECTED_CONVERSION_SHA256,
+    "added_sites": (
+        (
+            "src/py_functions/geodesy.rs",
+            "terrain_grid_heights",
+            "as_f32",
+            1,
+            "positions_m.push([ (distance_m * azimuth.sin()) as f32, (distance_m * azimuth.cos()) as f32, ])",
+        ),
+        (
+            "src/py_functions/geodesy.rs",
+            "terrain_shadow_mask",
+            "as_f32",
+            1,
+            "geodetic_positions_and_sun.push([ latitude.to_radians() as f32, longitude.to_radians() as f32, solar.azimuth_deg.to_radians() as f32, launch_elevation_deg.to_radians() as f32, ])",
+        ),
+        (
+            "src/terrain/analysis/viewshed.rs",
+            "<module>",
+            "as_f32",
+            1,
+            "Ok([ inv_meridional as f32, inv_prime_vertical as f32, one_minus_k as f32, f32::from(!matches!(options.earth_model, EarthModel::Flat)), ])",
+        ),
+        (
+            "src/path_tracing/hybrid_compute/terrain_heightfield.rs",
+            "<module>",
+            "as_f32",
+            1,
+            "(0.5 / effective_radius) as f32",
+        ),
+        (
+            "src/path_tracing/hybrid_compute/render_terrain.rs",
+            "record_runtime_contract",
+            "as_f32",
+            12,
+            "check( , &[earth_curvature.enabled as f32], 0.0, 1.0, )",
+        ),
+    ),
+    "removed_sites": (
+        (
+            "src/path_tracing/hybrid_compute/render_terrain.rs",
+            "record_runtime_contract",
+            "as_f32",
+            12,
+            "observed.check_range( , , None, m_min as f32, m_max as f32, 0.0, 512.0, )",
+        ),
+        (
+            "src/path_tracing/hybrid_compute/terrain_heightfield.rs",
+            "<module>",
+            "as_f32",
+            1,
+            "let origin_x = -0.5 * (self.width as f32 - 1.0) * spacing_x",
+        ),
+        (
+            "src/path_tracing/hybrid_compute/terrain_heightfield.rs",
+            "<module>",
+            "as_f32",
+            2,
+            "let origin_z = -0.5 * (self.height as f32 - 1.0) * spacing_z",
+        ),
     ),
 }
 
@@ -265,6 +361,17 @@ def test_reviewed_anamnesis_function_ownership_transition_is_exact():
         )
         assert removed not in sites
         assert added in sites
+
+
+def test_reviewed_helios_inventory_transition_is_exact():
+    sites = conversion_inventory()
+    transition = REVIEWED_HELIOS_INVENTORY_TRANSITION
+    assert len(sites) == transition["base_count"] == EXPECTED_CONVERSION_COUNT
+    assert _inventory_digest(sites) == transition["result_digest"]
+    for added in transition["added_sites"]:
+        assert added in sites
+    for removed in transition["removed_sites"]:
+        assert removed not in sites
 
 
 def test_anchor_narrow_is_the_only_world_conversion_implementation():

@@ -1,0 +1,65 @@
+name: Build one wheel
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact commit SHA to build.
+        required: true
+        type: string
+      runner:
+        description: GitHub runner image.
+        required: true
+        type: string
+      target:
+        description: Rust target triple.
+        required: true
+        type: string
+      maturin_args:
+        description: Arguments passed to maturin.
+        required: true
+        type: string
+      manylinux:
+        description: maturin manylinux mode.
+        required: true
+        type: string
+      artifact:
+        description: Artifact name for the wheel.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ inputs.artifact }}
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Prove exact-head checkout
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ inputs.ref }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        env:
+          # ring's aarch64 assembly expects this macro under the manylinux cross compiler.
+          CFLAGS_aarch64_unknown_linux_gnu: ${{ inputs.target == 'aarch64-unknown-linux-gnu' && '-D__ARM_ARCH=8' || '' }}
+        with:
+          target: ${{ inputs.target }}
+          args: ${{ inputs.maturin_args }}
+          manylinux: ${{ inputs.manylinux }}
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 1

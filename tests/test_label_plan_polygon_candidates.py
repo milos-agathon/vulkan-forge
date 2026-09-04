@@ -1,3 +1,6 @@
+import pytest
+
+
 def _compile(labels):
     from forge3d import LabelPlan
 
@@ -17,7 +20,7 @@ def test_polygon_label_generates_centroid_and_visual_center_candidates():
                 "text": "Square",
                 "geometry": {
                     "type": "Polygon",
-                    "coordinates": [[(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (0.0, 10.0), (0.0, 0.0)]],
+                    "coordinates": [[(50.0, 50.0), (70.0, 50.0), (70.0, 60.0), (50.0, 60.0), (50.0, 50.0)]],
                 },
             }
         ]
@@ -33,7 +36,7 @@ def test_polygon_label_generates_centroid_and_visual_center_candidates():
         "centroid",
         "visual_center",
     ]
-    assert candidates[0]["anchor"] == [10.0, 5.0, 0.0]
+    assert candidates[0]["anchor"] == pytest.approx([60.0, 55.0, 0.0])
     assert candidates[0]["details"]["inside_polygon"] is True
     assert candidates[1]["candidate_id"] == "square:visual-center"
     assert candidates[1]["details"]["fallback_for"] == "centroid"
@@ -49,15 +52,15 @@ def test_concave_polygon_uses_visual_center_when_centroid_is_unsuitable():
                     "type": "Polygon",
                     "coordinates": [
                         [
-                            (0.0, 0.0),
-                            (6.0, 0.0),
-                            (6.0, 1.0),
-                            (1.0, 1.0),
-                            (1.0, 5.0),
-                            (6.0, 5.0),
-                            (6.0, 6.0),
-                            (0.0, 6.0),
-                            (0.0, 0.0),
+                            (50.0, 50.0),
+                            (56.0, 50.0),
+                            (56.0, 51.0),
+                            (51.0, 51.0),
+                            (51.0, 55.0),
+                            (56.0, 55.0),
+                            (56.0, 56.0),
+                            (50.0, 56.0),
+                            (50.0, 50.0),
                         ]
                     ],
                 },

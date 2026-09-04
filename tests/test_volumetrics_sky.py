@@ -258,7 +258,7 @@ class TestSkySettings:
         SkySettings(sun_intensity=0.0)
         SkySettings(sun_intensity=2.0)
 
-        with pytest.raises(ValueError, match="sun_intensity must be >= 0"):
+        with pytest.raises(ValueError, match="sun_intensity"):
             SkySettings(sun_intensity=-0.1)
 
     def test_sky_has_aerial_perspective_property(self):

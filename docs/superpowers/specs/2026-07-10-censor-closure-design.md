@@ -4,6 +4,15 @@
 **Source:** `docs/prompts/fable5-moonshots/14-censor.md`
 **Goal:** Close every requirement and every defect found by the 2026-07-10 implementation audit, then produce an independent Fable 5 audit prompt.
 
+> **Current validation policy (2026-08-05):** This document records the
+> historical closure design. `docs/censor-validation-policy.md` supersedes its
+> routine-CI assumptions. The runtime truth mechanisms remain authoritative;
+> full matrices, production signing, all-golden execution, physical-GPU proof,
+> and scratch red proof are explicit acceptance/release evidence. Current CI
+> reports routine branch protection through `PR Core Success` and named
+> acceptance evidence through `Full Acceptance Summary`; a complete candidate
+> run is selected with `scope=full`.
+
 ## Decisions
 
 Work proceeds as bounded, test-first slices. Each slice must leave a runnable, reviewable repository state and must prove the relevant CENSOR requirements directly. Existing helpers are extended or deleted before any new abstraction is considered. No dependencies are added.
@@ -36,15 +45,15 @@ Every public render entry point will accept the documented `certificate=False|Tr
 
 The zero-caller legacy `PostFxChain` and `FrameGraph` surfaces will be deleted rather than routed into live rendering. Remaining viewer post-processing will cache bind groups with the resources that determine them, rebuilding only when those resources change. Every surviving pass remains represented in certificate pass records.
 
-### 6. Literal repository gates
+### 6. Literal repository truth gates
 
-CI feature coverage will equal the set of live referenced Cargo features across its combined Rust and wheel jobs; it will not hide discrepancies behind an exclusion constant. Every filesystem `tests/test_*.py` file will be tracked and either collected by CI or represented by one current `UNRUN.toml` entry. The five ignored example tests and all failures from the complete suite are repaired rather than excluded.
+Feature declarations, wheel coverage, and acceptance-matrix routing will equal the live referenced Cargo surface; discrepancies cannot hide behind an exclusion constant. Every filesystem `tests/test_*.py` file remains tracked and assigned to the full acceptance profile, an explicit lane, or one current `UNRUN.toml` entry. Routine pull requests run the focused CENSOR truth-contract profile rather than the entire repository suite.
 
-Golden red proof must be probe-positive: a deliberately corrupted committed golden must reach the visual comparison, fail for the pixel mismatch, and produce a red scratch-branch CI run. The corruption is then reverted.
+Routine checks lock golden comparison, update-mode safety, and `passed`/`absent`/`failed` routing without modifying a committed baseline. A probe-positive scratch red proof is generated only for explicit acceptance/release when the comparison, probe, or aggregate mechanism changes, and the corruption is then reverted.
 
 ### 7. Final evidence and audit prompt
 
-Completion requires the complete Python suite, curated Rust matrix, format/lint/native build, focused CENSOR tests, GPU certificate probes, terrain and recipe goldens, offline verification, and requirement-by-requirement evidence. Image quality claims use numeric comparisons and committed golden gates.
+Implementation completion requires focused proof of each changed invariant: format/lint, affected build, capability/degradation/allocation/budget contracts, certificate schema and tamper rejection, the pure offline verifier, and validation-routing tests. Acceptance/release additionally requires the complete Python profile, curated Rust matrix, release native build, candidate-selected terrain/recipe goldens, physical-GPU probes, a production-key certificate sweep, and red-proof evidence when routing changed.
 
 The final deliverable `docs/prompts/fable5-moonshots/14-censor-audit.md` will be based on `docs/fable-5-p0-p1-blender-plan-implementation-audit-prompt.md`, adapted to audit CENSOR's seven measurable wins, public surfaces, CI proof, and current repository state without trusting implementation intent.
 
@@ -55,7 +64,7 @@ The final deliverable `docs/prompts/fable5-moonshots/14-censor-audit.md` will be
 3. Descriptor-accurate allocation accounting and render-local ledger evidence.
 4. Degradation sink coverage and certificate kwargs on every render entry point.
 5. Dead-structure deletion and bind-group lifetime correction.
-6. CI feature/test accounting, complete-suite repairs, and golden red proof.
-7. Full verification and the Fable 5 audit prompt.
+6. Routine feature/test-accounting truth and golden-routing contracts.
+7. Explicit acceptance/release evidence and the Fable 5 audit prompt.
 
 Each slice starts with a failing test, implements the smallest shared/root-cause fix, runs focused verification, and receives a source/diff review before the next slice.

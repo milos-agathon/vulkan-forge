@@ -221,12 +221,20 @@ def test_terrain_demo_synthetic_render(tmp_path: Path) -> None:
 
     heightmap = _synthetic_dem(256, 256)
     params_config = _build_params()
-    params = f3d.TerrainRenderParams(params_config)
-
     frame = renderer.render_terrain_pbr_pom(
         material_set=material_set,
         env_maps=ibl,
-        params=params,
+        params=f3d.TerrainRenderParams(params_config),
+        heightmap=heightmap,
+        target=None,
+    )
+    shadow_off_config = _build_params()
+    shadow_off_config.shadows.enabled = False
+    shadow_off_config.shadows.technique = "NONE"
+    shadow_off_frame = renderer.render_terrain_pbr_pom(
+        material_set=material_set,
+        env_maps=ibl,
+        params=f3d.TerrainRenderParams(shadow_off_config),
         heightmap=heightmap,
         target=None,
     )
@@ -244,9 +252,44 @@ def test_terrain_demo_synthetic_render(tmp_path: Path) -> None:
     unique_rgb = _unique_color_count(pixels)
     assert unique_rgb >= 256, f"Expected at least 256 unique colors, found {unique_rgb}"
 
-    luminance = _mean_luminance(pixels)
-    # Lower bound reduced to 0.15 to accommodate deeper shadows for dramatic terrain lighting
-    assert 0.15 <= luminance <= 0.85, f"Mean luminance {luminance:.3f} outside [0.15, 0.85]"
+    shadow_off_pixels = shadow_off_frame.to_numpy()
+    shadowed_luminance = _linear_luminance_map(pixels)
+    shadow_off_luminance = _linear_luminance_map(shadow_off_pixels)
+    shadow_delta = shadow_off_luminance - shadowed_luminance
+
+    shadow_off_mean = float(shadow_off_luminance.mean())
+    assert 0.15 <= shadow_off_mean <= 0.85, (
+        f"Shadow-off mean luminance {shadow_off_mean:.6f} outside [0.15, 0.85]"
+    )
+
+    mean_darkening = float(shadow_delta.mean())
+    assert 0.0002 <= mean_darkening <= 0.01, (
+        f"PCSS mean darkening {mean_darkening:.6f} outside [0.0002, 0.01]"
+    )
+
+    localized_dark_fraction = float(np.mean(shadow_delta > (1.0 / 255.0)))
+    assert 0.02 <= localized_dark_fraction <= 0.25, (
+        "PCSS did not produce a localized cast-shadow region: "
+        f"fraction={localized_dark_fraction:.6f}"
+    )
+
+    brightening = np.maximum(-shadow_delta, 0.0)
+    brightened_fraction = float(np.mean(brightening > (1.0 / 255.0)))
+    mean_brightening = float(brightening.mean())
+    assert brightened_fraction <= 0.001 and mean_brightening <= 1e-5, (
+        "Enabling PCSS brightened pixels unexpectedly: "
+        f"fraction={brightened_fraction:.6f}, mean={mean_brightening:.8f}"
+    )
+
+    # With this fixed camera/light setup, the upper quarter is the far-lit
+    # control region while the cast shadow falls lower and to the right.
+    far_lit_delta = np.abs(shadow_delta[: pixels.shape[0] // 4, :])
+    far_lit_mean_drift = float(far_lit_delta.mean())
+    far_lit_changed_fraction = float(np.mean(far_lit_delta > 0.001))
+    assert far_lit_mean_drift <= 0.0005 and far_lit_changed_fraction <= 0.03, (
+        "PCSS changed the far-lit control region too broadly: "
+        f"mean={far_lit_mean_drift:.8f}, fraction={far_lit_changed_fraction:.6f}"
+    )
 
 
 def _build_params() -> TerrainRenderParamsConfig:
@@ -323,15 +366,14 @@ def _unique_color_count(pixels: np.ndarray) -> int:
     return int(np.unique(flat, axis=0).shape[0])
 
 
-def _mean_luminance(pixels: np.ndarray) -> float:
+def _linear_luminance_map(pixels: np.ndarray) -> np.ndarray:
     rgb = pixels[:, :, :3].astype(np.float32) / 255.0
     rgb_linear = np.power(rgb, 2.2)
-    luminance = (
+    return (
         0.2126 * rgb_linear[:, :, 0]
         + 0.7152 * rgb_linear[:, :, 1]
         + 0.0722 * rgb_linear[:, :, 2]
     )
-    return float(np.mean(luminance))
 
 
 def _create_hdr_fixture(tmp_path: Path) -> Path:

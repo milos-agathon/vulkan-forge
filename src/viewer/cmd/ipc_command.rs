@@ -11,17 +11,39 @@ pub(crate) fn handle_cmd(viewer: &mut Viewer, cmd: &ViewerCmd) -> bool {
             azimuth_deg,
             elevation_deg,
         } => {
-            let az_rad = azimuth_deg.to_radians();
-            let el_rad = elevation_deg.to_radians();
-            let _dir = glam::Vec3::new(
-                el_rad.cos() * az_rad.sin(),
-                el_rad.sin(),
-                el_rad.cos() * az_rad.cos(),
-            );
-            println!(
-                "Sun direction: azimuth={:.1}° elevation={:.1}°",
-                azimuth_deg, elevation_deg
-            );
+            viewer.apply_manual_sun(*azimuth_deg, *elevation_deg, None);
+            true
+        }
+        ViewerCmd::SetObservation {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            latitude_deg,
+            longitude_deg,
+            height_m,
+        } => {
+            let result =
+                crate::astro::time::UtcDateTime::new(*year, *month, *day, *hour, *minute, *second)
+                    .and_then(|utc| {
+                        crate::astro::Observer::new(
+                            crate::geo::units::Angle::new(*latitude_deg),
+                            crate::geo::units::Angle::new(*longitude_deg),
+                            *height_m,
+                        )
+                        .and_then(|observer| {
+                            crate::astro::observation::set_observation(utc, observer).map(|_| ())
+                        })
+                    });
+            match result {
+                Ok(()) => {
+                    viewer.astro_observation_active = true;
+                    viewer.sync_astro_observation();
+                }
+                Err(error) => viewer.reject_command(format!("observation_rejected: {error}")),
+            }
             true
         }
         ViewerCmd::SetIbl { path, intensity } => {

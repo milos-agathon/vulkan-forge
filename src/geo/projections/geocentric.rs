@@ -75,6 +75,54 @@ pub fn ecef_to_geodetic(ellipsoid: &Ellipsoid, ecef: DVec3) -> ProjResult<(f64, 
     Ok((lon.to_degrees(), lat.to_degrees(), h))
 }
 
+fn planetocentric_surface_radius(ellipsoid: &Ellipsoid, lat: f64) -> f64 {
+    let (sin_lat, cos_lat) = lat.sin_cos();
+    1.0 / (cos_lat * cos_lat / ellipsoid.a.powi(2) + sin_lat * sin_lat / ellipsoid.b().powi(2))
+        .sqrt()
+}
+
+/// Planetocentric +East longitude/latitude and radial height → body-fixed XYZ.
+pub fn planetocentric_to_ecef(
+    ellipsoid: &Ellipsoid,
+    lon_deg: f64,
+    lat_deg: f64,
+    h_m: f64,
+) -> ProjResult<DVec3> {
+    if !lon_deg.is_finite() || !(-90.0..=90.0).contains(&lat_deg) || !h_m.is_finite() {
+        return Err(ProjError::Domain(format!(
+            "planetocentric input out of range: lon={lon_deg}, lat={lat_deg}, h={h_m}"
+        )));
+    }
+    let lat = lat_deg.to_radians();
+    let lon = lon_deg.to_radians();
+    let radius = planetocentric_surface_radius(ellipsoid, lat) + h_m;
+    let (sin_lat, cos_lat) = lat.sin_cos();
+    let (sin_lon, cos_lon) = lon.sin_cos();
+    Ok(DVec3::new(
+        radius * cos_lat * cos_lon,
+        radius * cos_lat * sin_lon,
+        radius * sin_lat,
+    ))
+}
+
+/// Body-fixed XYZ → planetocentric +East longitude/latitude and radial height.
+pub fn ecef_to_planetocentric(ellipsoid: &Ellipsoid, ecef: DVec3) -> ProjResult<(f64, f64, f64)> {
+    if !ecef.is_finite() || ecef.length_squared() == 0.0 {
+        return Err(ProjError::Domain(
+            "body-fixed input must be finite and non-zero".to_string(),
+        ));
+    }
+    let horizontal = ecef.x.hypot(ecef.y);
+    let lat = ecef.z.atan2(horizontal);
+    let lon = if horizontal == 0.0 {
+        0.0
+    } else {
+        ecef.y.atan2(ecef.x).to_degrees()
+    };
+    let height = ecef.length() - planetocentric_surface_radius(ellipsoid, lat);
+    Ok((lon, lat.to_degrees(), height))
+}
+
 /// WGS84 convenience wrappers (the common case across the tree).
 pub fn wgs84_geodetic_to_ecef(lon_deg: f64, lat_deg: f64, h_m: f64) -> ProjResult<DVec3> {
     geodetic_to_ecef(&WGS84, lon_deg, lat_deg, h_m)
@@ -138,5 +186,29 @@ mod tests {
         }
         // ~2e-9 m is one ulp at Earth-radius magnitudes — machine precision.
         assert!(worst < 5e-9, "worst ECEF roundtrip residual {worst} m");
+    }
+
+    #[test]
+    fn planetary_planetocentric_grid_closes_below_nanodegree() {
+        for body in [&crate::geo::body::MOON, &crate::geo::body::MARS] {
+            let mut worst_deg = 0.0f64;
+            for row in 0..25 {
+                let lat = -88.0 + 176.0 * row as f64 / 24.0;
+                for col in 0..40 {
+                    let lon = -175.5 + 351.0 * col as f64 / 39.0;
+                    let xyz = planetocentric_to_ecef(&body.ellipsoid, lon, lat, 1234.5).unwrap();
+                    let (lon2, lat2, height2) =
+                        ecef_to_planetocentric(&body.ellipsoid, xyz).unwrap();
+                    let dlon = ((lon2 - lon + 180.0).rem_euclid(360.0) - 180.0).abs();
+                    worst_deg = worst_deg.max(dlon.max((lat2 - lat).abs()));
+                    assert!((height2 - 1234.5).abs() < 1e-8);
+                }
+            }
+            assert!(
+                worst_deg < 1e-9,
+                "{} planetocentric closure {worst_deg} deg",
+                body.name
+            );
+        }
     }
 }

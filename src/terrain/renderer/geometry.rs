@@ -13,7 +13,13 @@
 
 use super::*;
 use crate::core::resource_tracker::{tracked_create_buffer_init, TrackedBuffer};
-use crate::terrain::clipmap::ClipmapConfig;
+use crate::terrain::clipmap::{
+    gpu_lod::{
+        ClipmapDrawInstance, GpuLodConfig, GpuLodDrawResources, GpuLodSelector,
+        IndirectDrawTemplate, TileInfo,
+    },
+    ClipmapConfig,
+};
 
 /// Cache key for the generated clipmap mesh. Regeneration only happens when
 /// the clipmap configuration, terrain span, or streaming center changes —
@@ -27,6 +33,14 @@ pub(in crate::terrain::renderer) struct ClipmapGeometryKey {
     morph_range_bits: u32,
     terrain_span_bits: u32,
     center_bits: (u32, u32),
+    viewport: (u32, u32),
+    fov_y_bits: u32,
+    render_scale_bits: u32,
+    hzb_two_phase: bool,
+    height_data_hash: u64,
+    height_range_bits: (u32, u32),
+    height_curve_hash: u64,
+    z_scale_bits: u32,
 }
 
 impl ClipmapGeometryKey {
@@ -34,6 +48,14 @@ impl ClipmapGeometryKey {
         config: &ClipmapConfig,
         terrain_span: f32,
         center: glam::Vec2,
+        viewport: (u32, u32),
+        fov_y: f32,
+        render_scale: f32,
+        hzb_two_phase: bool,
+        height_data_hash: u64,
+        height_range: (f32, f32),
+        height_curve_hash: u64,
+        z_scale: f32,
     ) -> Self {
         Self {
             ring_count: config.ring_count,
@@ -43,6 +65,14 @@ impl ClipmapGeometryKey {
             morph_range_bits: config.morph_range.to_bits(),
             terrain_span_bits: terrain_span.to_bits(),
             center_bits: (center.x.to_bits(), center.y.to_bits()),
+            viewport,
+            fov_y_bits: fov_y.to_bits(),
+            render_scale_bits: render_scale.to_bits(),
+            hzb_two_phase,
+            height_data_hash,
+            height_range_bits: (height_range.0.to_bits(), height_range.1.to_bits()),
+            height_curve_hash,
+            z_scale_bits: z_scale.to_bits(),
         }
     }
 }
@@ -56,6 +86,14 @@ pub(in crate::terrain::renderer) enum TerrainGeometryProvider {
         vertex_buffer: TrackedBuffer,
         index_buffer: TrackedBuffer,
         index_count: u32,
+        fallback_instance_buffer: TrackedBuffer,
+        lod_selector: GpuLodSelector,
+        lod_resources: GpuLodDrawResources,
+        lod_config: GpuLodConfig,
+        cpu_mesh: crate::terrain::clipmap::ClipmapMesh,
+        lod_tiles: Vec<TileInfo>,
+        draw_templates: Vec<IndirectDrawTemplate>,
+        variant_count: u32,
         cache_key: ClipmapGeometryKey,
     },
 }
@@ -75,14 +113,445 @@ impl TerrainGeometryProvider {
                 vertex_buffer,
                 index_buffer,
                 index_count,
+                fallback_instance_buffer,
                 ..
             } => {
                 pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                pass.set_vertex_buffer(1, fallback_instance_buffer.slice(..));
                 pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..*index_count, 0, 0..1);
             }
         }
     }
+
+    pub(in crate::terrain::renderer) fn encode_indirect(
+        &self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        params: &crate::terrain::render_params::TerrainRenderParams,
+        height_bounds: (f32, f32),
+        first_instance: bool,
+    ) -> Option<&GpuLodDrawResources> {
+        let Self::Clipmap {
+            lod_selector,
+            lod_resources,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let (eye, view, proj) = TerrainScene::build_camera_matrices(params);
+        lod_selector.encode_indirect(
+            queue,
+            encoder,
+            lod_resources,
+            proj * view,
+            eye,
+            first_instance,
+            height_bounds,
+            params.culling != "none",
+        );
+        Some(lod_resources)
+    }
+
+    pub(in crate::terrain::renderer) fn draw_indirect<'p>(
+        &'p self,
+        pass: &mut wgpu::RenderPass<'p>,
+        resources: &'p GpuLodDrawResources,
+        multi_draw_count: bool,
+        first_instance: bool,
+    ) -> u32 {
+        self.draw_indirect_buffers(
+            pass,
+            &resources.indirect_buffer,
+            &resources.instance_buffer,
+            &resources.output_header,
+            resources.max_draw_count,
+            multi_draw_count,
+            first_instance,
+        )
+    }
+
+    pub(in crate::terrain::renderer) fn draw_culled<'p>(
+        &'p self,
+        pass: &mut wgpu::RenderPass<'p>,
+        resources: &'p crate::terrain::culling::two_phase::CullDrawResources,
+        multi_draw_count: bool,
+        first_instance: bool,
+    ) -> u32 {
+        self.draw_indirect_buffers(
+            pass,
+            &resources.indirect_buffer,
+            &resources.instance_buffer,
+            resources.count_buffer(),
+            resources.max_draw_count,
+            multi_draw_count,
+            first_instance,
+        )
+    }
+
+    fn draw_indirect_buffers<'p>(
+        &'p self,
+        pass: &mut wgpu::RenderPass<'p>,
+        indirect_buffer: &'p TrackedBuffer,
+        instance_buffer: &'p TrackedBuffer,
+        count_buffer: &'p TrackedBuffer,
+        max_draw_count: u32,
+        multi_draw_count: bool,
+        first_instance: bool,
+    ) -> u32 {
+        let Self::Clipmap {
+            vertex_buffer,
+            index_buffer,
+            ..
+        } = self
+        else {
+            self.draw(pass);
+            return 1;
+        };
+        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        pass.set_vertex_buffer(1, instance_buffer.slice(..));
+        pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        let multi_draw = use_multi_draw_path(multi_draw_count, first_instance);
+        if multi_draw {
+            pass.multi_draw_indexed_indirect_count(
+                indirect_buffer,
+                0,
+                count_buffer,
+                0,
+                max_draw_count,
+            );
+        } else {
+            let stride = std::mem::size_of::<
+                crate::terrain::clipmap::gpu_lod::DrawIndexedIndirectArgs,
+            >() as u64;
+            for draw in 0..max_draw_count {
+                if !first_instance {
+                    let offset =
+                        u64::from(draw) * std::mem::size_of::<ClipmapDrawInstance>() as u64;
+                    pass.set_vertex_buffer(1, instance_buffer.slice(offset..));
+                }
+                pass.draw_indexed_indirect(indirect_buffer, u64::from(draw) * stride);
+            }
+        }
+        if multi_draw {
+            1
+        } else {
+            max_draw_count
+        }
+    }
+}
+
+/// Decide whether the compacted multi-draw path is usable, recording the
+/// certificate degradation when it is not.
+///
+/// The render certificate drains a *render-local* degradation capture, so the
+/// negotiation-time `capability_absent` entry recorded in `core::capabilities`
+/// never reaches it. The fallback therefore has to say so from inside the
+/// render. Split out of `draw_indirect_buffers` so the "never silently" rule
+/// is unit-testable without constructing a render pass.
+pub(in crate::terrain::renderer) fn use_multi_draw_path(
+    multi_draw_count: bool,
+    first_instance: bool,
+) -> bool {
+    if multi_draw_count && first_instance {
+        return true;
+    }
+    crate::core::degradation::record_degradation(
+        "rendering_fallback",
+        "terrain_multi_draw_indirect",
+        if multi_draw_count {
+            "INDIRECT_FIRST_INSTANCE absent; terrain indirect draws are issued as one draw_indexed_indirect per tile in a CPU loop"
+        } else {
+            "MULTI_DRAW_INDIRECT_COUNT absent; terrain indirect draws are issued as one draw_indexed_indirect per tile in a CPU loop"
+        },
+    );
+    false
+}
+
+#[cfg(test)]
+mod multi_draw_degradation_tests {
+    use super::use_multi_draw_path;
+    use crate::core::degradation::{clear_degradations, degradations_snapshot};
+
+    fn recorded_fallback() -> bool {
+        degradations_snapshot().iter().any(|entry| {
+            entry.kind == "rendering_fallback" && entry.name == "terrain_multi_draw_indirect"
+        })
+    }
+
+    #[test]
+    fn capable_adapter_takes_multi_draw_and_records_nothing() {
+        clear_degradations();
+        assert!(use_multi_draw_path(true, true));
+        assert!(!recorded_fallback(), "{:?}", degradations_snapshot());
+        clear_degradations();
+    }
+
+    #[test]
+    fn absent_multi_draw_count_records_the_cpu_loop_fallback() {
+        clear_degradations();
+        assert!(!use_multi_draw_path(false, true));
+        assert!(recorded_fallback(), "{:?}", degradations_snapshot());
+        let entry = degradations_snapshot()
+            .into_iter()
+            .find(|entry| entry.name == "terrain_multi_draw_indirect")
+            .expect("degradation recorded");
+        assert!(entry.consequence.contains("MULTI_DRAW_INDIRECT_COUNT"));
+        assert!(entry.consequence.contains("draw_indexed_indirect"));
+        clear_degradations();
+    }
+
+    #[test]
+    fn absent_indirect_first_instance_records_the_cpu_loop_fallback() {
+        clear_degradations();
+        assert!(!use_multi_draw_path(true, false));
+        let entry = degradations_snapshot()
+            .into_iter()
+            .find(|entry| entry.name == "terrain_multi_draw_indirect")
+            .expect("degradation recorded");
+        assert!(entry.consequence.contains("INDIRECT_FIRST_INSTANCE"));
+        clear_degradations();
+    }
+}
+
+fn append_clipmap_lod_variant(
+    mesh: &mut crate::terrain::clipmap::ClipmapMesh,
+    config: &ClipmapConfig,
+    center: glam::Vec2,
+    terrain_span: f32,
+    region_index: usize,
+    lod: u32,
+) -> crate::terrain::clipmap::level::MeshBounds {
+    let resolution = if region_index == 0 {
+        config.center_resolution
+    } else {
+        config.ring_resolution
+    }
+    .checked_shr(lod)
+    .unwrap_or(0)
+    .max(2);
+    let base_cell_size = terrain_span / (config.center_resolution.max(1) as f32 * 8.0);
+    let (vertices, mut indices) = if region_index == 0 {
+        crate::terrain::clipmap::make_center_block(
+            resolution,
+            center,
+            base_cell_size * config.center_resolution as f32 * 0.5,
+            terrain_span,
+        )
+    } else {
+        let ring_index = region_index as u32 - 1;
+        let (inner, outer) = config.ring_bounds(ring_index, base_cell_size, center);
+        let (mut vertices, mut indices) = crate::terrain::clipmap::make_ring(
+            ring_index,
+            inner,
+            outer,
+            resolution,
+            center,
+            terrain_span,
+            config.morph_range,
+        );
+        crate::terrain::clipmap::geomorph::correct_seam_vertices(
+            &mut vertices,
+            ring_index,
+            config.ring_resolution << (ring_index + 1).min(16),
+            &crate::terrain::clipmap::geomorph::GeomorphConfig {
+                morph_range: config.morph_range,
+                ..Default::default()
+            },
+        );
+        let (skirt_vertices, skirt_indices) = crate::terrain::clipmap::make_ring_skirts(
+            &vertices,
+            &indices,
+            config.skirt_depth,
+            ring_index,
+            resolution as usize + 1,
+        );
+        vertices.extend(skirt_vertices);
+        indices.extend(skirt_indices);
+        (vertices, indices)
+    };
+    let vertex_start = mesh.vertices.len() as u32;
+    let index_start = mesh.indices.len() as u32;
+    for index in &mut indices {
+        *index += vertex_start;
+    }
+    let bounds = crate::terrain::clipmap::level::MeshBounds {
+        vertex_start,
+        vertex_count: vertices.len() as u32,
+        index_start,
+        index_count: indices.len() as u32,
+    };
+    mesh.vertices.extend(vertices);
+    mesh.indices.extend(indices);
+    bounds
+}
+
+const HZB_CHUNKS_PER_AXIS: u32 = 32;
+
+fn partition_region_indices(
+    mesh: &mut crate::terrain::clipmap::ClipmapMesh,
+    region: crate::terrain::clipmap::level::MeshBounds,
+) -> Vec<crate::terrain::clipmap::level::MeshBounds> {
+    let source = mesh.indices
+        [region.index_start as usize..(region.index_start + region.index_count) as usize]
+        .to_vec();
+    let mut bounds_min = glam::Vec2::splat(f32::INFINITY);
+    let mut bounds_max = glam::Vec2::splat(f32::NEG_INFINITY);
+    for &index in &source {
+        let p = glam::Vec2::from(mesh.vertices[index as usize].position);
+        bounds_min = bounds_min.min(p);
+        bounds_max = bounds_max.max(p);
+    }
+    let extent = (bounds_max - bounds_min).max(glam::Vec2::splat(f32::EPSILON));
+    let mut buckets = vec![Vec::<u32>::new(); (HZB_CHUNKS_PER_AXIS * HZB_CHUNKS_PER_AXIS) as usize];
+    for triangle in source.chunks_exact(3) {
+        let center = triangle
+            .iter()
+            .map(|&index| glam::Vec2::from(mesh.vertices[index as usize].position))
+            .sum::<glam::Vec2>()
+            / 3.0;
+        let cell = ((center - bounds_min) / extent * HZB_CHUNKS_PER_AXIS as f32)
+            .floor()
+            .as_uvec2()
+            .min(glam::UVec2::splat(HZB_CHUNKS_PER_AXIS - 1));
+        buckets[(cell.y * HZB_CHUNKS_PER_AXIS + cell.x) as usize].extend_from_slice(triangle);
+    }
+    buckets
+        .into_iter()
+        .map(|indices| {
+            let index_start = mesh.indices.len() as u32;
+            mesh.indices.extend(indices);
+            crate::terrain::clipmap::level::MeshBounds {
+                vertex_start: region.vertex_start,
+                vertex_count: region.vertex_count,
+                index_start,
+                index_count: mesh.indices.len() as u32 - index_start,
+            }
+        })
+        .collect()
+}
+
+fn indexed_bounds(
+    mesh: &crate::terrain::clipmap::ClipmapMesh,
+    region: crate::terrain::clipmap::level::MeshBounds,
+) -> (glam::Vec2, glam::Vec2) {
+    mesh.indices[region.index_start as usize..(region.index_start + region.index_count) as usize]
+        .iter()
+        .map(|&index| glam::Vec2::from(mesh.vertices[index as usize].position))
+        .fold(
+            (
+                glam::Vec2::splat(f32::INFINITY),
+                glam::Vec2::splat(f32::NEG_INFINITY),
+            ),
+            |(min, max), p| (min.min(p), max.max(p)),
+        )
+}
+
+fn local_height_bounds(
+    minmax: &crate::path_tracing::hybrid_compute::terrain_heightfield::MinMaxMips,
+    bounds_min: glam::Vec2,
+    bounds_max: glam::Vec2,
+    terrain_span: f32,
+    height_range: (f32, f32),
+    height_curve_mode: &str,
+    height_curve_strength: f32,
+    height_curve_power: f32,
+    height_curve_lut: Option<&[f32]>,
+    z_scale: f32,
+    skirt: f32,
+) -> (f32, f32) {
+    let (width, height) = minmax.dims[0];
+    let to_cell = |p: glam::Vec2| {
+        ((p / terrain_span + glam::Vec2::splat(0.5))
+            * glam::Vec2::new(minmax.cell_w as f32, minmax.cell_h as f32))
+        .clamp(
+            glam::Vec2::ZERO,
+            glam::Vec2::new(
+                minmax.cell_w.saturating_sub(1) as f32,
+                minmax.cell_h.saturating_sub(1) as f32,
+            ),
+        )
+    };
+    let lo = to_cell(bounds_min).floor().as_uvec2();
+    let hi = to_cell(bounds_max).ceil().as_uvec2();
+    let mut raw_min = f32::INFINITY;
+    let mut raw_max = f32::NEG_INFINITY;
+    for y in lo.y..=hi.y {
+        for x in lo.x..=hi.x {
+            let value = minmax.levels[0][(y.min(height - 1) * width + x.min(width - 1)) as usize];
+            raw_min = raw_min.min(value[0]);
+            raw_max = raw_max.max(value[1]);
+        }
+    }
+    let range = (height_range.1 - height_range.0).max(1e-6);
+    let t_min = ((raw_min - height_range.0) / range).clamp(0.0, 1.0);
+    let t_max = ((raw_max - height_range.0) / range).clamp(0.0, 1.0);
+    let (curved_min, curved_max) = curved_normalized_bounds(
+        height_curve_mode,
+        height_curve_strength,
+        height_curve_power,
+        height_curve_lut,
+        t_min,
+        t_max,
+    );
+    let clamped_min = height_range.0 + curved_min * range;
+    let clamped_max = height_range.0 + curved_max * range;
+    let center = (height_range.0 + height_range.1) * 0.5;
+    (
+        (clamped_min - center) * z_scale - skirt,
+        (clamped_max - center) * z_scale,
+    )
+}
+
+fn curved_normalized_bounds(
+    mode: &str,
+    strength: f32,
+    power: f32,
+    lut: Option<&[f32]>,
+    t_min: f32,
+    t_max: f32,
+) -> (f32, f32) {
+    let strength = strength.clamp(0.0, 1.0);
+    let mix = |t: f32, curved: f32| t + strength * (curved - t);
+    match mode {
+        "pow" => (
+            mix(t_min, t_min.powf(power.max(0.01))),
+            mix(t_max, t_max.powf(power.max(0.01))),
+        ),
+        "smoothstep" => {
+            let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
+            (mix(t_min, smooth(t_min)), mix(t_max, smooth(t_max)))
+        }
+        "lut" => {
+            let (lut_min, lut_max) = lut
+                .unwrap_or(&[])
+                .iter()
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), &value| {
+                    (lo.min(value), hi.max(value))
+                });
+            if lut_min.is_finite() && lut_max.is_finite() {
+                (mix(t_min, lut_min), mix(t_max, lut_max))
+            } else {
+                (0.0, 1.0)
+            }
+        }
+        _ => (t_min, t_max),
+    }
+}
+
+fn height_curve_hash(params: &crate::terrain::render_params::TerrainRenderParams) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    params.height_curve_mode.hash(&mut hasher);
+    params.height_curve_strength.to_bits().hash(&mut hasher);
+    params.height_curve_power.to_bits().hash(&mut hasher);
+    if let Some(lut) = params.height_curve_lut.as_ref() {
+        lut.iter()
+            .for_each(|value| value.to_bits().hash(&mut hasher));
+    }
+    hasher.finish()
 }
 
 impl TerrainScene {
@@ -95,28 +564,217 @@ impl TerrainScene {
     pub(in crate::terrain::renderer) fn prepare_geometry(
         &mut self,
         params: &crate::terrain::render_params::TerrainRenderParams,
+        heightmap: &[f32],
+        height_dims: (u32, u32),
+        height_data_hash: u64,
     ) -> Result<()> {
         let Some(config) = clipmap_camera_config(&params.camera_mode) else {
             self.geometry_provider = Some(TerrainGeometryProvider::Grid {
                 vertex_count: self.terrain_vertex_count(params),
             });
+            self.two_phase_culler = None;
             return Ok(());
         };
 
         let center = self.height_streaming_center();
         let terrain_span = params.terrain_span.max(1.0);
-        let cache_key = ClipmapGeometryKey::new(&config, terrain_span, center);
+        let cache_key = ClipmapGeometryKey::new(
+            &config,
+            terrain_span,
+            center,
+            params.size_px,
+            params.fov_y_deg.to_radians(),
+            params.render_scale,
+            params.culling == "hzb_two_phase",
+            height_data_hash,
+            params.decoded().clamp.height_range,
+            height_curve_hash(params),
+            params.z_scale,
+        );
         if let Some(TerrainGeometryProvider::Clipmap {
             cache_key: existing,
             ..
         }) = self.geometry_provider.as_ref()
         {
             if *existing == cache_key {
+                self.refresh_cpu_visibility_oracle(params, heightmap, height_dims, None)?;
                 return Ok(());
             }
         }
 
-        let mesh = crate::terrain::clipmap::level::clipmap_generate(&config, center, terrain_span);
+        let mut mesh =
+            crate::terrain::clipmap::level::clipmap_generate(&config, center, terrain_span);
+        let geomorph_config = crate::terrain::clipmap::geomorph::GeomorphConfig {
+            morph_range: config.morph_range,
+            max_seam_gap: (terrain_span * 1e-6).max(0.001),
+            snap_to_coarse: true,
+        };
+        for (ring_index, bounds) in mesh.ring_bounds.iter().copied().enumerate() {
+            let range =
+                bounds.vertex_start as usize..(bounds.vertex_start + bounds.vertex_count) as usize;
+            crate::terrain::clipmap::geomorph::correct_seam_vertices(
+                &mut mesh.vertices[range],
+                ring_index as u32,
+                config.ring_resolution << ((ring_index as u32 + 1).min(16)),
+                &geomorph_config,
+            );
+        }
+        let seam_regions = std::iter::once(mesh.center_bounds)
+            .chain(mesh.ring_bounds.iter().copied())
+            .collect::<Vec<_>>();
+        let mut seam_summary = crate::terrain::clipmap::geomorph::SeamAnalysis {
+            boundary_vertex_count: 0,
+            depth_sample_count: 0,
+            max_gap: 0.0,
+            avg_gap: 0.0,
+            t_junction_count: 0,
+            crack_count: 0,
+            seams_valid: true,
+        };
+        for pair in seam_regions.windows(2) {
+            let inner = pair[0];
+            let outer = pair[1];
+            let analysis = crate::terrain::clipmap::geomorph::analyze_seams(
+                &mesh.vertices[inner.vertex_start as usize
+                    ..(inner.vertex_start + inner.vertex_count) as usize],
+                &mesh.vertices[outer.vertex_start as usize
+                    ..(outer.vertex_start + outer.vertex_count) as usize],
+                &geomorph_config,
+            );
+            let depth_analysis = crate::terrain::clipmap::geomorph::analyze_depth_discontinuities(
+                &mesh.vertices[inner.vertex_start as usize
+                    ..(inner.vertex_start + inner.vertex_count) as usize],
+                &mesh.vertices[outer.vertex_start as usize
+                    ..(outer.vertex_start + outer.vertex_count) as usize],
+                heightmap,
+                height_dims,
+                params.z_scale,
+                geomorph_config.max_seam_gap,
+            );
+            seam_summary.max_gap = seam_summary.max_gap.max(analysis.max_gap);
+            seam_summary.max_gap = seam_summary.max_gap.max(depth_analysis.max_depth_gap);
+            seam_summary.avg_gap += analysis.avg_gap * analysis.boundary_vertex_count as f32;
+            seam_summary.boundary_vertex_count += analysis.boundary_vertex_count;
+            seam_summary.depth_sample_count += depth_analysis.sample_count;
+            seam_summary.t_junction_count += analysis.t_junction_count;
+            seam_summary.crack_count += analysis.crack_count;
+            seam_summary.crack_count += depth_analysis.crack_count;
+            seam_summary.seams_valid &= analysis.seams_valid
+                && depth_analysis.sample_count > 0
+                && depth_analysis.crack_count == 0;
+        }
+        if seam_summary.boundary_vertex_count > 0 {
+            seam_summary.avg_gap /= seam_summary.boundary_vertex_count as f32;
+        }
+        crate::terrain::clipmap::geomorph::publish_seam_analysis(seam_summary);
+        let fallback_index_count = mesh.index_count();
+        let regions: Vec<_> = std::iter::once(mesh.center_bounds)
+            .chain(mesh.ring_bounds.iter().copied())
+            .collect();
+        let variant_count = config.ring_count.max(1);
+        self.terrain_minmax_pyramid = if params.culling == "hzb_two_phase" {
+            Some(
+                crate::path_tracing::hybrid_compute::terrain_heightfield::TerrainMinMaxPyramid::from_heightfield(
+                    self.device.as_ref(),
+                    self.queue.as_ref(),
+                    heightmap,
+                    height_dims.0,
+                    height_dims.1,
+                )?,
+            )
+        } else {
+            None
+        };
+        let minmax = self
+            .terrain_minmax_pyramid
+            .as_ref()
+            .map(|pyramid| pyramid.cpu_mips());
+        let chunked = minmax.is_some();
+        let mut lod_tiles = Vec::new();
+        let mut draw_templates = Vec::new();
+        for (region_index, region) in regions.iter().copied().enumerate() {
+            let mut variants = vec![region];
+            for variant in 0..variant_count {
+                if variant != 0 {
+                    variants.push(append_clipmap_lod_variant(
+                        &mut mesh,
+                        &config,
+                        center,
+                        terrain_span,
+                        region_index,
+                        variant,
+                    ));
+                }
+            }
+            let variant_chunks: Vec<Vec<_>> = if chunked {
+                variants
+                    .iter()
+                    .map(|&variant| partition_region_indices(&mut mesh, variant))
+                    .collect()
+            } else {
+                variants.iter().map(|&variant| vec![variant]).collect()
+            };
+            for chunk_index in 0..variant_chunks[0].len() {
+                let base_chunk = variant_chunks[0][chunk_index];
+                if base_chunk.index_count == 0 {
+                    continue;
+                }
+                let (mut bounds_min, mut bounds_max) = indexed_bounds(&mesh, base_chunk);
+                for chunks in &variant_chunks {
+                    let selected = if chunks[chunk_index].index_count == 0 {
+                        base_chunk
+                    } else {
+                        chunks[chunk_index]
+                    };
+                    let (variant_min, variant_max) = indexed_bounds(&mesh, selected);
+                    bounds_min = bounds_min.min(variant_min);
+                    bounds_max = bounds_max.max(variant_max);
+                }
+                let lod = region_index.saturating_sub(1) as u32;
+                let mut tile = TileInfo::new(
+                    lod,
+                    region_index as u32,
+                    chunk_index as u32,
+                    bounds_min,
+                    bounds_max,
+                );
+                if let Some(minmax) = minmax.as_ref() {
+                    let skirt = config.ring_resolution as f32 * 0.001 * params.z_scale.abs();
+                    let bounds = local_height_bounds(
+                        minmax,
+                        bounds_min,
+                        bounds_max,
+                        terrain_span,
+                        params.decoded().clamp.height_range,
+                        &params.height_curve_mode,
+                        params.height_curve_strength,
+                        params.height_curve_power,
+                        params.height_curve_lut.as_deref().map(Vec::as_slice),
+                        params.z_scale,
+                        skirt,
+                    );
+                    tile = tile.with_height_bounds(bounds.0, bounds.1);
+                }
+                // Visibility IDs use a compact dense tile index so the
+                // full-screen pass can index draw metadata without a search.
+                tile.tile_id = lod_tiles.len() as u32;
+                for chunks in &variant_chunks {
+                    let selected = chunks[chunk_index];
+                    let selected = if selected.index_count == 0 {
+                        base_chunk
+                    } else {
+                        selected
+                    };
+                    draw_templates.push(IndirectDrawTemplate {
+                        index_count: selected.index_count,
+                        first_index: selected.index_start,
+                        base_vertex: 0,
+                        tile_id: tile.tile_id,
+                    });
+                }
+                lod_tiles.push(tile);
+            }
+        }
         let vertex_buffer = tracked_create_buffer_init(
             self.device.as_ref(),
             &wgpu::util::BufferInitDescriptor {
@@ -133,13 +791,132 @@ impl TerrainScene {
                 usage: wgpu::BufferUsages::INDEX,
             },
         )?;
+        let fallback_instance = ClipmapDrawInstance::identity(lod_tiles[0].tile_id, 0);
+        let fallback_instance_buffer = tracked_create_buffer_init(
+            self.device.as_ref(),
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("terrain.clipmap.fallback_instance"),
+                contents: bytemuck::bytes_of(&fallback_instance),
+                usage: wgpu::BufferUsages::VERTEX,
+            },
+        )?;
+        let lod_config = GpuLodConfig {
+            viewport_width: params.size_px.0,
+            viewport_height: params.size_px.1,
+            fov_y: params.fov_y_deg.to_radians(),
+            max_lod: variant_count - 1,
+            terrain_width: terrain_span,
+            tile_size: terrain_span / config.ring_resolution.max(1) as f32,
+            ..Default::default()
+        };
+        let lod_selector = GpuLodSelector::new(self.device.as_ref(), lod_config.clone());
+        let lod_resources = lod_selector.create_draw_resources(
+            self.device.as_ref(),
+            &lod_tiles,
+            &draw_templates,
+        )?;
+        let scale = params.render_scale.clamp(0.25, 4.0);
+        self.two_phase_culler = if params.culling == "hzb_two_phase" {
+            Some(
+                crate::terrain::culling::two_phase::TwoPhaseTerrainCuller::new(
+                    self.device.as_ref(),
+                    ((params.size_px.0 as f32 * scale).round() as u32).max(1),
+                    ((params.size_px.1 as f32 * scale).round() as u32).max(1),
+                    &lod_resources,
+                )?,
+            )
+        } else {
+            None
+        };
         self.geometry_provider = Some(TerrainGeometryProvider::Clipmap {
             vertex_buffer,
             index_buffer,
-            index_count: mesh.index_count(),
+            index_count: fallback_index_count,
+            fallback_instance_buffer,
+            lod_selector,
+            lod_resources,
+            lod_config,
+            cpu_mesh: mesh,
+            lod_tiles,
+            draw_templates,
+            variant_count,
             cache_key,
         });
+        self.refresh_cpu_visibility_oracle(params, heightmap, height_dims, None)?;
         Ok(())
+    }
+
+    fn refresh_cpu_visibility_oracle(
+        &self,
+        params: &crate::terrain::render_params::TerrainRenderParams,
+        heightmap: &[f32],
+        height_dims: (u32, u32),
+        submitted_tiles: Option<&[TileInfo]>,
+    ) -> Result<()> {
+        let mut oracle = self
+            .cpu_visibility_oracle
+            .lock()
+            .map_err(|_| anyhow!("terrain CPU visibility oracle mutex poisoned"))?;
+        if params.shading != "visibility" {
+            *oracle = None;
+            return Ok(());
+        }
+        // Frustum draws consume the compute shader's compact indirect list.
+        // The exact list is only available after submission, so do not publish
+        // a CPU-recomputed oracle in the interim.
+        if params.culling == "frustum" && submitted_tiles.is_none() {
+            *oracle = None;
+            return Ok(());
+        }
+        let Some(TerrainGeometryProvider::Clipmap {
+            lod_config,
+            cpu_mesh,
+            lod_tiles,
+            draw_templates,
+            variant_count,
+            index_count,
+            ..
+        }) = self.geometry_provider.as_ref()
+        else {
+            *oracle = None;
+            return Ok(());
+        };
+        *oracle = Some(super::visibility_buffer::CpuVisibilityOracle::build(
+            params,
+            heightmap,
+            height_dims,
+            cpu_mesh,
+            lod_tiles,
+            draw_templates,
+            *variant_count,
+            *index_count,
+            lod_config,
+            submitted_tiles,
+        )?);
+        Ok(())
+    }
+
+    pub(in crate::terrain::renderer) fn refresh_cpu_visibility_oracle_from_gpu_selection(
+        &self,
+        params: &crate::terrain::render_params::TerrainRenderParams,
+        heightmap: &[f32],
+        height_dims: (u32, u32),
+    ) -> Result<()> {
+        if params.shading != "visibility" || params.culling != "frustum" {
+            return Ok(());
+        }
+        let selection = match self.geometry_provider.as_ref() {
+            Some(TerrainGeometryProvider::Clipmap { lod_resources, .. }) => lod_resources
+                .read_selection_blocking(self.device.as_ref(), self.queue.as_ref())
+                .map_err(anyhow::Error::msg)?,
+            _ => return Ok(()),
+        };
+        self.refresh_cpu_visibility_oracle(
+            params,
+            heightmap,
+            height_dims,
+            Some(&selection.visible_tiles),
+        )
     }
 
     pub(in crate::terrain::renderer) fn geometry_provider(
@@ -148,5 +925,45 @@ impl TerrainScene {
         self.geometry_provider
             .as_ref()
             .ok_or_else(|| anyhow!("terrain geometry provider not prepared for this frame"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hzb_chunking_preserves_every_source_triangle() {
+        let config = ClipmapConfig::new(4, 32);
+        let mut mesh =
+            crate::terrain::clipmap::level::clipmap_generate(&config, glam::Vec2::ZERO, 1000.0);
+        let region = mesh.center_bounds;
+        let mut expected = mesh.indices
+            [region.index_start as usize..(region.index_start + region.index_count) as usize]
+            .to_vec();
+        let chunks = partition_region_indices(&mut mesh, region);
+        let mut actual = chunks
+            .iter()
+            .flat_map(|chunk| {
+                mesh.indices
+                    [chunk.index_start as usize..(chunk.index_start + chunk.index_count) as usize]
+                    .iter()
+                    .copied()
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        actual.sort_unstable();
+        assert_eq!(actual, expected);
+        assert!(chunks.iter().filter(|chunk| chunk.index_count > 0).count() > 1);
+    }
+
+    #[test]
+    fn hzb_height_bounds_follow_height_curve() {
+        let (lo, hi) = curved_normalized_bounds("pow", 1.0, 2.0, None, 0.25, 0.75);
+        assert_eq!((lo, hi), (0.0625, 0.5625));
+
+        let reversed_lut: Vec<_> = (0..256).map(|i| 1.0 - i as f32 / 255.0).collect();
+        let (lo, hi) = curved_normalized_bounds("lut", 1.0, 1.0, Some(&reversed_lut), 0.25, 0.75);
+        assert_eq!((lo, hi), (0.0, 1.0));
     }
 }

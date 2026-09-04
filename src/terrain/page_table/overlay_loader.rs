@@ -8,7 +8,7 @@ use std::thread;
 use crate::terrain::tiling::{TileBounds, TileId};
 
 use super::common::{is_descendant_of, CoalescePolicy};
-use super::readers::{OverlayReader, SyntheticOverlayReader};
+use super::readers::OverlayReader;
 
 #[derive(Debug)]
 pub struct OverlayTileData {
@@ -53,24 +53,6 @@ pub struct AsyncOverlayLoader {
 }
 
 impl AsyncOverlayLoader {
-    pub fn new(
-        root_bounds: TileBounds,
-        tile_size: Vec2,
-        tile_resolution: u32,
-        max_in_flight: usize,
-        pool_size: usize,
-    ) -> Self {
-        Self::new_with_reader(
-            root_bounds,
-            tile_size,
-            tile_resolution,
-            max_in_flight,
-            pool_size,
-            Arc::new(SyntheticOverlayReader),
-            CoalescePolicy::PreferCoarse,
-        )
-    }
-
     pub fn new_with_reader(
         root_bounds: TileBounds,
         tile_size: Vec2,

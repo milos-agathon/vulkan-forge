@@ -216,10 +216,11 @@ impl TerrainScene {
         device: &wgpu::Device,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> wgpu::RenderPipeline {
+        let shader_source = crate::shader_sources::terrain_shadow_depth();
         let shader = crate::core::shader_registry::create_labeled_shader_module(
             device,
             "terrain.shadow_depth.shader",
-            include_str!("../../../shaders/terrain_shadow_depth.wgsl"),
+            &shader_source,
         );
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

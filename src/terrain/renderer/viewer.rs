@@ -182,6 +182,7 @@ impl TerrainScene {
         _target_format: wgpu::TextureFormat,
         width: u32,
         height: u32,
+        background_initialized: bool,
     ) -> bool {
         let terrain = match &self.viewer_heightmap {
             Some(t) => t,
@@ -349,12 +350,16 @@ impl TerrainScene {
                     view: target_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: terrain.sun_intensity.min(1.0) as f64 * 0.5,
-                            g: terrain.sun_intensity.min(1.0) as f64 * 0.7,
-                            b: terrain.sun_intensity.min(1.0) as f64 * 0.9,
-                            a: 1.0,
-                        }),
+                        load: if background_initialized {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(wgpu::Color {
+                                r: terrain.sun_intensity.min(1.0) as f64 * 0.5,
+                                g: terrain.sun_intensity.min(1.0) as f64 * 0.7,
+                                b: terrain.sun_intensity.min(1.0) as f64 * 0.9,
+                                a: 1.0,
+                            })
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],

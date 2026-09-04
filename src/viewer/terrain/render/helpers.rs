@@ -339,35 +339,11 @@ impl ViewerTerrainScene {
         // Get CSM shadow resources - create fallbacks if they don't exist
         let (shadow_view, moment_view, shadow_sampler) =
             if let Some(csm) = self.csm_renderer.as_ref() {
-                let shadow_view = csm.shadow_texture_view();
-                if let Some(moment_view) = csm.moment_texture_view() {
-                    (shadow_view, moment_view, &csm.shadow_sampler)
-                } else {
-                    eprintln!("[WARN] CSM moment maps not created - using fallback");
-                    // Create fallback moment texture
-                    let fallback = tracked_create_texture(
-                        &self.device,
-                        &wgpu::TextureDescriptor {
-                            label: Some("csm_moment_fallback"),
-                            size: wgpu::Extent3d {
-                                width: 1,
-                                height: 1,
-                                depth_or_array_layers: 4,
-                            },
-                            mip_level_count: 1,
-                            sample_count: 1,
-                            dimension: wgpu::TextureDimension::D2,
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                            view_formats: &[],
-                        },
-                    )?;
-                    let moment_view = fallback.create_view(&wgpu::TextureViewDescriptor {
-                        dimension: Some(wgpu::TextureViewDimension::D2Array),
-                        ..Default::default()
-                    });
-                    (shadow_view, moment_view, &csm.shadow_sampler)
-                }
+                (
+                    csm.shadow_texture_view(),
+                    csm.moment_binding_view(),
+                    &csm.shadow_sampler,
+                )
             } else {
                 eprintln!("[ERROR] CSM renderer not initialized - cannot create PBR bind group");
                 return Ok(());
@@ -397,30 +373,31 @@ impl ViewerTerrainScene {
         };
 
         // P6.2: Write CSM uniforms with technique value from pbr_config
-        // Map shadow technique string to enum value
-        let technique = match self.pbr_config.shadow_technique.to_lowercase().as_str() {
-            "hard" => ShadowTechnique::Hard,
-            "pcf" => ShadowTechnique::PCF,
-            "pcss" => ShadowTechnique::PCSS,
-            "vsm" => ShadowTechnique::VSM,
-            "evsm" => ShadowTechnique::EVSM,
-            "msm" => ShadowTechnique::MSM,
-            _ => ShadowTechnique::PCF, // default
-        };
+        let shadows_enabled = !self
+            .pbr_config
+            .shadow_technique
+            .eq_ignore_ascii_case("none");
+        let technique = ShadowTechnique::from_name(&self.pbr_config.shadow_technique)
+            .filter(|technique| *technique != ShadowTechnique::CSM)
+            .unwrap_or(ShadowTechnique::PCF);
 
         // Build CSM uniforms with current technique
         // Use cascade data from CSM renderer if shadow depth passes have been rendered
         let debug_mode = self.pbr_config.debug_mode;
+        let technique_params = super::super::shader_pbr::default_viewer_pcss_technique_params();
         let csm_uniforms = if let Some(ref csm) = self.csm_renderer {
             // Copy uniforms from CSM renderer (populated by render_shadow_passes)
             let mut u = csm.uniforms;
             u.technique = technique.as_u32();
+            if !shadows_enabled {
+                u.cascade_count = 0;
+            }
             u.pcf_kernel_size = match technique {
                 ShadowTechnique::Hard => 1,
                 ShadowTechnique::PCSS => 5,
                 _ => 3,
             };
-            u.technique_params = [0.0, 0.0, 0.0005, 1.0]; // moment_bias, light_size
+            u.technique_params = technique_params;
             u.debug_mode = debug_mode; // P6.2: Debug visualization from pbr_config
             u
         } else {
@@ -437,9 +414,9 @@ impl ViewerTerrainScene {
             u.depth_bias = 0.005;
             u.slope_bias = 0.01;
             u.peter_panning_offset = 0.001;
-            u.evsm_positive_exp = 40.0;
-            u.evsm_negative_exp = 5.0;
-            u.technique_params = [0.0, 0.0, 0.0005, 1.0];
+            u.evsm_positive_exp = crate::shadows::EVSM_MAX_EXPONENT_RGBA16F;
+            u.evsm_negative_exp = crate::shadows::EVSM_MAX_EXPONENT_RGBA16F;
+            u.technique_params = technique_params;
             u.debug_mode = debug_mode; // P6.2: Debug visualization from pbr_config
 
             // Set up default cascade far distances for cascade selection

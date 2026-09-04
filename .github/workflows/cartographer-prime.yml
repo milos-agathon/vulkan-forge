@@ -1,0 +1,135 @@
+name: CARTOGRAPHER-PRIME Acceptance
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cartographer-prime-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runner-evidence:
+    name: Runner evidence (${{ matrix.config }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - config: ubuntu-x64
+            runner: ubuntu-latest
+          - config: macos-arm64
+            runner: macos-15
+          - config: windows-x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARTOGRAPHER_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CARTOGRAPHER_MEASUREMENTS_PATH: cartographer-prime-out/measurements.json
+      FORGE3D_NO_BOOTSTRAP: '1'
+      FORGE3D_TEST_INSTALLED_WHEEL: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Prove exact checked-out head
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$CARTOGRAPHER_EXPECTED_SHA"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install native build and test tooling
+        run: python -m pip install --upgrade pip maturin pytest
+
+      - name: Build native extension wheel
+        run: python -m maturin build --profile release-lto --out wheelhouse
+
+      - name: Install the exact-head native extension
+        shell: bash
+        run: >-
+          python -c "import pathlib, subprocess, sys;
+          wheels=list(pathlib.Path('wheelhouse').glob('*.whl'));
+          assert len(wheels) == 1, wheels;
+          subprocess.check_call([sys.executable, '-m', 'pip', 'install',
+          '--force-reinstall', str(wheels[0])])"
+
+      - name: Run the combined measurable-win gate
+        run: >-
+          python -m pytest tests/test_label_optimal_solver.py -v --tb=short
+          --junitxml=cartographer-prime-out/junit.xml
+
+      - name: Require a clean zero-skip gate
+        run: python scripts/assert_junit_zero_skips.py cartographer-prime-out/junit.xml
+
+      - name: Bind measurements to runner and exact head
+        shell: bash
+        run: >-
+          python .github/scripts/cartographer_prime_evidence.py
+          --measurements cartographer-prime-out/measurements.json
+          --junit cartographer-prime-out/junit.xml
+          --expected-sha "$CARTOGRAPHER_EXPECTED_SHA"
+          --runner-config "${{ matrix.config }}"
+          --runner-os "$RUNNER_OS"
+          --runner-arch "$RUNNER_ARCH"
+          --build-profile release-lto
+          --output cartographer-prime-out/cartographer-prime-evidence.json
+
+      - name: Upload exact-runner evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cartographer-prime-${{ matrix.config }}
+          path: cartographer-prime-out/cartographer-prime-evidence.json
+          if-no-files-found: error
+
+  verify-three-runners:
+    name: Verify three hosted runner configurations
+    needs: runner-evidence
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      CARTOGRAPHER_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        if: always()
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Prove verifier is at the exact head
+        if: always()
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$CARTOGRAPHER_EXPECTED_SHA"
+
+      - uses: actions/download-artifact@v4
+        if: always()
+        with:
+          pattern: cartographer-prime-*
+          path: cartographer-prime-artifacts
+
+      - name: Reject incomplete or inconsistent evidence
+        if: always()
+        run: >-
+          python .github/scripts/verify_cartographer_prime_evidence.py
+          --artifacts cartographer-prime-artifacts
+          --golden tests/golden/labels/optimal_plan_hash.json
+          --expected-sha "$CARTOGRAPHER_EXPECTED_SHA"
+          --output cartographer-prime-verification.json
+
+      - name: Upload verification summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: cartographer-prime-three-runner-verification
+          path: cartographer-prime-verification.json
+          if-no-files-found: error
+
+      - name: Require every runner evidence leg to succeed
+        if: always()
+        shell: bash
+        run: test '${{ needs.runner-evidence.result }}' = success

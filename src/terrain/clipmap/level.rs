@@ -6,6 +6,13 @@ use super::ClipmapConfig;
 use crate::terrain::tiling::TileId;
 use glam::Vec2;
 
+fn snap_center_to_finest_grid(center: Vec2, base_cell_size: f32) -> Vec2 {
+    if !base_cell_size.is_finite() || base_cell_size <= 0.0 {
+        return center;
+    }
+    (center / base_cell_size).round() * base_cell_size
+}
+
 /// Bounds for a mesh region (start index, index count).
 #[derive(Debug, Clone, Copy)]
 pub struct MeshBounds {
@@ -118,7 +125,7 @@ impl ClipmapLevel {
                 &ring_indices,
                 self.config.skirt_depth,
                 ring_idx,
-                self.config.ring_resolution as usize + 1,
+                0,
             );
             ring_verts.extend(skirt_verts);
             ring_indices.extend(skirt_indices);
@@ -163,6 +170,7 @@ impl ClipmapLevel {
     /// Update the clipmap center position.
     /// Returns list of TileIds that should be requested for streaming.
     pub fn update_center(&mut self, new_center: Vec2) -> Vec<TileId> {
+        let new_center = snap_center_to_finest_grid(new_center, self.base_cell_size);
         let delta = new_center - self.center;
 
         // Only regenerate if moved significantly (half a cell)
@@ -231,10 +239,23 @@ impl ClipmapLevel {
 
     /// Calculate triangle count for a full-resolution grid (for reduction comparison).
     pub fn full_resolution_triangle_count(&self) -> u32 {
-        // Full terrain at finest LOD
-        let total_cells = self.config.center_resolution * 4; // Approximate coverage
-        total_cells * total_cells * 2
+        full_resolution_triangle_count(&self.config)
     }
+}
+
+/// Triangles required to cover the complete clipmap footprint at the finest
+/// lattice. This is the meaningful comparator for a nested clipmap; the old
+/// `center_resolution * 4` approximation covered only a small central square.
+pub fn full_resolution_triangle_count(config: &ClipmapConfig) -> u32 {
+    let ring_cells_per_side = (0..config.ring_count)
+        .map(|ring| config.ring_resolution.checked_shl(ring).unwrap_or(u32::MAX))
+        .fold(0u32, u32::saturating_add);
+    let cells_per_side = config
+        .center_resolution
+        .saturating_add(ring_cells_per_side.saturating_mul(2));
+    cells_per_side
+        .saturating_mul(cells_per_side)
+        .saturating_mul(2)
 }
 
 /// Generate a complete clipmap mesh from configuration.
@@ -295,6 +316,13 @@ mod tests {
     }
 
     #[test]
+    fn test_full_resolution_comparator_covers_outermost_ring() {
+        let config = ClipmapConfig::new(4, 32);
+        // 32 center cells plus two sides of 32*(1+2+4+8) ring cells.
+        assert_eq!(full_resolution_triangle_count(&config), 1_968_128);
+    }
+
+    #[test]
     fn test_center_update_triggers_tile_requests() {
         let config = ClipmapConfig::new(4, 64);
         let mut level = ClipmapLevel::new(config, Vec2::ZERO, 1000.0);
@@ -313,6 +341,31 @@ mod tests {
         // Small movement should not regenerate
         let tiles = level.update_center(Vec2::new(0.1, 0.1));
         assert!(tiles.is_empty());
+    }
+
+    #[test]
+    fn test_center_updates_snap_to_the_finest_grid() {
+        let config = ClipmapConfig::new(4, 64);
+        let mut level = ClipmapLevel::new(config, Vec2::ZERO, 1000.0);
+        let base_cell = level.base_cell_size;
+
+        let requested = Vec2::new(base_cell * 0.6, -base_cell * 1.6);
+        assert!(!level.update_center(requested).is_empty());
+        assert_eq!(level.center, Vec2::new(base_cell, -base_cell * 2.0));
+
+        // Another raw camera position inside the same snapped cell neither
+        // changes the mesh lattice nor spuriously requests tiles.
+        let same_cell = Vec2::new(base_cell * 0.7, -base_cell * 1.7);
+        assert!(level.update_center(same_cell).is_empty());
+        assert_eq!(level.center, Vec2::new(base_cell, -base_cell * 2.0));
+    }
+
+    #[test]
+    fn test_initial_center_preserves_static_clipmap_semantics() {
+        let config = ClipmapConfig::new(4, 64);
+        let center = Vec2::new(12.25, -31.75);
+        let level = ClipmapLevel::new(config, center, 1000.0);
+        assert_eq!(level.center, center);
     }
 
     #[test]

@@ -6,9 +6,9 @@ use std::collections::HashMap;
 
 const FNV1A_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A_PRIME: u64 = 0x0000_0100_0000_01b3;
-const PINNED_DETERMINISM_SOURCE_HASH: u64 = 0xa85d_315e_c1f1_a349;
-pub(super) const PINNED_HYBRID_KERNEL_SOURCE_HASH: u64 = 0xe045_1085_a1ef_32e8;
-pub(super) const PINNED_TERRAIN_SOURCE_HASH: u64 = 0x0b0c_21d8_dec7_b69a;
+pub(super) const PINNED_DETERMINISM_SOURCE_HASH: u64 = 0xf664_b696_d596_de84;
+pub(super) const PINNED_HYBRID_KERNEL_SOURCE_HASH: u64 = 0x8bec_4081_7eff_863d;
+pub(super) const PINNED_TERRAIN_SOURCE_HASH: u64 = 0xf968_57bd_7131_08df;
 
 #[derive(Clone, Copy)]
 pub(super) enum FunctionRef {
@@ -64,6 +64,7 @@ pub(super) enum Relation {
     ImageDimensions(String),
     ImageDimension(String, usize),
     ImageUpperIndex(String),
+    ImageUpperIndexAxis(String, usize),
     InImage(String),
     InImageAxes(String, u8),
     /// A value is known to be strictly smaller than this symbolic dimension.
@@ -250,6 +251,7 @@ impl Evaluator<'_> {
                             image_value,
                             *coordinate,
                             coordinate_value,
+                            *array_index,
                         );
                         let stored = self.eval_expr(function_ref, &mut state, *value)?;
                         let Some(Place {
@@ -677,6 +679,7 @@ impl Evaluator<'_> {
         image: Value,
         coordinate_handle: Handle<Expression>,
         coordinate: Value,
+        array_index_handle: Option<Handle<Expression>>,
     ) -> Value {
         let Value::Image {
             name,
@@ -703,7 +706,7 @@ impl Evaluator<'_> {
                 .collect(),
             _ => Vec::new(),
         };
-        let relation_mask = frame
+        let mut relation_mask = frame
             .relations
             .get(&coordinate_handle)
             .and_then(|relation| match relation {
@@ -716,6 +719,40 @@ impl Evaluator<'_> {
                 _ => None,
             })
             .unwrap_or(0);
+        if let Some(array_index) = array_index_handle {
+            let layer_relation = frame
+                .relations
+                .get(&array_index)
+                .cloned()
+                .or_else(|| {
+                    self.place_of_expr(function_ref, array_index)
+                        .and_then(|place| frame.place_relations.get(&place).cloned())
+                })
+                .or_else(|| {
+                    let function = function_ref.function(self.module);
+                    let Expression::As { expr, .. } = function.expressions[array_index] else {
+                        return None;
+                    };
+                    frame.relations.get(&expr).cloned().or_else(|| {
+                        self.place_of_expr(function_ref, expr)
+                            .and_then(|place| frame.place_relations.get(&place).cloned())
+                    })
+                });
+            let layer_fits_signed_index = coordinates
+                .last()
+                .is_some_and(|&(lo, hi)| lo >= 0 && hi <= i32::MAX as i64);
+            let layer_axis = dimensions.len().saturating_sub(1);
+            let layer_bit = 1u8 << layer_axis;
+            let layer_axis_is_proven = match layer_relation {
+                Some(Relation::InImageAxes(image, mask)) => {
+                    self.same_dimensions(&image, &name) && mask & layer_bit != 0
+                }
+                _ => false,
+            };
+            if layer_fits_signed_index && layer_axis_is_proven {
+                relation_mask |= layer_bit;
+            }
+        }
         let in_bounds = coordinates.len() == dimensions.len()
             && coordinates.iter().zip(&dimensions).enumerate().all(
                 |(axis, (&(lo, hi), &(dim_lo, _)))| {
@@ -729,10 +766,12 @@ impl Evaluator<'_> {
                 handle,
                 "possible_oob",
                 &format!(
-                    "textureLoad coordinate is not proved in bounds; image={name:?}, expr={:?}, relation={:?}, place_relation={:?}",
+                    "textureLoad coordinate is not proved in bounds; image={name:?}, coordinates={coordinates:?}, dimensions={dimensions:?}, relation_mask={relation_mask:#05b}, expr={:?}, relation={:?}, place_relation={:?}, array_index={:?}, array_relation={:?}",
                     function_ref.function(self.module).expressions[coordinate_handle],
                     frame.relations.get(&coordinate_handle),
-                    place.and_then(|place| frame.place_relations.get(&place))
+                    place.and_then(|place| frame.place_relations.get(&place)),
+                    array_index_handle.map(|index| &function_ref.function(self.module).expressions[index]),
+                    array_index_handle.and_then(|index| frame.relations.get(&index))
                 ),
             );
         }
@@ -1145,6 +1184,14 @@ impl Evaluator<'_> {
             });
             let component_image = match relation {
                 Some(Relation::ImageUpperIndex(image)) => Some(image),
+                Some(Relation::ImageUpperIndexAxis(image, bound_axis)) if bound_axis == axis => {
+                    Some(image)
+                }
+                Some(Relation::InImageAxes(image, component_mask))
+                    if component_mask & (1u8.checked_shl(axis as u32).unwrap_or(0)) != 0 =>
+                {
+                    Some(image)
+                }
                 Some(Relation::LessThan(bound)) => {
                     self.image_with_symbolic_axis_bound(function_ref, &bound, axis)
                 }
@@ -1519,7 +1566,7 @@ impl Evaluator<'_> {
                         None,
                     ));
                 }
-                Some("intersect_shadow_ray") => {
+                Some("intersect_shadow_ray" | "intersect_ibl_occlusion_ray") => {
                     return Some((
                         Value::Bool {
                             can_false: true,
@@ -1574,11 +1621,12 @@ impl Evaluator<'_> {
                 | "compute_triplanar_weights"
                 | "normalize_for_shadow"
                 | "select_cascade_terrain"
-                | "chebyshev_upper_bound_terrain"
+                | "chebyshev_upper_bound_visibility"
                 | "reduce_light_leak_terrain"
                 | "sample_shadow_evsm_terrain"
                 | "sample_shadow_pcf_terrain"
                 | "debug_shadow_with_vis"
+                | "normalize_aov_depth"
                 | "saturate" => (0.0, 1.0),
                 "calculate_pbr_brdf_split_roughness"
                 | "eval_brdf"
@@ -1598,8 +1646,10 @@ impl Evaluator<'_> {
                 "det_sqrt" | "det_rcp" | "det_div" | "det_pow" | "det_exp" | "det_log2" => {
                     (0.0, 65_504.0)
                 }
-                "det_normalize2" | "det_normalize3" | "det_reflect3" | "det_cross3"
-                | "det_mat3_mul_vec3" | "det_mat4_mul_vec4" => (-65_504.0, 65_504.0),
+                "det_normalize2" | "det_normalize3" => (-1.01, 1.01),
+                "det_reflect3" | "det_cross3" | "det_mat3_mul_vec3" | "det_mat4_mul_vec4" => {
+                    (-65_504.0, 65_504.0)
+                }
                 _ => return None,
             };
             let result = callee.result.as_ref()?;

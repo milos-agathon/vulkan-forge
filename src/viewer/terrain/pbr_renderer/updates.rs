@@ -40,7 +40,11 @@ impl ViewerTerrainPbrConfig {
         }
         if let Some(t) = shadow_technique {
             let t_lower = t.to_lowercase();
-            if ["none", "hard", "pcf", "pcss", "vsm", "evsm", "msm"].contains(&t_lower.as_str()) {
+            let supported = t_lower == "none"
+                || crate::lighting::types::ShadowTechnique::from_name(&t_lower).is_some_and(
+                    |technique| technique != crate::lighting::types::ShadowTechnique::CSM,
+                );
+            if supported {
                 self.shadow_technique = t_lower;
             }
         }

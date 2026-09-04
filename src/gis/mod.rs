@@ -914,7 +914,7 @@ pub(crate) fn extract_crs(crs: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Crs
         .map_err(|_| GisError::InvalidCrs("crs must be a string, dict, or None".to_string()))?;
     if let Some(method) = dict.get_item("method")? {
         use crate::geo::projections::{
-            aea::AlbersEqualArea, lcc::LambertConformal2Sp, merc::MercatorA,
+            aea::AlbersEqualArea, eqc::Equirectangular, lcc::LambertConformal2Sp, merc::MercatorA,
             stere::PolarStereographicA, tmerc::TransverseMercator, Ellipsoid, ProjectionDefinition,
         };
         let method = method
@@ -928,6 +928,24 @@ pub(crate) fn extract_crs(crs: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Crs
                 .and_then(|v| v.extract())
         };
         let p = match method.as_str() {
+            "eqc" | "1028" | "1029" | "planetocentric_eqc" => {
+                let projection = Equirectangular {
+                    ellipsoid: Ellipsoid {
+                        a: number("a")?,
+                        f: 1.0 / number("inv_f")?,
+                    },
+                    lat0_deg: number("lat0")?,
+                    lon0_deg: number("lon0")?,
+                    lat_ts_deg: number("lat_ts")?,
+                    false_easting: number("false_easting")?,
+                    false_northing: number("false_northing")?,
+                };
+                if method == "planetocentric_eqc" {
+                    ProjectionDefinition::PlanetocentricEquirectangular(projection)
+                } else {
+                    ProjectionDefinition::Equirectangular(projection)
+                }
+            }
             "tmerc" | "9807" => ProjectionDefinition::TransverseMercator(TransverseMercator {
                 ellipsoid: Ellipsoid {
                     a: number("a")?,
@@ -963,17 +981,24 @@ pub(crate) fn extract_crs(crs: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Crs
                 easting_f: number("false_easting")?,
                 northing_f: number("false_northing")?,
             }),
-            "stere_a" | "9810" => ProjectionDefinition::PolarStereographicA(PolarStereographicA {
-                ellipsoid: Ellipsoid {
-                    a: number("a")?,
-                    f: 1.0 / number("inv_f")?,
-                },
-                lat0_deg: number("lat0")?,
-                lon0_deg: number("lon0")?,
-                k0: number("k0")?,
-                false_easting: number("false_easting")?,
-                false_northing: number("false_northing")?,
-            }),
+            "stere_a" | "9810" | "planetocentric_stere_a" => {
+                let projection = PolarStereographicA {
+                    ellipsoid: Ellipsoid {
+                        a: number("a")?,
+                        f: 1.0 / number("inv_f")?,
+                    },
+                    lat0_deg: number("lat0")?,
+                    lon0_deg: number("lon0")?,
+                    k0: number("k0")?,
+                    false_easting: number("false_easting")?,
+                    false_northing: number("false_northing")?,
+                };
+                if method == "planetocentric_stere_a" {
+                    ProjectionDefinition::PlanetocentricPolarStereographicA(projection)
+                } else {
+                    ProjectionDefinition::PolarStereographicA(projection)
+                }
+            }
             "merc_a" | "9804" => ProjectionDefinition::MercatorA(MercatorA {
                 ellipsoid: Ellipsoid {
                     a: number("a")?,
@@ -998,9 +1023,9 @@ pub(crate) fn extract_crs(crs: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Crs
         let key = key
             .extract::<String>()
             .map_err(|_| GisError::InvalidCrs("CRS dict keys must be strings".to_string()))?;
-        if !matches!(key.as_str(), "name" | "code") {
+        if !matches!(key.as_str(), "name" | "code" | "wkt") {
             return Err(GisError::InvalidCrs(format!(
-                "unsupported CRS dict key {key:?}; use name/code"
+                "unsupported CRS dict key {key:?}; use name/code or wkt"
             ))
             .into());
         }
@@ -1013,7 +1038,21 @@ pub(crate) fn extract_crs(crs: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Crs
         .get_item("code")?
         .map(|value| py_value_to_string(&value))
         .transpose()?;
-    CrsSpec::from_parts(authority, code, None)
+    let wkt = dict
+        .get_item("wkt")?
+        .map(|value| py_value_to_string(&value))
+        .transpose()?;
+    if wkt.is_some()
+        && !authority
+            .as_deref()
+            .is_some_and(|name| name.trim().eq_ignore_ascii_case("IAU"))
+    {
+        return Err(GisError::InvalidCrs(
+            "CRS dict wkt is only accepted alongside an IAU name/code".to_string(),
+        )
+        .into());
+    }
+    CrsSpec::from_parts(authority, code, wkt)
         .map(Some)
         .map_err(Into::into)
 }

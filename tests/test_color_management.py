@@ -104,13 +104,16 @@ def test_gpu_tonemap_loaders_use_common_source() -> None:
     loaders = {
         ROOT / "src" / "pipeline" / "hdr_offscreen" / "pipeline.rs": common,
         ROOT / "src" / "terrain" / "renderer" / "offline.rs": common,
-        ROOT / "src" / "shader_sources.rs": common,
         ROOT / "src" / "terrain" / "renderer" / "pipeline_cache.rs": "shader_sources::terrain",
-        ROOT / "src" / "pipeline" / "pbr" / "rendering.rs": common,
+        ROOT / "src" / "pipeline" / "pbr" / "rendering.rs": "shader_sources::pbr",
         ROOT / "src" / "pipeline" / "pbr" / "tone_mapping.rs": common,
     }
     for path, needle in loaders.items():
         assert needle in _read(path), f"{path} does not load shared tonemap WGSL"
+
+    centralized = _read(ROOT / "src" / "shader_sources.rs")
+    pbr_loader = centralized.split("fn pbr()", 1)[1].split("#[cfg(test)]", 1)[0]
+    assert common in pbr_loader, "shader_sources::pbr omits shared tonemap WGSL"
 
 
 def test_cpu_adjudication_resolver_has_an_explicit_matching_contract() -> None:

@@ -132,6 +132,10 @@ impl Viewer {
         };
 
         let frame = self.current_frame_camera();
+        let snapshot_sky_ready = self.sky_enabled
+            && terrain_snap_size.is_some_and(|(width, height)| {
+                self.encode_snapshot_sky(&mut encoder, width, height, frame)
+            });
         if let Some(mut tv) = self.terrain_viewer.take() {
             if tv.has_terrain() {
                 eprintln!("[DEBUG main_loop] terrain_viewer path, has_terrain=true, snapshot_request={:?}, terrain_snap_size={:?}",
@@ -147,6 +151,11 @@ impl Viewer {
                     self.selected_feature_id,
                     frame,
                 );
+                if terrain_rendered && self.sky_enabled {
+                    if let Some(depth_view) = tv.screen_depth_view() {
+                        self.present_sky_output(&mut encoder, view, Some(depth_view));
+                    }
+                }
 
                 // Then render to offscreen texture at snapshot resolution (if requested)
                 // This must be LAST so the uniform buffer has the correct aspect ratio for the snapshot
@@ -155,17 +164,28 @@ impl Viewer {
                     if tv.pbr_config.motion_blur.enabled && tv.pbr_config.motion_blur.samples > 1 {
                         // Motion blur handles its own encoder internally
                         self.queue.submit(std::iter::once(encoder.finish()));
-                        if let Some(tex) =
-                            tv.render_with_motion_blur(self.config.format, snap_w, snap_h, frame)
-                        {
-                            self.pending_snapshot_tex = Some(tex);
-                        }
+                        let motion_blur_tex =
+                            tv.render_with_motion_blur(self.config.format, snap_w, snap_h, frame);
                         // Create a new encoder for any remaining work
                         encoder =
                             self.device
                                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                                     label: Some("viewer.render.post_motion_blur"),
                                 });
+                        if let Some(tex) = motion_blur_tex {
+                            if snapshot_sky_ready {
+                                if let Some(depth_view) = tv.snapshot_depth_view() {
+                                    let color_view =
+                                        tex.create_view(&wgpu::TextureViewDescriptor::default());
+                                    self.present_snapshot_sky(
+                                        &mut encoder,
+                                        &color_view,
+                                        Some(&depth_view),
+                                    );
+                                }
+                            }
+                            self.pending_snapshot_tex = Some(tex);
+                        }
                     } else {
                         if let Some(tex) = tv.render_to_texture(
                             &mut encoder,
@@ -175,6 +195,17 @@ impl Viewer {
                             self.selected_feature_id,
                             frame,
                         ) {
+                            if snapshot_sky_ready {
+                                if let Some(depth_view) = tv.snapshot_depth_view() {
+                                    let color_view =
+                                        tex.create_view(&wgpu::TextureViewDescriptor::default());
+                                    self.present_snapshot_sky(
+                                        &mut encoder,
+                                        &color_view,
+                                        Some(&depth_view),
+                                    );
+                                }
+                            }
                             self.pending_snapshot_tex = Some(tex);
                         }
                     }
@@ -219,8 +250,16 @@ impl Viewer {
 
         #[cfg(feature = "extension-module")]
         if !terrain_rendered {
-            if let Some(ref mut scene) = self.terrain_scene {
-                if scene.has_viewer_terrain() {
+            let has_viewer_terrain = self
+                .terrain_scene
+                .as_ref()
+                .is_some_and(crate::terrain::TerrainScene::has_viewer_terrain);
+            if has_viewer_terrain {
+                let sky_prefilled = self.sky_enabled;
+                if sky_prefilled {
+                    self.present_sky_output(&mut encoder, view, None);
+                }
+                if let Some(mut scene) = self.terrain_scene.take() {
                     // Render terrain to swapchain view at normal resolution
                     terrain_rendered = scene.render_viewer_terrain(
                         &mut encoder,
@@ -228,6 +267,7 @@ impl Viewer {
                         self.config.format,
                         self.config.width,
                         self.config.height,
+                        sky_prefilled,
                     );
 
                     // If snapshot requested, also render to offscreen texture at snapshot dimensions
@@ -254,12 +294,18 @@ impl Viewer {
                                 let snap_view =
                                     snap_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
+                                let snapshot_sky_prefilled = sky_prefilled && snapshot_sky_ready;
+                                if snapshot_sky_prefilled {
+                                    self.present_snapshot_sky(&mut encoder, &snap_view, None);
+                                }
+
                                 scene.render_viewer_terrain(
                                     &mut encoder,
                                     &snap_view,
                                     self.config.format,
                                     snap_w,
                                     snap_h,
+                                    snapshot_sky_prefilled,
                                 );
 
                                 self.pending_snapshot_tex = Some(snap_tex);
@@ -269,6 +315,7 @@ impl Viewer {
                             }
                         }
                     }
+                    self.terrain_scene = Some(scene);
                 }
             }
         }

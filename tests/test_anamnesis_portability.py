@@ -38,6 +38,7 @@ def test_ci_portability_jobs_use_available_physical_gpu_runner():
     assert "name: wheels-windows" in seed_job
     assert "--producer-backend vulkan --consumer-backend dx12" in seed_job
     assert "--machine-id-file" in seed_job
+    assert "terra_determinata_v1.dx12.sha256" in consumer_job
     assert "--runner-name '${{ runner.name }}'" in seed_job
     assert "metal" not in seed_job.lower()
 
@@ -162,6 +163,8 @@ def test_portable_store_hits_and_capability_mismatch_misses(tmp_path):
         str(record),
         "--consumer-frame-blob",
         str(consumer_blob),
+        "--consumer-golden",
+        str(golden),
         "--consumer-adapter-record",
         str(consumer_adapter),
         "--machine-id-file",
@@ -173,10 +176,10 @@ def test_portable_store_hits_and_capability_mismatch_misses(tmp_path):
 
     assert seeded["misses"] > 0
     assert checked["hit_rate"] == 1.0
-    assert checked["hashes_match"] is True
+    assert checked["backend_goldens_match"] is True
     assert checked["distinct_machine"] is False
     assert mismatched["hit_rate"] == 0.0
-    assert mismatched["hashes_match"] is True
+    assert mismatched["cache_isolated"] is True
     assert mismatched["mismatch_dimension"] == "compatibility_profile"
 
 

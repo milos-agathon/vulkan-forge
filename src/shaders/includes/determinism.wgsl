@@ -68,16 +68,6 @@
 //  - fresnel/split-sum mul-add chains                               [C]
 //  - mip_level = r*r*9.0                                            [C]
 //
-// src/shaders/csm.wgsl
-//  - calculate_depth_bias: normalize(light_dir), dot(n, l),
-//    sqrt argument n_dot_l*n_dot_l                                  [R][C]
-//  - world_to_light_space: mat4 x mat4 x vec4 chain                 [R]
-//  - select_cascade: float boundary compare (ULP flip at edges)     [R]
-//  - sample_shadow_pcf: += accumulation with data-dependent tap set [R]
-//  - sample_shadow_poisson: += accumulation (order already fixed)   [R]
-//  - sample_shadow_evsm: exp(+-c*depth) warps                       [T]
-//  - smooth_cascade_transition / debug paths: mix()                 [C]
-//
 // src/shaders/terrain_pbr_pom.wgsl (fs hot path; ~92 sites total)
 //  - normal reconstruction/blend: normalize() at 1578,1660,1682,
 //    1694,1976-1978,2027,2038,2142,2146,2178-2232,2738,2783,3044,

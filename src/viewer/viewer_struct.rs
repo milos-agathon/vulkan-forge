@@ -35,6 +35,17 @@ use super::viewer_config::{FpsCounter, ViewerConfig};
 use super::viewer_enums::{CaptureKind, FogMode, VizMode};
 use super::viewer_types::FrameCamera;
 
+pub(crate) struct SkySnapshotResources {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) camera: TrackedBuffer,
+    pub(crate) _output: TrackedTexture,
+    pub(crate) output_view: TextureView,
+    pub(crate) compute_bind_group: BindGroup,
+    pub(crate) camera_bind_group: BindGroup,
+    pub(crate) present_bind_group: BindGroup,
+}
+
 pub struct Viewer {
     pub(crate) window: Arc<Window>,
     pub(crate) surface: Surface<'static>,
@@ -130,7 +141,13 @@ pub struct Viewer {
     pub(crate) gi_ssgi_weight: f32,
     pub(crate) gi_ssr_weight: f32,
     // Lit params (exposed via :lit-* commands)
+    pub(crate) lit_sun_direction_ws: [f32; 3],
+    pub(crate) sky_sun_direction_ws: [f32; 3],
     pub(crate) lit_sun_intensity: f32,
+    pub(crate) lit_directional_scale: f32,
+    pub(crate) astro_observation_active: bool,
+    pub(crate) astro_observation_revision: u64,
+    pub(crate) astro_terrain_revision: u64,
     pub(crate) lit_ibl_intensity: f32,
     pub(crate) lit_use_ibl: bool,
     pub(crate) lit_ibl_rotation_deg: f32,
@@ -182,8 +199,20 @@ pub struct Viewer {
     pub(crate) sky_camera: TrackedBuffer,
     pub(crate) sky_output: TrackedTexture,
     pub(crate) sky_output_view: TextureView,
+    pub(crate) sky_present_bind_group_layout: BindGroupLayout,
+    pub(crate) sky_present_depth_pipeline: RenderPipeline,
+    pub(crate) sky_present_flat_pipeline: RenderPipeline,
+    pub(crate) sky_present_sampler: Sampler,
+    pub(crate) night_pipeline: RenderPipeline,
+    pub(crate) night_instances: TrackedBuffer,
+    pub(crate) night_bind_group: BindGroup,
+    pub(crate) _night_moon_texture: TrackedTexture,
+    pub(crate) night_instance_count: u32,
+    pub(crate) astro_night_revision: u64,
     pub(crate) sky_bg0_cache: RefCell<Option<BindGroup>>,
     pub(crate) sky_bg1_cache: RefCell<Option<BindGroup>>,
+    pub(crate) sky_present_bg_cache: RefCell<Option<BindGroup>>,
+    pub(crate) sky_snapshot_cache: Option<SkySnapshotResources>,
     pub(crate) sky_enabled: bool,
 
     // P6: Fog rendering resources and parameters

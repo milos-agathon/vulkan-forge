@@ -14,6 +14,7 @@ from forge3d.determinism import (
     write_canonical_hdr,
 )
 from forge3d.helpers.offscreen import render_offscreen_rgba
+from forge3d.terrain_params import ShadowSettings
 
 
 def test_native_recompute_control_is_required_on_physical_gpu_ci():
@@ -21,7 +22,7 @@ def test_native_recompute_control_is_required_on_physical_gpu_ci():
         Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
     ).read_text(encoding="utf-8")
     production_job = workflow.split("  test-anamnesis-production:", 1)[1].split(
-        "\n  build-docs:", 1
+        "\n  # ============================================================================\n  # Hosted determinism families", 1
     )[0]
     required_fragments = (
         "runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]",
@@ -32,9 +33,21 @@ def test_native_recompute_control_is_required_on_physical_gpu_ci():
         "scripts/assert_junit_zero_skips.py",
         "anamnesis-p0-adapter.json",
         '$actual | Set-Content "$env:RUNNER_TEMP/anamnesis-checked-out-head.txt"',
+        "Get-PSDrive -PSProvider FileSystem",
+        "Sort-Object Free -Descending",
+        '$scratchScope = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_JOB"',
+        "FORGE3D_ANAMNESIS_SCRATCH_DIR",
+        "FORGE3D_ANAMNESIS_BASE_TEMP",
+        '--basetemp="$env:FORGE3D_ANAMNESIS_BASE_TEMP"',
+        "name: Clean ANAMNESIS scratch",
+        "(Split-Path -Leaf $parentDir) -ne 'forge3d-ci-scratch'",
     )
     for fragment in required_fragments:
         assert fragment in production_job
+    assert production_job.count("--basetemp=") == 1
+    assert production_job.index(
+        "name: Upload ANAMNESIS production evidence"
+    ) < production_job.index("name: Clean ANAMNESIS scratch")
 
 
 def test_cache_none_is_byte_identical_to_enabled_cold_render(tmp_path):
@@ -326,15 +339,16 @@ def test_native_terrain_cache_restores_all_graph_passes(tmp_path):
     assert second_report["bytes_written"] == 0
     assert second_report["hit_rate"] == 1.0
     assert second_report["graph_command_submissions"] == 0
-    assert camera_changed_report["hits"] == ["terrain.shadow"]
+    assert camera_changed_report["hits"] == []
     assert camera_changed_report["misses"] == [
         "terrain.prepare",
+        "terrain.shadow",
         "terrain.forward",
         "terrain.resolve",
     ]
-    assert camera_changed_report["bytes_read"] > 0
+    assert camera_changed_report["bytes_read"] == 0
     assert camera_changed_report["bytes_written"] > 0
-    assert camera_changed_report["graph_command_submissions"] == 4
+    assert camera_changed_report["graph_command_submissions"] == 6
     assert camera_changed.tobytes() != second.tobytes()
     assert camera_restored_report["hits"] == pass_labels
     assert camera_restored_report["misses"] == []
@@ -346,3 +360,31 @@ def test_native_terrain_cache_restores_all_graph_passes(tmp_path):
     assert changed_report["hit_rate"] == 0.0
     assert changed_report["graph_command_submissions"] == 6
     assert changed.tobytes() != second.tobytes()
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    os.environ.get("FORGE3D_RUN_GPU_ANAMNESIS") != "1",
+    reason="set FORGE3D_RUN_GPU_ANAMNESIS=1 on a hardware-backed runner",
+)
+def test_native_terrain_cache_rejects_moment_shadow_techniques(tmp_path):
+    hdr_path = tmp_path / "environment.hdr"
+    write_canonical_hdr(str(hdr_path))
+    renderer = f3d.TerrainRenderer(f3d.Session(window=False))
+    material_set = f3d.MaterialSet.terrain_default()
+    env_maps = f3d.IBL.from_hdr(str(hdr_path), intensity=1.0)
+    config = _canonical_params_config()(64, 64)
+    config.shadows = ShadowSettings(
+        True, "VSM", 512, 2, 250.0, 1.0, 0.8, 0.002, 0.001, 0.3, 1e-4, 0.5, 9.0, 0.9
+    )
+    params = f3d.TerrainRenderParams(config)
+    heightmap = np.ascontiguousarray(canonical_heightmap(), dtype=np.float32)
+
+    with pytest.raises(RuntimeError, match="rejects moment-shadow techniques"):
+        renderer.render_terrain_pbr_pom(
+            material_set,
+            env_maps,
+            params,
+            heightmap,
+            cache=tmp_path / "native-vsm",
+        )

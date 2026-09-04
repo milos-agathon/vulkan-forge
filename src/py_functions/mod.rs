@@ -1,4 +1,6 @@
 pub mod adjudication;
+pub mod astro;
+pub mod atmosphere;
 pub mod brdf;
 pub mod codec;
 pub mod csm;
@@ -15,6 +17,8 @@ pub mod vector;
 pub mod viewer;
 
 pub(crate) use adjudication::*;
+pub(crate) use astro::*;
+pub(crate) use atmosphere::*;
 pub(crate) use brdf::*;
 pub(crate) use codec::*;
 pub(crate) use csm::*;

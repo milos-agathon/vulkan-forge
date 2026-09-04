@@ -133,6 +133,31 @@ impl TerrainRenderParams {
         &self.camera_mode
     }
 
+    #[getter]
+    pub fn culling(&self) -> &str {
+        &self.culling
+    }
+
+    #[getter]
+    pub fn shading(&self) -> &str {
+        &self.shading
+    }
+
+    #[getter]
+    pub fn vt_store(&self) -> Option<String> {
+        self.vt_store_path.clone()
+    }
+
+    #[getter]
+    pub fn prefetch_horizon_ms(&self) -> f32 {
+        self.prefetch_horizon_ms
+    }
+
+    #[getter]
+    pub fn vt_upload_budget_bytes(&self) -> u64 {
+        self.vt_upload_budget_bytes
+    }
+
     /// P7: Debug mode for projection probes (0=normal, 40=view-depth, 41=NDC depth, 42=view-pos XYZ)
     #[getter]
     pub fn debug_mode(&self) -> u32 {

@@ -240,7 +240,19 @@ class ViewerHandle:
         if not response.get("ok", False):
             error_msg = response.get("error", "Unknown error")
             raise ViewerError(f"Viewer command failed: {error_msg}")
-        
+        command_name = cmd.get("cmd")
+        overrides_observation_sun = command_name in {"lit_sun", "set_terrain_sun"}
+        if command_name == "set_terrain":
+            overrides_observation_sun = any(
+                cmd.get(key) is not None
+                for key in ("sun_azimuth", "sun_elevation", "sun_intensity")
+            )
+        if overrides_observation_sun:
+            from . import sky
+
+            active_viewer = sky._get_active_viewer()
+            if active_viewer is None or active_viewer is self:
+                sky._clear_observation_replay()
         return response
 
     def send_ipc(self, cmd: Dict[str, Any]) -> Dict[str, Any]:
@@ -1099,10 +1111,37 @@ class ViewerHandle:
     
     def set_sun(self, azimuth_deg: float, elevation_deg: float) -> None:
         """Set sun direction (azimuth and elevation in degrees)."""
-        self._send_command({
+        command = {
             "cmd": "lit_sun",
             "azimuth_deg": float(azimuth_deg),
             "elevation_deg": float(elevation_deg),
+        }
+        self._send_command(command)
+        self._send_command({
+            "cmd": "set_terrain_sun",
+            "azimuth_deg": command["azimuth_deg"],
+            "elevation_deg": command["elevation_deg"],
+            "intensity": 1.0,
+            "source": "manual_angles",
+        })
+
+    def set_sun_time(self, solar_time: "Any", intensity: float = 1.0) -> None:
+        """Set the terrain sun from a :class:`forge3d.geo.SolarTime`."""
+        from .geo import _coerce_solar_time
+
+        solar_time = _coerce_solar_time(solar_time)
+        position = solar_time.position()
+        self._send_command({
+            "cmd": "lit_sun",
+            "azimuth_deg": float(position["azimuth_deg"]),
+            "elevation_deg": float(position["apparent_elevation_deg"]),
+        })
+        self._send_command({
+            "cmd": "set_terrain_sun",
+            "azimuth_deg": float(position["azimuth_deg"]),
+            "elevation_deg": float(position["apparent_elevation_deg"]),
+            "intensity": float(intensity),
+            "source": "solar_time",
         })
     
     def set_ibl(self, path: Union[str, Path], intensity: float = 1.0) -> None:
@@ -1319,6 +1358,12 @@ class ViewerHandle:
                         pass
             _cleanup_paths(self._cleanup_paths)
             self._cleanup_paths.clear()
+            from . import sky
+
+            try:
+                sky._remove_active_viewer(self)
+            except Exception:
+                pass
     
     def __enter__(self) -> "ViewerHandle":
         return self
@@ -1458,6 +1503,13 @@ def open_viewer_async(
             cleanup_paths=cleanup_paths,
         )
         handle._stdout_drain_thread = stdout_thread
+        from . import sky
+
+        try:
+            sky._set_active_viewer(handle)
+        except Exception:
+            handle.close()
+            raise
         return handle
     except Exception:
         _cleanup_paths(cleanup_paths)
@@ -1502,63 +1554,47 @@ def open_viewer(
     """
     if obj_path is not None and gltf_path is not None:
         raise ValueError("obj_path and gltf_path are mutually exclusive")
-    
-    binary = _find_viewer_binary()
-    
-    # Build command line
-    cmd = [
-        binary,
-        "--size", f"{width}x{height}",
-        "--fov", str(fov_deg),
-    ]
-    
-    if obj_path is not None:
-        cmd.extend(["--obj", str(obj_path)])
-    if gltf_path is not None:
-        cmd.extend(["--gltf", str(gltf_path)])
-    if snapshot_path is not None:
-        cmd.extend(["--snapshot", snapshot_path])
-        if snapshot_width is not None and snapshot_height is not None:
-            cmd.extend(["--snapshot-size", f"{snapshot_width}x{snapshot_height}"])
-    
-    # Start subprocess and wait for completion (blocking)
-    process = subprocess.Popen(
-        cmd,
-        stdout=None,  # Inherit stdout
-        stderr=None,  # Inherit stderr
-    )
-    
-    # If initial commands are provided, we need IPC
-    if initial_commands:
-        # For initial commands, use IPC mode
-        process.terminate()
-        process.wait()
-        
-        # Restart with IPC
-        handle = open_viewer_async(
-            width=width,
-            height=height,
-            title=title,
-            obj_path=obj_path,
-            gltf_path=gltf_path,
-            fov_deg=fov_deg,
-        )
-        
-        # Send initial commands
-        for cmd_str in initial_commands:
-            # Parse command string (e.g., ":gi gtao on")
-            if cmd_str.startswith(":"):
-                cmd_str = cmd_str[1:]  # Remove leading colon
-            # For now, just print the command - the viewer terminal handles these
-            print(f"[init] {cmd_str}")
-        
-        # Take snapshot if requested
+    from . import sky
+
+    if not initial_commands and not sky._has_observation_replay():
+        cmd = [
+            _find_viewer_binary(),
+            "--size",
+            f"{width}x{height}",
+            "--fov",
+            str(fov_deg),
+        ]
+        if obj_path is not None:
+            cmd.extend(["--obj", str(obj_path)])
+        if gltf_path is not None:
+            cmd.extend(["--gltf", str(gltf_path)])
         if snapshot_path is not None:
-            sw = snapshot_width or width
-            sh = snapshot_height or height
-            handle.snapshot(snapshot_path, width=sw, height=sh)
-        
-        # Wait for viewer to close
+            cmd.extend(["--snapshot", snapshot_path])
+            if snapshot_width is not None and snapshot_height is not None:
+                cmd.extend(
+                    ["--snapshot-size", f"{snapshot_width}x{snapshot_height}"]
+                )
+        return subprocess.Popen(cmd).wait()
+
+    handle = open_viewer_async(
+        width=width,
+        height=height,
+        title=title,
+        obj_path=obj_path,
+        gltf_path=gltf_path,
+        fov_deg=fov_deg,
+    )
+    try:
+        for command in initial_commands or ():
+            print(f"[init] {command.removeprefix(':')}")
+        if snapshot_path is not None:
+            handle.snapshot(
+                snapshot_path,
+                width=snapshot_width or width,
+                height=snapshot_height or height,
+            )
+            handle.close()
+            return 0
         return handle._process.wait()
-    
-    return process.wait()
+    finally:
+        handle.close()

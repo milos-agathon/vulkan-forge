@@ -225,13 +225,20 @@ def test_pinned_backend_ci_archives_full_dupla_proof() -> None:
     workflow = (ROOT / ".github" / "workflows" / "determinism-matrix.yml").read_text(
         encoding="utf-8"
     )
+    required_render = workflow.split("  render:\n", 1)[1].split(
+        "\n  # Optional Apple/Metal", 1
+    )[0]
+    optional_metal = workflow.split("  metal-diagnostic:\n", 1)[1].split(
+        "\n  wasm-policy:\n", 1
+    )[0]
     proof = (ROOT / "scripts" / "run_dupla_proof.py").read_text(encoding="utf-8")
     assert "Prove DUPLA precision" in workflow
     assert "WGPU_BACKENDS: ${{ matrix.backend }}" in workflow
     assert "run_dupla_proof.py" in workflow
     assert "dupla-proof-${{ matrix.leg }}.json" in workflow
     assert "--validate-artifacts hashes" in workflow
-    assert "continue-on-error" not in workflow
+    assert "continue-on-error" not in required_render
+    assert "continue-on-error: true" in optional_metal
     assert 'OPERATIONS = ("add", "mul", "div", "sqrt")' in proof
     assert "100_000_000" in proof
     assert "dd_jitter_demo(frames=1_000)" in proof

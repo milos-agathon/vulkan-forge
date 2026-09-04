@@ -60,17 +60,29 @@ pub(super) fn prove_wgsl(
             )
         })
         .collect();
+    let initializer_evaluator = Evaluator {
+        source,
+        module: &module,
+        info: &info,
+        contract,
+        alarms: Vec::new(),
+    };
     let globals = module
         .global_variables
         .iter()
         .map(|(_, global)| {
-            seed_value(
-                &module,
-                global.ty,
-                global.name.as_deref().unwrap_or(""),
-                contract,
-                None,
-            )
+            let name = global.name.as_deref().unwrap_or("");
+            let fallback = || seed_value(&module, global.ty, name, contract, None);
+            if contract.input(name).is_some() {
+                return fallback();
+            }
+            match global
+                .init
+                .map(|initializer| initializer_evaluator.eval_const(initializer))
+            {
+                Some(value) if !matches!(value, Value::Opaque) => value,
+                _ => fallback(),
+            }
         })
         .collect();
     let arg_abs_min = root

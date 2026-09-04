@@ -1,0 +1,8 @@
+# Effective UTC date and TAI-UTC seconds.
+# The final offset remains the deterministic model through SIDERA's 2050 ceiling.
+2000 1 1 32
+2006 1 1 33
+2009 1 1 34
+2012 7 1 35
+2015 7 1 36
+2017 1 1 37

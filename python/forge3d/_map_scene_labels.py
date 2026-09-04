@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -94,8 +95,18 @@ class _TerrainOcclusionSampler:
         viewport_size: tuple[float, float],
         bias: float = 0.0,
     ) -> None:
+        if (
+            len(viewport_size) != 2
+            or not all(math.isfinite(float(value)) and float(value) > 0.0 for value in viewport_size)
+        ):
+            raise ValueError("Terrain occlusion viewport dimensions must be finite and positive")
+        if not math.isfinite(float(bias)):
+            raise ValueError("Terrain occlusion bias must be finite")
         self.heightmap = heightmap
-        self.viewport_width, self.viewport_height = viewport_size
+        self.viewport_width, self.viewport_height = (
+            float(viewport_size[0]),
+            float(viewport_size[1]),
+        )
         self.bias = float(bias)
 
     def sample_label(
@@ -123,6 +134,7 @@ class _TerrainOcclusionSampler:
             "sample_pixel": [int(col), int(row)],
             "explicit_z": bool(explicit_z),
             "height_tested": height_tested,
+            "depth_authority": "deterministic_terrain_proxy",
         }
 
 
@@ -134,16 +146,121 @@ class _DepthOcclusionSampler:
         viewport_size: tuple[float, float],
         bias: float = 0.0,
         source: str = "mapscene_depth_aov",
+        authoritative: bool = True,
+        depth_convention: str | None = None,
+        depth_domain: Sequence[float] | None = None,
     ) -> None:
         import numpy as np
 
-        depth = np.asarray(depth_image, dtype=np.float32)
-        if depth.ndim != 2:
-            raise ValueError("Depth occlusion image must be a 2D array")
-        self.depth_image = depth
-        self.viewport_width, self.viewport_height = viewport_size
-        self.bias = float(bias)
+        from ._native import get_native_module
+
+        self._tracked_bytes = 0
+        self._closed = True
+        self._native_reservation = None
+        estimated_bytes = _depth_input_bytes(depth_image)
+        if estimated_bytes <= 0:
+            raise ValueError("Depth occlusion image must be nonempty")
+        native = get_native_module()
+        reserve = (
+            getattr(native, "_reserve_label_depth_host_allocation", None)
+            if native is not None
+            else None
+        )
+        if not callable(reserve):
+            raise RuntimeError(
+                "Authoritative native label-depth memory tracking is unavailable"
+            )
+        self._native_reservation = reserve(
+            int(estimated_bytes), "label_plan.compile.depth_visibility"
+        )
+        try:
+            depth = np.array(depth_image, dtype=np.float32, order="C", copy=True)
+            if depth.ndim != 2:
+                raise ValueError("Depth occlusion image must be a 2D array")
+            if depth.shape[0] == 0 or depth.shape[1] == 0:
+                raise ValueError("Depth occlusion image must be nonempty")
+            if not np.isfinite(depth).all():
+                raise ValueError("Depth occlusion image must contain only finite values")
+            convention = str(depth_convention or "").strip().lower()
+            if convention not in {
+                "normalized_device_depth",
+                "reverse_normalized_device_depth",
+                "linear_eye_depth",
+            }:
+                raise ValueError(
+                    "Depth occlusion requires an explicit supported depth_convention"
+                )
+            if isinstance(depth_domain, (str, bytes)):
+                raise ValueError(
+                    "Depth occlusion requires explicit depth_domain=[minimum, maximum]"
+                )
+            try:
+                if len(depth_domain) != 2:  # type: ignore[arg-type]
+                    raise ValueError
+                domain = (float(depth_domain[0]), float(depth_domain[1]))  # type: ignore[index]
+            except (TypeError, ValueError, IndexError):
+                raise ValueError(
+                    "Depth occlusion requires explicit depth_domain=[minimum, maximum]"
+                ) from None
+            if not all(np.isfinite(value) for value in domain) or domain[0] >= domain[1]:
+                raise ValueError("Depth occlusion depth_domain must be finite and increasing")
+            if float(depth.min()) < domain[0] or float(depth.max()) > domain[1]:
+                raise ValueError("Depth occlusion values must lie within depth_domain")
+            resolved_bias = float(bias)
+            if not np.isfinite(resolved_bias):
+                raise ValueError("Depth occlusion bias must be finite")
+            try:
+                if len(viewport_size) != 2:
+                    raise ValueError
+                resolved_viewport = (
+                    float(viewport_size[0]),
+                    float(viewport_size[1]),
+                )
+            except (TypeError, ValueError, IndexError):
+                raise ValueError(
+                    "Depth occlusion viewport dimensions must be finite and positive"
+                ) from None
+            if not all(
+                np.isfinite(value) and value > 0.0 for value in resolved_viewport
+            ):
+                raise ValueError(
+                    "Depth occlusion viewport dimensions must be finite and positive"
+                )
+            self.depth_image = depth
+            self._tracked_bytes = int(self.depth_image.nbytes)
+            if self._tracked_bytes != estimated_bytes:
+                raise ValueError(
+                    "Depth occlusion image must be a rectangular 2D float32-compatible array"
+                )
+        except Exception:
+            self._native_reservation.close()
+            self._native_reservation = None
+            raise
+        self._closed = False
+        self.viewport_width, self.viewport_height = resolved_viewport
+        self.bias = resolved_bias
         self.source = str(source or "mapscene_depth_aov")
+        self.authoritative = bool(authoritative)
+        self.depth_convention = convention
+        self.depth_domain = domain
+        self.requires_projected_anchor = True
+
+    def close(self) -> bool:
+        if self._closed:
+            return False
+        # Disable sampling and discard the owned array while the native
+        # reservation still covers its lifetime. Release the reservation last.
+        self._closed = True
+        self.depth_image = None
+        reservation = self._native_reservation
+        self._native_reservation = None
+        return bool(reservation.close()) if reservation is not None else False
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def sample_label(
         self,
@@ -153,20 +270,83 @@ class _DepthOcclusionSampler:
         label_id: str,
     ) -> Mapping[str, Any]:
         del label_id
+        if self._closed or self.depth_image is None:
+            raise RuntimeError("Depth occlusion sampler is closed")
+        projection_authority = str(record.get("projection_authority", "")).lower()
+        projected_convention = str(record.get("projected_depth_convention", "")).lower()
+        projected_domain = record.get("projected_depth_domain")
+        projected_depth = record.get(
+            "projected_depth", record.get("screen_depth", record.get("anchor_depth"))
+        )
+        if projected_depth is None and projection_authority in {
+            "deterministic",
+            "authoritative",
+            "deterministic_camera_projection",
+            "serialized_projected_anchor",
+        }:
+            projected_depth = coords[2] if len(coords) > 2 else None
+        try:
+            label_depth = float(projected_depth)
+        except (TypeError, ValueError):
+            label_depth = float("nan")
+        if (
+            projection_authority
+            not in {
+                "deterministic",
+                "authoritative",
+                "deterministic_camera_projection",
+                "serialized_projected_anchor",
+            }
+            or not all(math.isfinite(float(value)) for value in coords[:3])
+            or not math.isfinite(label_depth)
+        ):
+            return {
+                "source": self.source,
+                "visible": False,
+                "occlusion": "depth_aov",
+                "depth_tested": False,
+                "projection_authority_missing": True,
+                "depth_authority": (
+                    "pre_supplied_authoritative"
+                    if self.authoritative
+                    else "deterministic_depth_proxy"
+                ),
+            }
+        try:
+            normalized_projected_domain = tuple(float(value) for value in projected_domain)
+        except (TypeError, ValueError):
+            normalized_projected_domain = ()
+        if (
+            projected_convention != self.depth_convention
+            or normalized_projected_domain != self.depth_domain
+            or not (self.depth_domain[0] <= label_depth <= self.depth_domain[1])
+        ):
+            return {
+                "source": self.source,
+                "visible": False,
+                "occlusion": "depth_aov",
+                "depth_tested": False,
+                "depth_convention_incompatible": True,
+                "depth_convention": self.depth_convention,
+                "depth_domain": list(self.depth_domain),
+                "projected_depth_convention": projected_convention or None,
+                "projected_depth_domain": list(normalized_projected_domain),
+                "depth_authority": (
+                    "pre_supplied_authoritative"
+                    if self.authoritative
+                    else "deterministic_depth_proxy"
+                ),
+            }
         row_count, col_count = self.depth_image.shape
         col = _axis_to_height_index(float(coords[0]), self.viewport_width, col_count)
         row = _axis_to_height_index(float(coords[1]), self.viewport_height, row_count)
         scene_depth = float(self.depth_image[row, col])
         explicit_z = _coordinate_has_explicit_z(record)
-        projected_depth = record.get("projected_depth", record.get("screen_depth", record.get("anchor_depth")))
-        if explicit_z:
-            label_depth = float(coords[2]) if len(coords) > 2 else scene_depth
-        elif projected_depth is not None:
-            label_depth = float(projected_depth)
-        else:
-            label_depth = float(coords[2]) if len(coords) > 2 else scene_depth
         depth_tested = True
-        visible = label_depth <= scene_depth + self.bias
+        if self.depth_convention == "reverse_normalized_device_depth":
+            visible = label_depth >= scene_depth - self.bias
+        else:
+            visible = label_depth <= scene_depth + self.bias
         result: dict[str, Any] = {
             "scene_depth": scene_depth,
             "label_depth": label_depth,
@@ -177,6 +357,14 @@ class _DepthOcclusionSampler:
             "sample_pixel": [int(col), int(row)],
             "explicit_z": bool(explicit_z),
             "depth_tested": depth_tested,
+            "depth_convention": self.depth_convention,
+            "depth_domain": list(self.depth_domain),
+            "projection_authority": projection_authority or None,
+            "depth_authority": (
+                "pre_supplied_authoritative"
+                if self.authoritative
+                else "deterministic_depth_proxy"
+            ),
         }
         if not explicit_z:
             result["elevation"] = scene_depth
@@ -197,7 +385,14 @@ def _depth_occlusion_config(layer: "LabelLayer", terrain: "TerrainSource") -> Ma
         _metadata_dict(getattr(layer, "metadata", None)),
         _metadata_dict(getattr(terrain, "metadata", None)),
     ):
-        for key in ("depth_occlusion", "depth_aov", "depth_buffer", "depth_image"):
+        for key in (
+            "depth_occlusion",
+            "depth_aov",
+            "depth_buffer",
+            "depth_image",
+            "silhouette_depth",
+            "silhouette",
+        ):
             value = metadata.get(key)
             if value is None:
                 continue
@@ -214,6 +409,22 @@ def _depth_image_from_config(config: Mapping[str, Any]) -> Any | None:
     return None
 
 
+def _depth_input_bytes(value: Any) -> int:
+    """Exact byte envelope of the float32 compile-time depth allocation."""
+    shape = getattr(value, "shape", None)
+    if isinstance(shape, Sequence) and len(shape) == 2:
+        return max(0, int(shape[0])) * max(0, int(shape[1])) * 4
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        rows = len(value)
+        cols = 0
+        if rows:
+            first = value[0]
+            if isinstance(first, Sequence) and not isinstance(first, (str, bytes)):
+                cols = len(first)
+        return rows * cols * 4
+    return 0
+
+
 def _terrain_occlusion_sampler(
     layer: "LabelLayer",
     *,
@@ -227,15 +438,14 @@ def _terrain_occlusion_sampler(
         depth_image = _depth_image_from_config(depth_config)
         if depth_image is not None:
             bias_value = depth_config.get("bias", _label_occlusion_bias(layer))
-            try:
-                bias = float(bias_value)
-            except (TypeError, ValueError):
-                bias = _label_occlusion_bias(layer)
             return _DepthOcclusionSampler(
                 depth_image,
                 viewport_size=_recipe_output_size(recipe),
-                bias=bias,
+                bias=bias_value,
                 source=str(depth_config.get("source") or "mapscene_depth_aov"),
+                authoritative=bool(depth_config.get("authoritative", True)),
+                depth_convention=depth_config.get("depth_convention"),
+                depth_domain=depth_config.get("depth_domain"),
             )
     heightmap = _terrain_heightmap_array(terrain)
     if heightmap is None:
@@ -286,17 +496,22 @@ def _label_plan_from_layer(
         layer.labels or (),
         enabled=terrain_sampler is not None,
     )
-    return LabelPlan.compile(
-        labels=labels,
-        camera=recipe.camera,
-        viewport=recipe.output,
-        terrain=terrain_sampler if terrain_sampler is not None else terrain,
-        keepouts=keepouts,
-        priority_rules=layer.priority_rules or (),
-        typography=layer.typography or {},
-        glyph_atlas=layer.glyph_atlas,
-        seed=_label_plan_seed(recipe, layer),
-    )
+    try:
+        return LabelPlan.compile(
+            labels=labels,
+            camera=recipe.camera,
+            viewport=recipe.output,
+            terrain=terrain_sampler if terrain_sampler is not None else terrain,
+            keepouts=keepouts,
+            priority_rules=layer.priority_rules or (),
+            typography=layer.typography or {},
+            glyph_atlas=layer.glyph_atlas,
+            seed=_label_plan_seed(recipe, layer),
+        )
+    finally:
+        close = getattr(terrain_sampler, "close", None)
+        if callable(close):
+            close()
 
 
 def _diagnostic_for_layer(diagnostic: Diagnostic, layer_id: str) -> Diagnostic:

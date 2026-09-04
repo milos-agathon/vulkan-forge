@@ -201,6 +201,15 @@ impl CoverageBinner {
         geometry: &CoverageGeometry,
     ) -> Result<CoverageBins, RenderError> {
         let layout = BinLayout::measure(geometry)?;
+        self.prepare_compiled(device, geometry, layout)
+    }
+
+    pub(super) fn prepare_compiled(
+        &self,
+        device: &wgpu::Device,
+        geometry: &CoverageGeometry,
+        layout: BinLayout,
+    ) -> Result<CoverageBins, RenderError> {
         let zero_primitive = PrimitiveRecord::zeroed();
         let primitive_bytes: &[u8] = if geometry.primitives.is_empty() {
             bytemuck::bytes_of(&zero_primitive)

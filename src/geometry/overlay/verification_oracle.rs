@@ -15,6 +15,17 @@ pub(super) struct OracleReport {
     pub ratio: f64,
 }
 
+fn measure<T>(f: impl FnOnce() -> T) -> (T, f64) {
+    let start = Instant::now();
+    let value = f();
+    (value, start.elapsed().as_secs_f64() * 1_000.0)
+}
+
+fn median3(mut samples: [f64; 3]) -> f64 {
+    samples.sort_by(f64::total_cmp);
+    samples[1]
+}
+
 fn to_geo(value: &MultiPolygon) -> geo::MultiPolygon<f64> {
     geo::MultiPolygon(
         value
@@ -63,37 +74,48 @@ pub(super) fn run(cases: u64, seed: u64) -> OracleReport {
     let corpus = (0..cases)
         .map(|index| pair(index * 6, &mut rng))
         .collect::<Vec<_>>();
-    let exact_start = Instant::now();
-    let exact = corpus
-        .iter()
-        .map(|(left, right)| {
-            (
-                overlay(left, right, BooleanOp::Union).unwrap(),
-                overlay(left, right, BooleanOp::Intersection).unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let exact_ms = exact_start.elapsed().as_secs_f64() * 1_000.0;
+    let exact_run = || {
+        corpus
+            .iter()
+            .map(|(left, right)| {
+                (
+                    overlay(left, right, BooleanOp::Union).unwrap(),
+                    overlay(left, right, BooleanOp::Intersection).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let geo_run = || {
+        // Time the former runtime seam, not just `geo`'s internal sweep: the
+        // old path converted both inputs into geo-types and converted both
+        // results back before returning them to forge3d callers.
+        corpus
+            .iter()
+            .map(|(left, right)| {
+                let left = to_geo(left);
+                let right = to_geo(right);
+                assert!(left.is_valid() && right.is_valid());
+                let union = left.union(&right);
+                assert!(union.is_valid());
+                assert!(left.is_valid() && right.is_valid());
+                let intersection = left.intersection(&right);
+                assert!(intersection.is_valid());
+                (from_geo(&union), from_geo(&intersection))
+            })
+            .collect::<Vec<_>>()
+    };
 
-    let geo_start = Instant::now();
-    // Time the former runtime seam, not just `geo`'s internal sweep: the old
-    // path converted both inputs into geo-types and converted both results
-    // back before returning them to forge3d callers.
-    let geo = corpus
-        .iter()
-        .map(|(left, right)| {
-            let left = to_geo(left);
-            let right = to_geo(right);
-            assert!(left.is_valid() && right.is_valid());
-            let union = left.union(&right);
-            assert!(union.is_valid());
-            assert!(left.is_valid() && right.is_valid());
-            let intersection = left.intersection(&right);
-            assert!(intersection.is_valid());
-            (from_geo(&union), from_geo(&intersection))
-        })
-        .collect::<Vec<_>>();
-    let geo_ms = geo_start.elapsed().as_secs_f64() * 1_000.0;
+    // A one-shot wall-clock ratio is too sensitive to scheduler jitter for a
+    // hard cross-platform gate. Keep the 3x contract, but use an interleaved
+    // median of three complete runs so one noisy sample cannot decide it.
+    let (exact, exact_0) = measure(&exact_run);
+    let (geo, geo_0) = measure(&geo_run);
+    let (_, geo_1) = measure(&geo_run);
+    let (_, exact_1) = measure(&exact_run);
+    let (_, exact_2) = measure(&exact_run);
+    let (_, geo_2) = measure(&geo_run);
+    let exact_ms = median3([exact_0, exact_1, exact_2]);
+    let geo_ms = median3([geo_0, geo_1, geo_2]);
 
     let mut disagreements = 0;
     for ((left, right), ((union, intersection), geo_result)) in

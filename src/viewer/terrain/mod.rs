@@ -5,6 +5,7 @@
 pub mod denoise;
 mod dof;
 mod motion_blur;
+mod motion_blur_depth;
 pub mod overlay;
 mod pbr_renderer;
 mod post_process;

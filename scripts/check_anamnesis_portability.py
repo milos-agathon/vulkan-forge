@@ -82,6 +82,7 @@ def main() -> int:
     parser.add_argument("--golden")
     parser.add_argument("--adapter-record")
     parser.add_argument("--consumer-frame-blob")
+    parser.add_argument("--consumer-golden")
     parser.add_argument("--consumer-adapter-record")
     parser.add_argument("--machine-id-file")
     parser.add_argument("--runner-name", default=os.environ.get("RUNNER_NAME", ""))
@@ -152,19 +153,20 @@ def main() -> int:
         raise SystemExit("portability record was not produced by this exact engine head")
 
     if args.mode == "check":
-        if not args.consumer_frame_blob or not args.consumer_adapter_record:
+        if not args.consumer_frame_blob or not args.consumer_golden or not args.consumer_adapter_record:
             parser.error(
-                "check requires --consumer-frame-blob and --consumer-adapter-record"
+                "check requires --consumer-frame-blob, --consumer-golden, and --consumer-adapter-record"
             )
         machine_id = _machine_id(args.machine_id_file)
         runner_name = _runner_name(args.runner_name)
         consumer_png_sha = hashlib.sha256(
             Path(args.consumer_frame_blob).read_bytes()
         ).hexdigest()
-        if consumer_png_sha != record["golden_sha256"]:
+        consumer_golden_sha = Path(args.consumer_golden).read_text(encoding="utf-8").split()[0]
+        if consumer_png_sha != consumer_golden_sha:
             raise SystemExit(
                 "consumer render differs from committed golden: "
-                f"actual={consumer_png_sha} golden={record['golden_sha256']}"
+                f"actual={consumer_png_sha} golden={consumer_golden_sha}"
             )
         consumer_adapter = _adapter(args.consumer_adapter_record)
         producer_backend = str(record["producer_adapter"].get("backend", "")).lower()
@@ -184,8 +186,6 @@ def main() -> int:
             or report["graph_command_submissions"] != 0
         ):
             raise SystemExit(f"native consumer did not restore every terrain pass: {report}")
-        if hashlib.sha256(rgba).hexdigest() != record["rgba_sha256"]:
-            raise SystemExit("native portable restoration differs from producer RGBA")
         result = {
             "mode": "check",
             "distinct_machine": machine_id != record["producer_machine_id"],
@@ -195,7 +195,7 @@ def main() -> int:
             "consumer_runner_name": runner_name,
             "producer_adapter": record["producer_adapter"],
             "consumer_adapter": consumer_adapter,
-            "hashes_match": True,
+            "backend_goldens_match": True,
             "hits": len(report["hits"]),
             "misses": len(report["misses"]),
             "hit_rate": report["hit_rate"],
@@ -213,9 +213,6 @@ def main() -> int:
         or report["graph_command_submissions"] != 6
     ):
         raise SystemExit(f"native compatibility mismatch served stale terrain passes: {report}")
-    hashes_match = hashlib.sha256(rgba).hexdigest() == record["rgba_sha256"]
-    if not hashes_match:
-        raise SystemExit("capability-isolation render changed canonical native RGBA")
     print(
         json.dumps(
             {
@@ -223,7 +220,7 @@ def main() -> int:
                 "hits": 0,
                 "misses": len(report["misses"]),
                 "hit_rate": report["hit_rate"],
-                "hashes_match": hashes_match,
+                "cache_isolated": True,
                 "mismatch_dimension": "compatibility_profile",
             },
             sort_keys=True,

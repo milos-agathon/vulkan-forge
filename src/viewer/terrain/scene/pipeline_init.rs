@@ -1,6 +1,13 @@
 use super::*;
 use crate::core::resource_tracker::{tracked_create_buffer, tracked_create_texture};
 
+struct ShadowResources {
+    csm_renderer: CsmRenderer,
+    csm_uniform_buffer: crate::core::resource_tracker::TrackedBuffer,
+    moment_pass: Option<crate::shadows::MomentGenerationPass>,
+    moment_blur_pass: Option<crate::shadows::ShadowBlurPass>,
+}
+
 impl ViewerTerrainScene {
     pub fn init_wboit_pipeline(&mut self) {
         if self.wboit_compose_pipeline.is_some() {
@@ -121,21 +128,32 @@ impl ViewerTerrainScene {
     }
 
     /// P6.2: Initialize Shadow Mapping (CSM) resources
-    pub fn init_shadows(&mut self) {
+    pub fn init_shadows(&mut self) -> Result<()> {
         let desired_shadow_map_size = self.pbr_config.shadow_map_res.clamp(512, 8192);
+        let requires_moments =
+            crate::viewer::terrain::pbr_renderer::shadow_technique_requires_moments(
+                &self.pbr_config.shadow_technique,
+            );
+        self.init_shadows_for_config(desired_shadow_map_size, requires_moments)
+    }
+
+    pub(super) fn init_shadows_for_config(
+        &mut self,
+        desired_shadow_map_size: u32,
+        requires_moments: bool,
+    ) -> Result<()> {
         let desired_cascade_count = 4;
 
         if let Some(existing) = self.csm_renderer.as_ref() {
             if existing.config.shadow_map_size == desired_shadow_map_size
                 && existing.config.cascade_count == desired_cascade_count
+                && existing.config.enable_evsm == requires_moments
+                && (!requires_moments
+                    || (self.moment_pass.is_some() && self.moment_blur_pass.is_some()))
             {
-                return;
+                return Ok(());
             }
         }
-
-        self.csm_renderer = None;
-        self.csm_uniform_buffer = None;
-        self.moment_pass = None;
 
         // Create CSM renderer using the active PBR shadow resolution instead of
         // a hard-coded fallback so terrain shadows remain spatially stable at
@@ -149,35 +167,22 @@ impl ViewerTerrainScene {
             depth_bias: 0.0005,
             slope_bias: 0.001,
             peter_panning_offset: 0.0002,
-            enable_evsm: true, // P6.2: Enable moment maps for VSM/EVSM/MSM
+            enable_evsm: requires_moments,
             stabilize_cascades: true,
             cascade_blend_range: 0.1,
             debug_mode: shadow_debug_mode,
             ..Default::default()
         };
 
-        let csm = match CsmRenderer::new(&self.device, csm_config) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("[terrain_scene] failed to create CSM renderer: {e}");
-                crate::core::degradation::record_degradation(
-                    "allocation_fallback",
-                    "viewer.csm",
-                    "cascaded shadow maps disabled; terrain renders without dynamic shadows",
-                );
-                self.csm_renderer = None;
-                return;
-            }
-        };
+        let csm = CsmRenderer::new(&self.device, csm_config)?;
         println!(
             "[terrain_scene] CSM renderer created, shadow_map_size={}, has_moment_maps={}",
             csm.config.shadow_map_size,
             csm.evsm_maps.is_some()
         );
-        self.csm_renderer = Some(csm);
 
         // Create CSM uniform buffer - must match WGSL CsmUniforms struct size
-        let buffer = match tracked_create_buffer(
+        let buffer = tracked_create_buffer(
             &self.device,
             &wgpu::BufferDescriptor {
                 label: Some("terrain_viewer.csm_uniforms"),
@@ -185,50 +190,64 @@ impl ViewerTerrainScene {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, // ReadOnlyStorage in shader
                 mapped_at_creation: false,
             },
-        ) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("[terrain_scene] failed to allocate CSM uniform buffer: {e}");
-                crate::core::degradation::record_degradation(
-                    "allocation_fallback",
-                    "viewer.csm_uniform",
-                    "CSM uniform buffer unavailable; terrain shadows disabled",
-                );
-                self.csm_renderer = None;
-                return;
-            }
-        };
-        self.csm_uniform_buffer = Some(buffer);
+        )?;
 
         // Initialize MomentGenerationPass for VSM/EVSM/MSM techniques
-        self.moment_pass = match crate::shadows::MomentGenerationPass::new(&self.device) {
-            Ok(p) => Some(p),
-            Err(e) => {
-                eprintln!("[terrain_scene] failed to create moment generation pass: {e}");
-                crate::core::degradation::record_degradation(
-                    "allocation_fallback",
-                    "viewer.csm_moment",
-                    "VSM/EVSM/MSM moment maps unavailable; shadows fall back to hard PCF",
-                );
-                None
-            }
+        let moment_pass = if requires_moments {
+            Some(
+                crate::shadows::MomentGenerationPass::new(&self.device).map_err(|e| {
+                    anyhow::anyhow!("requested moment shadow technique is unavailable: {e}")
+                })?,
+            )
+        } else {
+            None
+        };
+        let moment_blur_pass = if requires_moments {
+            Some(
+                crate::shadows::ShadowBlurPass::new(&self.device).map_err(|e| {
+                    anyhow::anyhow!("requested moment shadow filtering is unavailable: {e}")
+                })?,
+            )
+        } else {
+            None
         };
 
-        println!("[terrain_scene] Shadows initialized (VSM/EVSM/MSM enabled)");
+        let replacement = ShadowResources {
+            csm_renderer: csm,
+            csm_uniform_buffer: buffer,
+            moment_pass,
+            moment_blur_pass,
+        };
+        // Bind groups retain views into the current tracked textures. Release
+        // the PBR and moment passes before dropping either atlas owner, then
+        // rebuild them against the replacements.
+        self.pbr_bind_group = None;
+        self.moment_pass = None;
+        self.moment_blur_pass = None;
+        self.csm_renderer = Some(replacement.csm_renderer);
+        self.csm_uniform_buffer = Some(replacement.csm_uniform_buffer);
+        self.moment_pass = replacement.moment_pass;
+        self.moment_blur_pass = replacement.moment_blur_pass;
+
+        println!("[terrain_scene] Shadows initialized (moment_maps={requires_moments})");
+        Ok(())
     }
 
     /// Initialize shadow depth render pipeline for CSM shadow passes
-    pub fn init_shadow_depth_pipeline(&mut self) {
+    pub fn init_shadow_depth_pipeline(&mut self) -> Result<()> {
         if self.shadow_pipeline.is_some() {
-            return;
+            return Ok(());
         }
 
         // Must have CSM renderer initialized first
         if self.csm_renderer.is_none() {
-            self.init_shadows();
+            self.init_shadows()?;
         }
 
-        let csm = self.csm_renderer.as_ref().unwrap();
+        let csm = self
+            .csm_renderer
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("shadow resources unavailable after initialization"))?;
         let cascade_count = csm.config.cascade_count as usize;
 
         // Create bind group layout for shadow depth pass
@@ -351,7 +370,7 @@ impl ViewerTerrainScene {
                     );
                     self.shadow_uniform_buffers.clear();
                     self.shadow_pipeline = None;
-                    return;
+                    return Err(e.into());
                 }
             };
             self.shadow_uniform_buffers.push(buffer);
@@ -400,6 +419,7 @@ impl ViewerTerrainScene {
             "[terrain_scene] Shadow depth pipeline initialized ({} cascades)",
             cascade_count
         );
+        Ok(())
     }
 
     /// Recreate shadow bind groups when terrain is loaded/changed

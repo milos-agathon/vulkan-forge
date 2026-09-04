@@ -1,13 +1,13 @@
 use super::*;
 use crate::vector::api::{PolygonDef, PolylineDef, VectorStyle};
 use crate::vector::coverage::{
-    render_coverage, CoverageGeometry, CoverageGeometryBuilder, FillRule, VectorQuality,
+    render_compiled_coverage, CoverageGeometry, CoverageGeometryBuilder, FillRule, VectorQuality,
 };
 use numpy::PyArray1;
 use pyo3::types::{PyDict, PyList};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CoverageSceneInput {
     pub(super) width: u32,
@@ -15,7 +15,7 @@ pub(super) struct CoverageSceneInput {
     pub(super) layers: Vec<CoverageLayerInput>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CoverageLayerInput {
     pub(super) name: String,
@@ -29,7 +29,7 @@ pub(super) struct CoverageLayerInput {
     pub(super) polygon_grid: Option<CoverageGridInput>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CoveragePolygonInput {
     pub(super) exterior: Vec<[f32; 2]>,
@@ -37,7 +37,7 @@ pub(super) struct CoveragePolygonInput {
     pub(super) holes: Vec<Vec<[f32; 2]>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CoveragePolylineInput {
     pub(super) path: Vec<[f32; 2]>,
@@ -46,7 +46,7 @@ pub(super) struct CoveragePolylineInput {
     pub(super) join: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CoverageGridInput {
     pub(super) columns: u32,
@@ -62,6 +62,12 @@ pub(super) fn decode_coverage_scene(scene_json: &str) -> Result<CoverageSceneInp
 
 pub(super) fn parse_coverage_scene(scene_json: &str) -> Result<CoverageGeometry, RenderError> {
     let input = decode_coverage_scene(scene_json)?;
+    ingest_coverage_scene(input)
+}
+
+pub(super) fn ingest_coverage_scene(
+    input: CoverageSceneInput,
+) -> Result<CoverageGeometry, RenderError> {
     let mut builder = CoverageGeometryBuilder::new(input.width, input.height)?;
     for layer in input.layers {
         let quality = VectorQuality::parse(&layer.quality).ok_or_else(|| {
@@ -184,9 +190,12 @@ pub(crate) fn vector_render_analytic_py(
     certificate: Option<Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let capture = crate::core::certificate::begin_render_capture("vector_render_analytic_py");
-    let geometry = parse_coverage_scene(scene_json)?;
+    let mut lookup = super::coverage_cache::compiled_coverage_scene(scene_json)?;
+    let compiled = lookup.compiled.clone();
+    let geometry = compiled.geometry();
     let (device, queue) = gpu_device_queue()?;
-    let output = render_coverage(&device, &queue, &geometry)?;
+    let output = render_compiled_coverage(&device, &queue, &compiled)?;
+    lookup.commit()?;
     capture.finish();
     let execution_report_json = crate::core::certificate::execution_report_json()?;
     crate::core::certificate::emit_certificate_for_kwarg(py, certificate.as_ref())?;

@@ -16,6 +16,7 @@ def _terrain_label(**extra):
         "id": "terrain-label",
         "text": "Terrain",
         "geometry": {"type": "Point", "coordinates": (10.0, 20.0, 5.0)},
+        "label_size": (2.0, 2.0),
         "requires_terrain": True,
     }
     label.update(extra)

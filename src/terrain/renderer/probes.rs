@@ -355,7 +355,7 @@ impl TerrainScene {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 },
             )?;
-            tracker.track_buffer_allocation(required_bytes, false);
+            tracker.track_buffer_allocation(required_bytes, false)?;
             self.probe_ssbo_alloc_bytes = required_bytes;
         } else {
             self.queue
