@@ -44,13 +44,14 @@ jobs:
         run: |
           git lfs install --local
           git lfs pull \
-            --include="assets/tif/Mount_Fuji_30m.tif,assets/tif/dem_rainier.tif,assets/tif/switzerland_dem.tif" \
+            --include="assets/tif/Mount_Fuji_30m.tif,assets/tif/dem_rainier.tif,assets/tif/switzerland_dem.tif,assets/tif/switzerland_land_cover.tif" \
             --exclude=""
 
           for fixture in \
             assets/tif/Mount_Fuji_30m.tif \
             assets/tif/dem_rainier.tif \
-            assets/tif/switzerland_dem.tif; do
+            assets/tif/switzerland_dem.tif \
+            assets/tif/switzerland_land_cover.tif; do
             if [ "$(wc -c < "$fixture")" -le 1024 ]; then
               echo "::error::$fixture is still an LFS pointer"
               exit 1
@@ -64,7 +65,8 @@ jobs:
           zip -q lfs-fixture-bundles/python-tiffs.zip \
             assets/tif/Mount_Fuji_30m.tif \
             assets/tif/dem_rainier.tif \
-            assets/tif/switzerland_dem.tif
+            assets/tif/switzerland_dem.tif \
+            assets/tif/switzerland_land_cover.tif
           zip -q lfs-fixture-bundles/m06-dem.zip \
             assets/tif/switzerland_dem.tif
 
@@ -113,6 +115,11 @@ jobs:
               - 'tests/test_adjudication_gate.py'
               - 'tests/test_hybrid_terrain_pt.py'
               - 'tests/_deltae.py'
+              - 'tests/_obliqua_gpu_guard.py'
+              - 'tests/test_obliqua_*.py'
+              - 'examples/obliqua_*.py'
+              - 'examples/southeast_europe_*.py'
+              - 'examples/swiss_landcover_*.py'
               - 'tests/golden/terrain/**'
               - 'tests/golden/recipes/**'
               - 'tests/golden/adjudication/**'
@@ -465,7 +472,7 @@ jobs:
   # ============================================================================
   test-golden-images:
     name: Visual Goldens
-    needs: [build-wheels, terrain-golden-paths]
+    needs: [build-wheels, terrain-golden-paths, prepare-lfs-fixtures]
     # macos-14 is the repository's gated real-GPU lane (Metal). Hosted
     # Windows runners only expose WARP here, which made this job perpetually
     # report ABSENT and prevented an actual image mismatch from failing CI.
@@ -483,6 +490,8 @@ jobs:
       FORGE3D_ALLOW_HOSTED_MACOS_TERRAIN: '1'
       # Explicit opt-in for non-GPU environments that may only run recipe-level CPU goldens.
       FORGE3D_ALLOW_SOFTWARE_GOLDENS: ${{ vars.FORGE3D_ALLOW_SOFTWARE_GOLDENS }}
+      FORGE3D_RUN_OBLIQUA_GPU: '1'
+      FORGE3D_OBLIQUA_ARTIFACT_DIR: 'tests/artifacts/obliqua'
       # Internal/release runs are the protected production-signing lane.
       # Fork PRs do not receive secrets and are explicitly marked untrusted
       # below; they never masquerade as production-signed validation.
@@ -493,13 +502,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          # Pixel baselines under tests/golden are regular Git objects. This
-          # lane's scenes are generated in-test, so it needs no LFS fixture.
+          # Pixel baselines under tests/golden are regular Git objects. The
+          # Swiss OBLIQUA fixtures are restored from the shared LFS artifact below.
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
+      - name: Download shared LFS fixture artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lfs-fixture-bundles
+          path: lfs-fixture-bundles
+
+      - name: Restore Python TIFF fixtures
+        run: python -m zipfile -e lfs-fixture-bundles/python-tiffs.zip .
 
       - name: Download wheel artifact
         uses: actions/download-artifact@v4
@@ -510,7 +528,7 @@ jobs:
       - name: Install wheel and test dependencies
         run: |
           python scripts/install_compatible_wheel.py dist
-          pip install pytest numpy pyproj pillow
+          pip install pytest numpy pyproj pillow rasterio
 
       - name: Require production certificate signing key
         if: env.FORGE3D_REQUIRE_PRODUCTION_SIGNING == '1'
@@ -565,6 +583,24 @@ jobs:
           # recipe catalog remains exercised by the normal GPU suite.
           FORGE3D_RECIPE_GOLDEN_VARIANT: metal
         run: pytest tests/test_terrain_visual_goldens.py tests/test_terrain_tv10_goldens.py tests/test_terrain_vt_pbr_families.py tests/test_recipe_goldens.py::test_recipe_golden_gate_rejects_pixel_regression 'tests/test_recipe_goldens.py::test_recipe_goldens_render_and_match[mapscene_terrain_raster]' -v --tb=short
+
+      - name: OBLIQUA real-GPU gates
+        if: env.FORGE3D_ALLOW_SOFTWARE_GOLDENS != '1' && steps.terrain-goldens-probe.outputs.probe == 'positive'
+        env:
+          WGPU_BACKEND: metal
+          FORGE3D_ALLOW_HOSTED_MACOS_TERRAIN: '1'
+          FORGE3D_RUN_OBLIQUA_GPU: '1'
+          FORGE3D_OBLIQUA_ARTIFACT_DIR: 'tests/artifacts/obliqua'
+        run: |
+          python -m pytest tests/test_obliqua_camera.py tests/test_obliqua_albedo.py tests/test_obliqua_poster.py tests/test_api_contracts.py tests/test_render_certificate_contract.py -v --tb=short
+
+      - name: Upload OBLIQUA artifacts
+        if: always() && env.FORGE3D_ALLOW_SOFTWARE_GOLDENS != '1' && steps.terrain-goldens-probe.outputs.probe == 'positive'
+        uses: actions/upload-artifact@v4
+        with:
+          name: obliqua-artifacts
+          path: tests/artifacts/obliqua/
+          if-no-files-found: error
 
       - name: Record golden lane RAN
         if: env.FORGE3D_ALLOW_SOFTWARE_GOLDENS != '1' && steps.terrain-goldens-probe.outputs.probe == 'positive'

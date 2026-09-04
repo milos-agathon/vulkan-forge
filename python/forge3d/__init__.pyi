@@ -143,7 +143,7 @@ from .style import (
 )
 from . import smoke
 from . import verify
-from .path_tracing import ExperimentalSyntheticOutput
+from .path_tracing import ExperimentalSyntheticOutput, render_terrain_poster
 
 PathLikeStr = os.PathLike[str] | str
 

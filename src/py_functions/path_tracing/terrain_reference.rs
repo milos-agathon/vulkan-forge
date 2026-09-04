@@ -389,8 +389,18 @@ pub(crate) fn hybrid_render_terrain_reference(
         format!("{},{},{}", desc.albedo[0], desc.albedo[1], desc.albedo[2]),
     );
 
+    let owner = crate::core::resource_tracker::AllocationOwner::new();
+    let _owner_guard = owner.activate();
+    let owner_capture = crate::core::resource_tracker::begin_owner_capture(owner.id());
     let tracer = HybridPathTracer::new()?;
     let out = tracer.render_terrain_reference(&desc)?;
+    let owner_report = owner_capture.finish();
+    if owner_report.peak_host_visible_bytes > 512 * 1024 * 1024 {
+        return Err(PyRuntimeError::new_err(format!(
+            "terrain tile exceeded 512 MiB host-visible budget: {}",
+            owner_report.peak_host_visible_bytes
+        )));
+    }
 
     let d = PyDict::new_bound(py);
     let rgba = PyArray1::<u8>::from_vec_bound(py, out.rgba).reshape([
@@ -417,7 +427,17 @@ pub(crate) fn hybrid_render_terrain_reference(
     d.set_item("frames", out.frames)?;
     d.set_item("variance", out.variance)?;
     d.set_item("converged", out.converged)?;
-    d.set_item("peak_host_visible_bytes", out.peak_host_visible_bytes)?;
+    d.set_item(
+        "peak_host_visible_bytes",
+        owner_report.peak_host_visible_bytes,
+    )?;
+    d.set_item(
+        "peak_device_local_bytes",
+        owner_report.peak_device_local_bytes,
+    )?;
+    d.set_item("reservoir_valid_count", out.reservoir_valid_count)?;
+    d.set_item("reservoir_m_min", out.reservoir_m_min)?;
+    d.set_item("reservoir_m_max", out.reservoir_m_max)?;
     d.set_item("minmax_pyramid_bytes", out.minmax_pyramid_bytes)?;
     d.set_item("gpu_resource_bytes", out.gpu_resource_bytes)?;
     // The hybrid_pt.* passes (live gpu_ms when timestamps are granted) are

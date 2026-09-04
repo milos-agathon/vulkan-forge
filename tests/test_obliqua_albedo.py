@@ -7,6 +7,8 @@ import pytest
 
 import forge3d.path_tracing as pt
 
+from _obliqua_gpu_guard import require_qualifying_gpu
+
 
 class _Native:
     def hybrid_render_terrain_reference(self, *args, **kwargs):
@@ -55,6 +57,7 @@ def test_albedo_map_rejects_nonfinite_and_bad_sampling(monkeypatch):
 
 
 def test_albedo_certificate_inputs_are_recorded(tmp_path):
+    require_qualifying_gpu("OBLIQUA albedo certificate proof")
     dem = np.zeros((4, 4), dtype=np.float32)
     albedo_map = np.full((4, 4, 4), (0.62, 0.62, 0.62, 1.0), dtype=np.float32)
     certificate = tmp_path / "obliqua.json"
@@ -86,6 +89,7 @@ def test_albedo_certificate_inputs_are_recorded(tmp_path):
 
 
 def test_default_flag_off_matches_pre_obliqua_sha():
+    require_qualifying_gpu("pre-OBLIQUA determinism proof")
     out = pt.hybrid_render_terrain_reference(
         np.zeros((4, 4), dtype=np.float32),
         16,
@@ -111,6 +115,7 @@ def test_default_flag_off_matches_pre_obliqua_sha():
 
 
 def _render(albedo_map=None, albedo_sampling="nearest"):
+    require_qualifying_gpu("OBLIQUA terrain albedo proof")
     return pt.hybrid_render_terrain_reference(
         np.zeros((4, 4), dtype=np.float32),
         16,
@@ -174,6 +179,7 @@ def test_bilinear_falls_back_each_masked_texel_before_interpolation():
 
 
 def test_offscreen_material_edit_does_not_change_visible_pixels():
+    require_qualifying_gpu("OBLIQUA offscreen material visibility proof")
     constant = np.full((4, 4, 4), (0.62, 0.62, 0.62, 1.0), dtype=np.float32)
     edited = constant.copy()
     edited[0, 0, :3] = (1.0, 0.0, 0.0)

@@ -106,9 +106,8 @@ fn global_pixel(gid: vec2<u32>) -> vec2<u32> {
   return gid + vec2<u32>(uniforms.pixel_offset_x, uniforms.pixel_offset_y);
 }
 
-// Each call selects a sub-rectangle of the ideal full sensor. Tiles vary only
-// this rectangle and the global pixel offset; the latter also keeps RNG
-// identity with the full-frame render.
+// Seamless calls map global pixel IDs directly onto the ideal full sensor.
+// The host validates sensor_rect against this pixel offset and tile extent.
 fn generate_camera_ray(gid: vec2<u32>, jitter: vec2<f32>) -> CameraRay {
   if (uniforms.camera_flags == 0u) {
     // Preserve the original arithmetic path byte-for-byte for legacy callers.
@@ -128,9 +127,10 @@ fn generate_camera_ray(gid: vec2<u32>, jitter: vec2<f32>) -> CameraRay {
     );
   }
 
-  let local_uv = (vec2<f32>(gid) + vec2<f32>(0.5) + jitter)
-      / vec2<f32>(f32(uniforms.width), f32(uniforms.height));
-  let sensor_uv = mix(uniforms.sensor_rect.xy, uniforms.sensor_rect.zw, local_uv);
+  let validated_sensor_rect = uniforms.sensor_rect;
+  let gpx = global_pixel(gid);
+  let sensor_uv = (vec2<f32>(gpx) + vec2<f32>(0.5) + jitter)
+      / vec2<f32>(f32(uniforms.full_width), f32(uniforms.full_height));
   let ndc = vec2<f32>(sensor_uv.x * 2.0 - 1.0, (1.0 - sensor_uv.y) * 2.0 - 1.0);
   let aspect = f32(uniforms.full_width) / f32(uniforms.full_height);
   if (uniforms.camera_model == 1u) {

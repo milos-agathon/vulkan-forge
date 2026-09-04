@@ -7,7 +7,7 @@ use std::collections::HashMap;
 const FNV1A_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A_PRIME: u64 = 0x0000_0100_0000_01b3;
 const PINNED_DETERMINISM_SOURCE_HASH: u64 = 0xa85d_315e_c1f1_a349;
-pub(super) const PINNED_HYBRID_KERNEL_SOURCE_HASH: u64 = 0xe584_d929_734f_7b70;
+pub(super) const PINNED_HYBRID_KERNEL_SOURCE_HASH: u64 = 0xe045_1085_a1ef_32e8;
 pub(super) const PINNED_TERRAIN_SOURCE_HASH: u64 = 0x0b0c_21d8_dec7_b69a;
 
 #[derive(Clone, Copy)]

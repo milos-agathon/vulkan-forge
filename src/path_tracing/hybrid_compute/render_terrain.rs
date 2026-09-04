@@ -281,6 +281,9 @@ pub struct TerrainReferenceOutput {
     pub variance: f32,
     pub converged: bool,
     pub peak_host_visible_bytes: u64,
+    pub reservoir_valid_count: u64,
+    pub reservoir_m_min: u32,
+    pub reservoir_m_max: u32,
     pub minmax_pyramid_bytes: u64,
     /// Sum of every GPU resource this render registered with the memory
     /// tracker (pyramid, env, accum, Welford, reservoirs, G-buffer, UBOs,
@@ -846,7 +849,9 @@ impl HybridPathTracer {
             &wgpu::BufferDescriptor {
                 label: Some("hybrid-pt-accum"),
                 size: px_count * 16,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             },
         )?;
@@ -1308,7 +1313,9 @@ impl HybridPathTracer {
         let res_stride = std::mem::size_of::<Reservoir>() as u64;
         let res_bytes = read_buffer(device, queue, &reservoir_prev, px_count * res_stride)?;
         let reservoirs: &[Reservoir] = bytemuck::cast_slice(&res_bytes);
-        let mut any_valid = false;
+        let mut reservoir_valid_count = 0u64;
+        let mut reservoir_m_min = u32::MAX;
+        let mut reservoir_m_max = 0u32;
         for r in reservoirs {
             if !(r.w_sum.is_finite() && r.weight.is_finite() && r.target_pdf.is_finite()) {
                 return Err(RenderError::Render(
@@ -1316,14 +1323,19 @@ impl HybridPathTracer {
                 ));
             }
             if r.m > 0 && r.weight > 0.0 && r.target_pdf > 0.0 {
-                any_valid = true;
+                reservoir_valid_count += 1;
+                reservoir_m_min = reservoir_m_min.min(r.m);
+                reservoir_m_max = reservoir_m_max.max(r.m);
             }
+        }
+        if reservoir_valid_count == 0 {
+            reservoir_m_min = 0;
         }
         if should_require_valid_sun_reservoirs(
             desc.sun_elevation_deg,
             desc.sun_intensity,
             desc.sun_color,
-        ) && !any_valid
+        ) && reservoir_valid_count == 0
         {
             return Err(RenderError::Render(
                 "terrain PT ReSTIR reuse chain produced no valid reservoirs for a sun-lit \
@@ -1418,6 +1430,9 @@ impl HybridPathTracer {
             variance,
             converged,
             peak_host_visible_bytes: peak,
+            reservoir_valid_count,
+            reservoir_m_min,
+            reservoir_m_max,
             minmax_pyramid_bytes: terrain_scene.pyramid.byte_size,
             gpu_resource_bytes,
         })

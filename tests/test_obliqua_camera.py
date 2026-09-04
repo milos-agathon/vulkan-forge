@@ -5,6 +5,8 @@ import pytest
 
 import forge3d.path_tracing as pt
 
+from _obliqua_gpu_guard import require_qualifying_gpu
+
 
 class _CaptureNative:
     def hybrid_render_terrain_reference(self, *args, **kwargs):
@@ -105,8 +107,7 @@ def test_reference_wrapper_rejects_underspecified_crop(monkeypatch):
 
 
 def test_orthographic_tile_is_byte_exact_full_frame_crop():
-    if pt._NATIVE is None:
-        pytest.skip("native terrain path tracer unavailable")
+    require_qualifying_gpu("OBLIQUA camera crop proof")
     dem = np.arange(64, dtype=np.float32).reshape(8, 8) * 0.02
     camera = {
         "origin": (0.0, 6.0, 7.0),
@@ -146,8 +147,7 @@ def test_orthographic_tile_is_byte_exact_full_frame_crop():
 
 
 def test_default_equivalent_pinhole_metadata_is_byte_exact():
-    if pt._NATIVE is None:
-        pytest.skip("native terrain path tracer unavailable")
+    require_qualifying_gpu("OBLIQUA camera crop proof")
     dem = np.arange(16, dtype=np.float32).reshape(4, 4) * 0.02
     camera = {
         "origin": (0.0, 3.0, 8.0),
@@ -195,8 +195,7 @@ def test_default_equivalent_pinhole_metadata_is_byte_exact():
 
 
 def test_pinhole_tile_is_byte_exact_full_frame_crop():
-    if pt._NATIVE is None:
-        pytest.skip("native terrain path tracer unavailable")
+    require_qualifying_gpu("OBLIQUA camera crop proof")
     dem = np.arange(64, dtype=np.float32).reshape(8, 8) * 0.02
     camera = {
         "origin": (0.0, 6.0, 7.0),
@@ -258,8 +257,7 @@ def test_pinhole_tile_is_byte_exact_full_frame_crop():
 
 
 def test_native_camera_dict_sensor_rect_matches_top_level():
-    if pt._NATIVE is None:
-        pytest.skip("native terrain path tracer unavailable")
+    require_qualifying_gpu("OBLIQUA camera crop proof")
     dem = np.arange(16, dtype=np.float32).reshape(4, 4) * 0.02
     camera = {
         "origin": (0.0, 3.0, 8.0),

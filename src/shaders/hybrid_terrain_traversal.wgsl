@@ -420,7 +420,7 @@ fn terrain_cosine_dir(n: vec3<f32>, u1: f32, u2: f32) -> vec3<f32> {
 // Per frame: `spp` jittered camera samples averaged into accum_hdr, canonical
 // ReSTIR candidate generation into terrain_reservoirs_curr (merged afterwards
 // by the pt_restir_temporal + pt_restir_spatial passes the driver dispatches),
-// sun shading gated through the merged reservoir from the previous frame's
+// contract-selected directional-sun shading alongside the merged reservoir
 // reuse chain, a windowed Welford update of the running-mean luminance for
 // the "variance across the last N frames" convergence gate, and the
 // tonemapped running mean written to out_tex. AOVs are written from an
@@ -433,7 +433,7 @@ fn main_terrain(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= W || gid.y >= H) { return; }
     let pix = gid.y * W + gid.x;
 
-    // --- ReSTIR history M-clamp + fetch the merged reservoir for shading ---
+    // --- ReSTIR merged-history M-clamp for bounded reuse bookkeeping ---
     var prev_r = terrain_reservoirs_prev[pix];
     if (prev_r.m > TERRAIN_RESTIR_M_CAP) {
         let scale = f32(TERRAIN_RESTIR_M_CAP) / f32(prev_r.m);
@@ -492,12 +492,12 @@ fn main_terrain(@builtin(global_invocation_id) gid: vec3<u32>) {
             cand.target_pdf = target_pdf;
         }
 
-        // --- Sun shading through the merged reservoir (temporal + spatial
-        // reuse) from the previous frame; frame 0 falls back to the fresh
-        // candidate, which is the identical delta sample with W = 1. ---
+        // --- Directional-sun shading. Legacy flag-off renders retain their
+        // historical ReSTIR weighting; seamless/global-camera renders use unit
+        // normalization because every reservoir contains the same delta light. ---
         var sun_dir = wi;
         var reuse_w = 1.0;
-        if (prev_valid) {
+        if (uniforms.camera_flags == 0u && prev_valid) {
             sun_dir = normalize(prev_r.sample.direction);
             reuse_w = clamp(prev_r.weight, 0.0, 4.0);
         }
@@ -509,11 +509,8 @@ fn main_terrain(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (lighting.shadows_enabled != 0u && intersect_shadow_ray(sray, 1e30)) {
                 vis = 0.0;
             }
-            // The renderer currently supplies one directional delta light.
-            // The explicit sensor contract uses unit normalization: tile-edge
-            // reservoirs have fewer spatial neighbors than a monolithic frame
-            // and may not change energy. Omitting sensor_rect preserves the
-            // historical pinhole reservoir weight byte-for-byte.
+            // Spatial topology cannot change seamless/global-camera energy;
+            // the legacy flag-off path keeps its protected reservoir weight.
             sun = albedo * lighting.light_color * nd * vis * reuse_w;
         }
 

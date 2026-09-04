@@ -264,7 +264,12 @@ from . import codec
 # -----------------------------------------------------------------------------
 # Core rendering API
 # -----------------------------------------------------------------------------
-from .path_tracing import ExperimentalSyntheticOutput, PathTracer, make_camera
+from .path_tracing import (
+    ExperimentalSyntheticOutput,
+    PathTracer,
+    make_camera,
+    render_terrain_poster,
+)
 
 # -----------------------------------------------------------------------------
 # Interactive Viewer API
@@ -665,6 +670,7 @@ __all__ = [
     "PathTracer",
     "ExperimentalSyntheticOutput",
     "make_camera",
+    "render_terrain_poster",
     # Native types (when available)
     "Scene",
     "Session",
