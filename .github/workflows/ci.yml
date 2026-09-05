@@ -216,7 +216,6 @@ jobs:
           cff39b4e02d7ba13c48f3d8b1a4080d40ada753ade62fa951459fe4e01e98b48 assets/tif/Mount_Fuji_30m.tif
           875b243474b151175f76037acd60c2149ac2e46fba9ba2bbce0c9a6998015dd3 assets/tif/dem_rainier.tif
           d09d229fa265749720a6b4bd40c440799f43286bf2d401d732ea77f89d0bd478 assets/tif/switzerland_dem.tif
-          6b254585be4982ed9e8da63b8536ecc2f5fa4c64c6545db06c73eb1fe39a8f7f assets/tif/switzerland_land_cover.tif
           575e4b57d69d5db1bc16d5cd7edc8c83c570e280717e9e7ca225c060fd0aeb3d assets/tif/moon_south_pole_lola.tif
           EOF
 
@@ -224,7 +223,6 @@ jobs:
             assets/tif/Mount_Fuji_30m.tif \
             assets/tif/dem_rainier.tif \
             assets/tif/switzerland_dem.tif \
-            assets/tif/switzerland_land_cover.tif \
             assets/tif/moon_south_pole_lola.tif; do
             if [ "$(wc -c < "$fixture")" -le 1024 ]; then
               echo "::error::$fixture is still an LFS pointer"
@@ -240,7 +238,6 @@ jobs:
             assets/tif/Mount_Fuji_30m.tif \
             assets/tif/dem_rainier.tif \
             assets/tif/switzerland_dem.tif \
-            assets/tif/switzerland_land_cover.tif \
             assets/tif/moon_south_pole_lola.tif
           zip -q lfs-fixture-bundles/m06-dem.zip \
             assets/tif/switzerland_dem.tif
@@ -1141,7 +1138,7 @@ jobs:
     # Candidate acceptance proves physical pixels without exposing production
     # signing material to branch code. Signed certificate rotation remains the
     # protected main-only responsibility of certificate-refresh.yml.
-    needs: [build-wheel-windows, prepare-lfs-fixtures, terrain-golden-paths]
+    needs: [build-wheel-windows, terrain-golden-paths]
     runs-on: [self-hosted, Windows, X64, forge3d-gpu, gpu-nvidia]
     if: >-
       github.event_name == 'schedule' ||
@@ -1185,14 +1182,37 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Download shared LFS fixture artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: lfs-fixture-bundles
-          path: lfs-fixture-bundles
+      - name: Bind lane to exact clean candidate
+        shell: pwsh
+        run: |
+          $head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -ne $env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA) { throw "candidate SHA mismatch" }
+          $dirty = (git status --porcelain --untracked-files=no | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $dirty) { throw "candidate tracked worktree is dirty: $dirty" }
+          if ($env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA.Length -ne 40) { throw "candidate SHA is not full length" }
+          New-Item -ItemType Directory -Force -Path $env:FORGE3D_VISUAL_ARTIFACT_DIR | Out-Null
 
-      - name: Restore Python TIFF fixtures
-        run: python -m zipfile -e lfs-fixture-bundles/python-tiffs.zip .
+      - name: Download verified OBLIQUA fixtures
+        shell: pwsh
+        run: |
+          $baseUrl = 'https://media.githubusercontent.com/media/milos-agathon/forge3d/92a86baa3c8f6ba3c3a7368e4f80d4004905a433'
+          $fixtures = @(
+            @{ Path = 'assets/tif/switzerland_dem.tif'; Sha256 = 'd09d229fa265749720a6b4bd40c440799f43286bf2d401d732ea77f89d0bd478' }
+            @{ Path = 'assets/tif/switzerland_land_cover.tif'; Sha256 = '6b254585be4982ed9e8da63b8536ecc2f5fa4c64c6545db06c73eb1fe39a8f7f' }
+          )
+          foreach ($fixture in $fixtures) {
+            $url = "$baseUrl/$($fixture.Path)"
+            curl.exe --fail --location --retry 3 --output $fixture.Path $url
+            if ($LASTEXITCODE -ne 0) {
+              Remove-Item -LiteralPath $fixture.Path -Force -ErrorAction SilentlyContinue
+              throw "curl.exe failed to download $($fixture.Path) (exit $LASTEXITCODE)"
+            }
+            $actual = (Get-FileHash -LiteralPath $fixture.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $fixture.Sha256) {
+              Remove-Item -LiteralPath $fixture.Path -Force
+              throw "SHA-256 mismatch for $($fixture.Path)`: expected $($fixture.Sha256), got $actual"
+            }
+          }
 
       - name: Download wheel artifact
         uses: actions/download-artifact@v4
@@ -1207,16 +1227,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip install pytest numpy pyproj pillow rasterio
           exit $LASTEXITCODE
-
-      - name: Bind lane to exact clean candidate
-        shell: pwsh
-        run: |
-          $head = (git rev-parse HEAD).Trim()
-          if ($LASTEXITCODE -ne 0 -or $head -ne $env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA) { throw "candidate SHA mismatch" }
-          $dirty = (git status --porcelain --untracked-files=no | Out-String).Trim()
-          if ($LASTEXITCODE -ne 0 -or $dirty) { throw "candidate tracked worktree is dirty: $dirty" }
-          if ($env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA.Length -ne 40) { throw "candidate SHA is not full length" }
-          New-Item -ItemType Directory -Force -Path $env:FORGE3D_VISUAL_ARTIFACT_DIR | Out-Null
 
       - name: Require physical NVIDIA Vulkan terrain adapter
         shell: pwsh
