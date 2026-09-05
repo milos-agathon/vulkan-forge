@@ -296,6 +296,11 @@ jobs:
               - 'tests/test_adjudication_gate.py'
               - 'tests/test_hybrid_terrain_pt.py'
               - 'tests/_deltae.py'
+              - 'tests/_obliqua_gpu_guard.py'
+              - 'tests/test_obliqua_*.py'
+              - 'examples/obliqua_*.py'
+              - 'examples/southeast_europe_*.py'
+              - 'examples/swiss_landcover_*.py'
               - 'tests/golden/terrain/**'
               - 'tests/golden/recipes/**'
               - 'tests/golden/adjudication/**'
@@ -1152,6 +1157,7 @@ jobs:
       FORGE3D_RECIPE_GOLDEN_VARIANT: nvidia-vulkan
       FORGE3D_SUBSTRATIA_GOLDEN_VARIANT: nvidia-vulkan
       FORGE3D_SUBSTRATIA_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      FORGE3D_RUN_OBLIQUA_GPU: '1'
 
     steps:
       - uses: actions/checkout@v4
@@ -1168,12 +1174,45 @@ jobs:
           "FORGE3D_RECIPE_GOLDEN_ARTIFACT_DIR=$(Join-Path $root 'recipe-goldens')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "FORGE3D_SUBSTRATIA_ARTIFACT_DIR=$(Join-Path $root 'substratia')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "FORGE3D_SIDERA_ARTIFACT_DIR=$(Join-Path $root 'sidera')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FORGE3D_OBLIQUA_ARTIFACT_DIR=$(Join-Path $root 'obliqua')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "FORGE3D_EXPECTED_ADAPTER_PROBE=$(Join-Path $root 'adapter-probe.json')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
+      - name: Bind lane to exact clean candidate
+        shell: pwsh
+        run: |
+          $head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -ne $env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA) { throw "candidate SHA mismatch" }
+          $dirty = (git status --porcelain --untracked-files=no | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $dirty) { throw "candidate tracked worktree is dirty: $dirty" }
+          if ($env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA.Length -ne 40) { throw "candidate SHA is not full length" }
+          New-Item -ItemType Directory -Force -Path $env:FORGE3D_VISUAL_ARTIFACT_DIR | Out-Null
+
+      - name: Download verified OBLIQUA fixtures
+        shell: pwsh
+        run: |
+          $baseUrl = 'https://media.githubusercontent.com/media/milos-agathon/forge3d/92a86baa3c8f6ba3c3a7368e4f80d4004905a433'
+          $fixtures = @(
+            @{ Path = 'assets/tif/switzerland_dem.tif'; Sha256 = 'd09d229fa265749720a6b4bd40c440799f43286bf2d401d732ea77f89d0bd478' }
+            @{ Path = 'assets/tif/switzerland_land_cover.tif'; Sha256 = '6b254585be4982ed9e8da63b8536ecc2f5fa4c64c6545db06c73eb1fe39a8f7f' }
+          )
+          foreach ($fixture in $fixtures) {
+            $url = "$baseUrl/$($fixture.Path)"
+            curl.exe --fail --location --retry 3 --output $fixture.Path $url
+            if ($LASTEXITCODE -ne 0) {
+              Remove-Item -LiteralPath $fixture.Path -Force -ErrorAction SilentlyContinue
+              throw "curl.exe failed to download $($fixture.Path) (exit $LASTEXITCODE)"
+            }
+            $actual = (Get-FileHash -LiteralPath $fixture.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $fixture.Sha256) {
+              Remove-Item -LiteralPath $fixture.Path -Force
+              throw "SHA-256 mismatch for $($fixture.Path)`: expected $($fixture.Sha256), got $actual"
+            }
+          }
 
       - name: Download wheel artifact
         uses: actions/download-artifact@v4
@@ -1186,18 +1225,8 @@ jobs:
         run: |
           python scripts/install_compatible_wheel.py dist
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pip install pytest numpy pyproj pillow
+          python -m pip install pytest numpy pyproj pillow rasterio
           exit $LASTEXITCODE
-
-      - name: Bind lane to exact clean candidate
-        shell: pwsh
-        run: |
-          $head = (git rev-parse HEAD).Trim()
-          if ($LASTEXITCODE -ne 0 -or $head -ne $env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA) { throw "candidate SHA mismatch" }
-          $dirty = (git status --porcelain --untracked-files=no | Out-String).Trim()
-          if ($LASTEXITCODE -ne 0 -or $dirty) { throw "candidate tracked worktree is dirty: $dirty" }
-          if ($env:FORGE3D_SUBSTRATIA_CANDIDATE_SHA.Length -ne 40) { throw "candidate SHA is not full length" }
-          New-Item -ItemType Directory -Force -Path $env:FORGE3D_VISUAL_ARTIFACT_DIR | Out-Null
 
       - name: Require physical NVIDIA Vulkan terrain adapter
         shell: pwsh
@@ -1226,6 +1255,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/assert_junit_zero_skips.py "$junit"
           exit $LASTEXITCODE
+
+      - name: Run strict OBLIQUA NVIDIA Vulkan gates
+        shell: pwsh
+        env:
+          WGPU_BACKEND: vulkan
+          FORGE3D_ALLOW_HOSTED_WINDOWS_TERRAIN: '1'
+          FORGE3D_RUN_OBLIQUA_GPU: '1'
+        run: |
+          python -m pytest tests/test_obliqua_camera.py tests/test_obliqua_albedo.py tests/test_obliqua_poster.py tests/test_api_contracts.py tests/test_render_certificate_contract.py -v --tb=short
+          exit $LASTEXITCODE
+
+      - name: Upload OBLIQUA artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obliqua-artifacts
+          path: ${{ env.FORGE3D_OBLIQUA_ARTIFACT_DIR }}/
+          if-no-files-found: error
 
       - name: Record visual golden lane RAN
         id: golden-pass

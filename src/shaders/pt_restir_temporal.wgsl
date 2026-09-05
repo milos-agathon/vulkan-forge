@@ -16,7 +16,14 @@ struct Uniforms {
     cam_forward: vec3<f32>,
     seed_hi: u32,
     seed_lo: u32,
-    _pad: u32,
+    camera_model: u32,
+    full_width: u32,
+    full_height: u32,
+    pixel_offset_x: u32,
+    pixel_offset_y: u32,
+    ortho_half_height: f32,
+    camera_flags: u32,
+    sensor_rect: vec4<f32>,
 }
 
 struct LightSample {
@@ -57,7 +64,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel_count = uniforms.width * uniforms.height;
     if (idx >= pixel_count) { return; }
 
-    var seed = (uniforms.seed_hi ^ uniforms.frame_index) + idx * 7411u + 7u;
+    let local_x = idx % uniforms.width;
+    let local_y = idx / uniforms.width;
+    let global_idx = (local_y + uniforms.pixel_offset_y) * uniforms.full_width
+        + local_x + uniforms.pixel_offset_x;
+    var seed = (uniforms.seed_hi ^ uniforms.frame_index) + global_idx * 7411u + 7u;
 
     let rp = prev_reservoirs[idx];
     let rc = curr_reservoirs[idx];

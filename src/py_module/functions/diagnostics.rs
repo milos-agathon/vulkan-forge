@@ -26,6 +26,10 @@ pub(super) fn register_diagnostics_py_functions(m: &Bound<'_, PyModule>) -> PyRe
     m.add_function(wrap_pyfunction!(clear_native_degradations, m)?)?;
     m.add_function(wrap_pyfunction!(capabilities, m)?)?;
     m.add_function(wrap_pyfunction!(render_execution_report, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        _record_terrain_poster_certificate_inputs,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(begin_render_execution_capture, m)?)?;
     m.add_function(wrap_pyfunction!(finish_render_execution_capture, m)?)?;
     m.add_function(wrap_pyfunction!(abort_render_execution_capture, m)?)?;

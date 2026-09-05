@@ -442,6 +442,52 @@ pub(crate) fn render_execution_report() -> PyResult<String> {
 
 #[cfg(feature = "extension-module")]
 #[pyfunction]
+pub(crate) fn _record_terrain_poster_certificate_inputs(
+    camera_model: &str,
+    albedo_map_sha256: &str,
+    albedo_sampling: &str,
+    poster_full_width: u32,
+    poster_full_height: u32,
+    tile_columns: u32,
+    tile_rows: u32,
+) -> PyResult<()> {
+    if !matches!(camera_model, "pinhole" | "off_axis" | "orthographic") {
+        return Err(PyValueError::new_err("invalid camera_model"));
+    }
+    if !matches!(albedo_sampling, "nearest" | "bilinear") {
+        return Err(PyValueError::new_err("invalid albedo_sampling"));
+    }
+    if albedo_map_sha256 != "none"
+        && (albedo_map_sha256.len() != 64
+            || !albedo_map_sha256
+                .chars()
+                .all(|c| matches!(c, '0'..='9' | 'a'..='f')))
+    {
+        return Err(PyValueError::new_err(
+            "albedo_map_sha256 must be 'none' or 64 lowercase hex",
+        ));
+    }
+    if poster_full_width == 0 || poster_full_height == 0 || tile_columns == 0 || tile_rows == 0 {
+        return Err(PyValueError::new_err(
+            "poster dimensions and grid must be nonzero",
+        ));
+    }
+
+    crate::core::certificate::record_input("camera_model", camera_model);
+    crate::core::certificate::record_input("sensor_rect", "0,0,1,1");
+    crate::core::certificate::record_input("albedo_map_sha256", albedo_map_sha256);
+    crate::core::certificate::record_input("albedo_sampling", albedo_sampling);
+    crate::core::certificate::record_input("poster_full_width", poster_full_width.to_string());
+    crate::core::certificate::record_input("poster_full_height", poster_full_height.to_string());
+    crate::core::certificate::record_input(
+        "poster_tile_layout",
+        format!("{tile_columns}x{tile_rows}"),
+    );
+    Ok(())
+}
+
+#[cfg(feature = "extension-module")]
+#[pyfunction]
 pub(crate) fn begin_render_execution_capture(entry_point: &str) {
     crate::core::certificate::begin_external_render_capture(entry_point);
 }

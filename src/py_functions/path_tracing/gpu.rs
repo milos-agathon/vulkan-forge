@@ -121,7 +121,14 @@ pub(crate) fn _pt_render_gpu(
         cam_forward: [forward.x, forward.y, forward.z],
         seed_hi: seed,
         seed_lo: 0,
-        _pad_end: [0, 0, 0],
+        camera_model: 0,
+        full_width: width,
+        full_height: height,
+        pixel_offset_x: 0,
+        pixel_offset_y: 0,
+        ortho_half_height: 1.0,
+        camera_flags: 0,
+        sensor_rect: [0.0, 0.0, 1.0, 1.0],
     };
 
     let rgba =

@@ -49,6 +49,7 @@ struct FinishedCapture {
     requested: Vec<String>,
     granted: Vec<String>,
     limits: BTreeMap<String, u64>,
+    inputs: BTreeMap<String, String>,
     passes: Vec<PassRecord>,
     /// Signed model declarations are properties, not GPU pass claims.
     models: BTreeMap<String, String>,
@@ -113,6 +114,7 @@ thread_local! {
     static CURRENT_CODEC: RefCell<Option<CodecSnapshot>> = const { RefCell::new(None) };
     static CURRENT_PRECISION: RefCell<Option<PrecisionEvidence>> = const { RefCell::new(None) };
     static CURRENT_JITTER: RefCell<Option<JitterEvidence>> = const { RefCell::new(None) };
+    static CURRENT_INPUTS: RefCell<BTreeMap<String, String>> = const { RefCell::new(BTreeMap::new()) };
     static CURRENT_MODELS: RefCell<BTreeMap<String, String>> = const { RefCell::new(BTreeMap::new()) };
 }
 
@@ -229,6 +231,7 @@ pub fn begin_render_capture_with_resources(
     begin_degradation_capture();
     CURRENT_PRECISION.with(|slot| slot.borrow_mut().take());
     CURRENT_JITTER.with(|slot| slot.borrow_mut().take());
+    CURRENT_INPUTS.with(|inputs| inputs.borrow_mut().clear());
     CURRENT_MODELS.with(|models| models.borrow_mut().clear());
     notify_python_degradation_capture("begin_capture");
     let mut cur = lock_current();
@@ -247,6 +250,15 @@ pub fn record_pass(label: &str, gpu_ms: f64, draw_calls: u32) {
         gpu_ms,
         draw_calls,
     });
+}
+
+/// Record a deterministic render input in the active certificate.
+pub fn record_input(key: impl Into<String>, value: impl Into<String>) {
+    if CAPTURE_DEPTH.with(|depth| depth.get() > 0) {
+        CURRENT_INPUTS.with(|inputs| {
+            inputs.borrow_mut().insert(key.into(), value.into());
+        });
+    }
 }
 
 /// Declare a rendering or physical model used by the active render.
@@ -407,6 +419,7 @@ fn finish_render_capture() {
         requested,
         granted,
         limits,
+        inputs: CURRENT_INPUTS.with(|inputs| std::mem::take(&mut *inputs.borrow_mut())),
         passes,
         models,
         peak_host_visible_bytes: ledger.peak_host_visible_bytes,
@@ -431,6 +444,7 @@ pub fn abort_render_capture() {
     lock_current().clear();
     CURRENT_PRECISION.with(|slot| slot.borrow_mut().take());
     CURRENT_JITTER.with(|slot| slot.borrow_mut().take());
+    CURRENT_INPUTS.with(|inputs| inputs.borrow_mut().clear());
     CURRENT_MODELS.with(|models| models.borrow_mut().clear());
 }
 
@@ -523,6 +537,8 @@ struct ReportJson<'a> {
     engine: EngineJson<'a>,
     adapter: AdapterJson<'a>,
     capabilities: CapabilitiesJson<'a>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    inputs: &'a BTreeMap<String, String>,
     passes: Vec<PassJson<'a>>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     models: &'a BTreeMap<String, String>,
@@ -566,6 +582,7 @@ pub fn execution_report_json() -> Result<String, RenderError> {
             granted: &cap.granted,
             limits: &cap.limits,
         },
+        inputs: &cap.inputs,
         passes: cap
             .passes
             .iter()

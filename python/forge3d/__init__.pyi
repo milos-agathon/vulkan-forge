@@ -152,7 +152,7 @@ from .style import (
 )
 from . import smoke
 from . import verify
-from .path_tracing import ExperimentalSyntheticOutput
+from .path_tracing import ExperimentalSyntheticOutput, render_terrain_poster
 
 PathLikeStr = os.PathLike[str] | str
 
@@ -1480,6 +1480,13 @@ def hybrid_render_terrain_reference(
     spacing: Tuple[float, float] = ...,
     exaggeration: float = ...,
     albedo: Tuple[float, float, float] = ...,
+    albedo_map: np.ndarray | None = ...,
+    albedo_sampling: str = ...,
+    camera_model: str | None = ...,
+    sensor_rect: Tuple[float, float, float, float] | None = ...,
+    full_width: int | None = ...,
+    full_height: int | None = ...,
+    pixel_offset: Optional[Tuple[int, int]] = ...,
     sun_azimuth_deg: float | None = ...,
     sun_elevation_deg: float | None = ...,
     solar_time: object | None = ...,
@@ -1528,6 +1535,13 @@ def hybrid_render_aether_spectral_reference(
     variance_threshold: float = ...,
     certificate: bool | str | PathLikeStr | None = ...,
     cache: str | PathLikeStr | None = ...,
+    camera_model: Optional[str] = ...,
+    sensor_rect: Optional[Tuple[float, float, float, float]] = ...,
+    full_width: Optional[int] = ...,
+    full_height: Optional[int] = ...,
+    pixel_offset: Optional[Tuple[int, int]] = ...,
+    albedo_map: Optional[np.ndarray] = ...,
+    albedo_sampling: str = ...,
 ) -> Dict[str, Any]: ...
 
 # AETHER: spectral atmosphere public/native surface

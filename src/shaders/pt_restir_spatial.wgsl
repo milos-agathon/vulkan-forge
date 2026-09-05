@@ -18,7 +18,14 @@ struct Uniforms {
     cam_forward: vec3<f32>,
     seed_hi: u32,
     seed_lo: u32,
-    _pad: u32,
+    camera_model: u32,
+    full_width: u32,
+    full_height: u32,
+    pixel_offset_x: u32,
+    pixel_offset_y: u32,
+    ortho_half_height: f32,
+    camera_flags: u32,
+    sensor_rect: vec4<f32>,
 }
 
 // Scene lights (Group 1)
@@ -72,7 +79,15 @@ fn consider_candidate(
         let wi = normalize(r.sample.direction);
         let cosTheta = max(dot(N, wi), 0.0);
         if (cosTheta <= 0.0) { return; }
-        p_curr = p_sel;
+        // Terrain stores luminance(albedo * configured light color) in
+        // gbuffer_nr.w and tags gbuffer_pos.w negative. This re-evaluates
+        // neighbor reservoirs with the receiving pixel's material while
+        // preserving the shared wavefront path's historical selection pdf.
+        p_curr = select(
+            p_sel,
+            p_sel * nr.w * cosTheta,
+            gbuffer_pos[pix_idx].w < 0.0,
+        );
     } else if (r.sample.light_type == 2u) {
         // Area disc: selection probability times area->solid-angle
         if (area_count == 0u) { return; }
@@ -170,7 +185,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let K: u32 = 8u;
     let R: u32 = 3u;
 
-    var seed = (uniforms.seed_hi ^ uniforms.frame_index) + idx * 1664525u + 1013904223u;
+    let global_idx = (y + uniforms.pixel_offset_y) * uniforms.full_width
+        + x + uniforms.pixel_offset_x;
+    var seed = (uniforms.seed_hi ^ uniforms.frame_index)
+        + global_idx * 1664525u + 1013904223u;
 
     let r_self = in_reservoirs[idx];
     var out_r: Reservoir;
@@ -193,18 +211,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     consider_candidate(r_self, idx, true, &Wsum, &chosen_sample, &chosen_pdf, &reused, &seed, sum_imp_area, AREA_COUNT, sum_imp_dir, DIR_COUNT);
     m_total = m_total + r_self.m;
 
-    // Random K neighbors in window
-    for (var i: u32 = 0u; i < K; i = i + 1u) {
-        // Uniform in [-R, R]
-        let rx = i32(floor(xorshift32(&seed) * f32(2u * R + 1u))) - i32(R);
-        let ry = i32(floor(xorshift32(&seed) * f32(2u * R + 1u))) - i32(R);
-        if (rx == 0 && ry == 0) { continue; }
-        let nx = u32(clamp(i32(x) + rx, 0, i32(W) - 1));
-        let ny = u32(clamp(i32(y) + ry, 0, i32(H) - 1));
-        let ni = ny * W + nx;
-        let rn = in_reservoirs[ni];
-        consider_candidate(rn, idx, false, &Wsum, &chosen_sample, &chosen_pdf, &reused, &seed, sum_imp_area, AREA_COUNT, sum_imp_dir, DIR_COUNT);
-        m_total = m_total + rn.m;
+    // Full-sensor poster tiles use self-only spatial resampling so an edge
+    // pixel has identical history in a tile and a monolithic frame. Temporal
+    // reuse remains active and the finalized reservoir still shades beauty.
+    if (uniforms.camera_flags == 0u) {
+        for (var i: u32 = 0u; i < K; i = i + 1u) {
+            // Uniform in [-R, R]
+            let rx = i32(floor(xorshift32(&seed) * f32(2u * R + 1u))) - i32(R);
+            let ry = i32(floor(xorshift32(&seed) * f32(2u * R + 1u))) - i32(R);
+            if (rx == 0 && ry == 0) { continue; }
+            let nx = u32(clamp(i32(x) + rx, 0, i32(W) - 1));
+            let ny = u32(clamp(i32(y) + ry, 0, i32(H) - 1));
+            let ni = ny * W + nx;
+            let rn = in_reservoirs[ni];
+            consider_candidate(rn, idx, false, &Wsum, &chosen_sample, &chosen_pdf, &reused, &seed, sum_imp_area, AREA_COUNT, sum_imp_dir, DIR_COUNT);
+            m_total = m_total + rn.m;
+        }
     }
 
     // Finalize output reservoir

@@ -19,7 +19,14 @@ struct Uniforms {
   cam_forward: vec3<f32>,
   seed_hi: u32,
   seed_lo: u32,
-  _pad: u32,
+  camera_model: u32,
+  full_width: u32,
+  full_height: u32,
+  pixel_offset_x: u32,
+  pixel_offset_y: u32,
+  ortho_half_height: f32,
+  camera_flags: u32,
+  sensor_rect: vec4<f32>,
 }
 
 // Lighting uniforms (Group 0, binding 1 — folded into the base uniform group
@@ -88,6 +95,64 @@ fn xorshift32(state: ptr<function, u32>) -> f32 {
 fn tent_filter(u: f32) -> f32 {
   let t = 2.0 * u - 1.0;
   return select(1.0 + t, 1.0 - t, t < 0.0);
+}
+
+struct CameraRay {
+  origin: vec3<f32>,
+  direction: vec3<f32>,
+}
+
+fn global_pixel(gid: vec2<u32>) -> vec2<u32> {
+  return gid + vec2<u32>(uniforms.pixel_offset_x, uniforms.pixel_offset_y);
+}
+
+// Seamless calls map global pixel IDs directly onto the ideal full sensor.
+// The host validates sensor_rect against this pixel offset and tile extent.
+fn generate_camera_ray(gid: vec2<u32>, jitter: vec2<f32>) -> CameraRay {
+  if (uniforms.camera_flags == 0u) {
+    // Preserve the original arithmetic path byte-for-byte for legacy callers.
+    let ndc = vec2<f32>(
+      ((f32(gid.x) + 0.5 + jitter.x) / f32(uniforms.width)) * 2.0 - 1.0,
+      (1.0 - (f32(gid.y) + 0.5 + jitter.y) / f32(uniforms.height)) * 2.0 - 1.0,
+    );
+    let half_h = tan(0.5 * uniforms.cam_fov_y);
+    let half_w = uniforms.cam_aspect * half_h;
+    let rd = normalize(vec3<f32>(ndc.x * half_w, ndc.y * half_h, -1.0));
+    return CameraRay(
+      uniforms.cam_origin,
+      normalize(
+        rd.x * uniforms.cam_right + rd.y * uniforms.cam_up
+        + rd.z * (-uniforms.cam_forward)
+      ),
+    );
+  }
+
+  let validated_sensor_rect = uniforms.sensor_rect;
+  let gpx = global_pixel(gid);
+  let sensor_uv = (vec2<f32>(gpx) + vec2<f32>(0.5) + jitter)
+      / vec2<f32>(f32(uniforms.full_width), f32(uniforms.full_height));
+  let ndc = vec2<f32>(sensor_uv.x * 2.0 - 1.0, (1.0 - sensor_uv.y) * 2.0 - 1.0);
+  let aspect = f32(uniforms.full_width) / f32(uniforms.full_height);
+  if (uniforms.camera_model == 1u) {
+    let half_h = uniforms.ortho_half_height;
+    let half_w = aspect * half_h;
+    return CameraRay(
+      uniforms.cam_origin
+          + ndc.x * half_w * uniforms.cam_right
+          + ndc.y * half_h * uniforms.cam_up,
+      normalize(uniforms.cam_forward),
+    );
+  }
+  let half_h = tan(0.5 * uniforms.cam_fov_y);
+  let half_w = aspect * half_h;
+  let rd = normalize(vec3<f32>(ndc.x * half_w, ndc.y * half_h, -1.0));
+  return CameraRay(
+    uniforms.cam_origin,
+    normalize(
+        rd.x * uniforms.cam_right + rd.y * uniforms.cam_up
+        + rd.z * (-uniforms.cam_forward)
+    ),
+  );
 }
 
 // Ray-sphere intersection (for legacy sphere support)

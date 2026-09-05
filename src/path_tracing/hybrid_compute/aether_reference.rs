@@ -236,7 +236,14 @@ impl HybridPathTracer {
             // shader's XOR stream initializer. Rotate before mixing so the
             // public seed genuinely selects a stochastic sequence.
             seed_lo: desc.seed.rotate_left(16) ^ 0x85EB_CA6B,
-            _pad_end: [0; 3],
+            camera_model: 0,
+            full_width: desc.width,
+            full_height: desc.height,
+            pixel_offset_x: 0,
+            pixel_offset_y: 0,
+            ortho_half_height: 1.0,
+            camera_flags: 0,
+            sensor_rect: [0.0, 0.0, 1.0, 1.0],
         };
         let lighting = LightingUniforms {
             light_dir: sun_direction,
@@ -295,6 +302,16 @@ impl HybridPathTracer {
             &wgpu::util::BufferInitDescriptor {
                 label: Some("aether-spectral-reference-terrain-ubo"),
                 contents: bytemuck::bytes_of(&terrain),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        )?;
+        let earth_curvature =
+            <super::terrain_heightfield::EarthCurvatureUniforms as bytemuck::Zeroable>::zeroed();
+        let earth_curvature_ubo = tracked_create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("aether-spectral-reference-earth-curvature-ubo"),
+                contents: bytemuck::bytes_of(&earth_curvature),
                 usage: wgpu::BufferUsages::UNIFORM,
             },
         )?;
@@ -406,6 +423,9 @@ impl HybridPathTracer {
         let env_view = terrain_scene
             .env_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let albedo_view = terrain_scene
+            .albedo_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let group2 = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aether-spectral-reference-bg2"),
             layout: &self.layouts.accum,
@@ -441,6 +461,14 @@ impl HybridPathTracer {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: reservoir_prev.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: earth_curvature_ubo.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(&albedo_view),
                 },
             ],
         });

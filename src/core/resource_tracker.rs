@@ -271,6 +271,37 @@ impl LedgerCapture {
     }
 }
 
+struct OwnerCapture {
+    capture: LedgerCapture,
+}
+
+impl OwnerCapture {
+    fn new(entries: &HashMap<u64, LedgerEntry>, owner_id: u64) -> Self {
+        Self {
+            capture: LedgerCapture::new(entries, &[owner_id]),
+        }
+    }
+
+    fn add(&mut self, id: u64, entry: &LedgerEntry) {
+        self.capture.add(id, entry);
+    }
+
+    fn remove(&mut self, id: u64, entry: &LedgerEntry) {
+        self.capture.remove(id, entry);
+    }
+
+    fn report(self) -> OwnerLedgerReport {
+        let report = self.capture.report();
+        OwnerLedgerReport {
+            peak_host_visible_bytes: report.peak_host_visible_bytes,
+            peak_device_local_bytes: report.peak_device_local_bytes,
+            current_host_visible_bytes: report.current_host_visible_bytes,
+            current_device_local_bytes: report.current_device_local_bytes,
+            by_label: report.by_label,
+        }
+    }
+}
+
 /// Global ledger recording every live tracked allocation.
 ///
 /// Counters are only ever mutated while the `entries` mutex is held, so
@@ -284,6 +315,7 @@ pub struct AllocationLedger {
     peak_host_visible: AtomicU64,
     peak_device_local: AtomicU64,
     capture: Mutex<Option<LedgerCapture>>,
+    owner_captures: Mutex<BTreeMap<u64, OwnerCapture>>,
 }
 
 impl AllocationLedger {
@@ -296,6 +328,7 @@ impl AllocationLedger {
             peak_host_visible: AtomicU64::new(0),
             peak_device_local: AtomicU64::new(0),
             capture: Mutex::new(None),
+            owner_captures: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -339,7 +372,46 @@ impl AllocationLedger {
         {
             capture.add(id, &entry);
         }
+        if let Some(owner_id) = entry.owner_id {
+            if let Some(capture) = self
+                .owner_captures
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get_mut(&owner_id)
+            {
+                capture.add(id, &entry);
+            }
+        }
         id
+    }
+
+    fn begin_owner_capture(&self, owner_id: u64) -> OwnerCaptureGuard<'_> {
+        let entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        self.owner_captures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(owner_id, OwnerCapture::new(&entries, owner_id));
+        OwnerCaptureGuard {
+            ledger: self,
+            owner_id,
+            active: true,
+        }
+    }
+
+    fn finish_owner_capture(&self, owner_id: u64) -> OwnerLedgerReport {
+        self.owner_captures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&owner_id)
+            .map(OwnerCapture::report)
+            .unwrap_or_default()
+    }
+
+    fn abort_owner_capture(&self, owner_id: u64) {
+        self.owner_captures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&owner_id);
     }
 
     fn begin_capture(&self, owner_ids: &[u64]) {
@@ -407,6 +479,16 @@ impl AllocationLedger {
             {
                 capture.remove(id, &entry);
             }
+            if let Some(owner_id) = entry.owner_id {
+                if let Some(capture) = self
+                    .owner_captures
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get_mut(&owner_id)
+                {
+                    capture.remove(id, &entry);
+                }
+            }
         }
     }
 
@@ -472,6 +554,37 @@ impl LedgerReport {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct OwnerLedgerReport {
+    pub peak_host_visible_bytes: u64,
+    pub peak_device_local_bytes: u64,
+    pub current_host_visible_bytes: u64,
+    pub current_device_local_bytes: u64,
+    pub by_label: BTreeMap<String, u64>,
+}
+
+#[must_use = "an owner capture must be finished or retained until the render exits"]
+pub struct OwnerCaptureGuard<'a> {
+    ledger: &'a AllocationLedger,
+    owner_id: u64,
+    active: bool,
+}
+
+impl OwnerCaptureGuard<'_> {
+    pub fn finish(mut self) -> OwnerLedgerReport {
+        self.active = false;
+        self.ledger.finish_owner_capture(self.owner_id)
+    }
+}
+
+impl Drop for OwnerCaptureGuard<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            self.ledger.abort_owner_capture(self.owner_id);
+        }
+    }
+}
+
 static LEDGER: OnceLock<AllocationLedger> = OnceLock::new();
 
 /// Access the process-global allocation ledger.
@@ -482,6 +595,14 @@ pub fn ledger() -> &'static AllocationLedger {
 /// Snapshot the global allocation ledger.
 pub fn ledger_snapshot() -> LedgerReport {
     ledger().snapshot()
+}
+
+pub fn begin_owner_capture(owner_id: u64) -> OwnerCaptureGuard<'static> {
+    ledger().begin_owner_capture(owner_id)
+}
+
+pub fn finish_owner_capture(owner_id: u64) -> OwnerLedgerReport {
+    ledger().finish_owner_capture(owner_id)
 }
 
 /// Start render-local peak accounting from the allocations currently alive.
@@ -1207,6 +1328,95 @@ mod tests {
 
         ledger.remove(ambient);
         ledger.remove(mid_render);
+    }
+
+    #[test]
+    fn owner_captures_are_independent_under_root_capture() {
+        let ledger = AllocationLedger::new();
+        let owner_a = AllocationOwner::new();
+        let owner_b = AllocationOwner::new();
+
+        ledger.begin_capture(&[]);
+        let capture_a = ledger.begin_owner_capture(owner_a.id());
+        let capture_b = ledger.begin_owner_capture(owner_b.id());
+
+        let allocation_a = {
+            let _scope = owner_a.activate();
+            ledger.insert(
+                "owner-a-temporary".to_string(),
+                1024,
+                true,
+                LedgerCategory::Buffer,
+                "test:owner-a".to_string(),
+            )
+        };
+        let allocation_b = {
+            let _scope = owner_b.activate();
+            ledger.insert(
+                "owner-b-persistent".to_string(),
+                4096,
+                false,
+                LedgerCategory::Texture,
+                "test:owner-b".to_string(),
+            )
+        };
+        ledger.remove(allocation_a);
+
+        let report_a = capture_a.finish();
+        let report_b = capture_b.finish();
+        let root_report = ledger.finish_capture();
+
+        assert_eq!(report_a.peak_host_visible_bytes, 1024);
+        assert_eq!(report_a.current_host_visible_bytes, 0);
+        assert_eq!(report_a.by_label.get("owner-a-temporary"), Some(&1024));
+        assert_eq!(report_a.peak_device_local_bytes, 0);
+        assert_eq!(report_b.peak_device_local_bytes, 4096);
+        assert_eq!(report_b.current_device_local_bytes, 4096);
+        assert_eq!(report_b.by_label.get("owner-b-persistent"), Some(&4096));
+        assert_eq!(report_b.peak_host_visible_bytes, 0);
+        assert_eq!(root_report.peak_host_visible_bytes, 1024);
+        assert_eq!(root_report.peak_device_local_bytes, 4096);
+        assert_eq!(root_report.by_label.get("owner-a-temporary"), Some(&1024));
+        assert_eq!(root_report.by_label.get("owner-b-persistent"), Some(&4096));
+
+        ledger.remove(allocation_b);
+    }
+
+    #[test]
+    fn owner_capture_guard_aborts_on_early_error() {
+        fn fail_after_allocation(
+            ledger: &AllocationLedger,
+            owner: &AllocationOwner,
+            allocation: &mut Option<u64>,
+        ) -> Result<(), ()> {
+            let _capture = ledger.begin_owner_capture(owner.id());
+            let _scope = owner.activate();
+            *allocation = Some(ledger.insert(
+                "early-error".to_string(),
+                2048,
+                true,
+                LedgerCategory::Buffer,
+                "test:early-error".to_string(),
+            ));
+            Err(())
+        }
+
+        let ledger = AllocationLedger::new();
+        let owner = AllocationOwner::new();
+        let mut allocation = None;
+        let result = fail_after_allocation(&ledger, &owner, &mut allocation);
+
+        assert!(result.is_err());
+        assert!(!ledger
+            .owner_captures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains_key(&owner.id()));
+
+        ledger.remove(allocation.expect("the failing path allocated a resource"));
+        let report = ledger.begin_owner_capture(owner.id()).finish();
+        assert_eq!(report.peak_host_visible_bytes, 0);
+        assert_eq!(report.current_host_visible_bytes, 0);
     }
 
     #[test]

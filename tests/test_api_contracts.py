@@ -824,6 +824,8 @@ class TestPackageLevelApiContracts:
         "LicenseError",
         "render_offline",
         "oidn_available",
+        # OBLIQUA: tiled converged terrain poster driver
+        "render_terrain_poster",
         # AEQUITAS: PT-vs-raster adjudication pair
         "render_adjudication_pair",
         # VERITAS: per-pixel cryptographic provenance

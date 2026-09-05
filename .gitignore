@@ -431,3 +431,16 @@ docs/_build/
 
 # Large data files
 landuse/landuse/glad_cropland_2019.tif
+
+# OBLIQUA proof fixtures, examples, and compatibility reference
+!examples/obliqua_analytic_camera_fixture.py
+!examples/obliqua_se_europe_fixture.py
+!examples/southeast_europe_population_pt_native.py
+!examples/swiss_landcover_pt_oblique.py
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/map-maker/
+.claude/skills/map-maker/*
+!.claude/skills/map-maker/references/
+.claude/skills/map-maker/references/*
+!.claude/skills/map-maker/references/recipes.md

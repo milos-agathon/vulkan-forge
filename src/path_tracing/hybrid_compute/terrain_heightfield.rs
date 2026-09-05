@@ -22,10 +22,12 @@ use wgpu::{Device, Queue, TextureFormat};
 ///                         (world y = height * exaggeration), env intensity
 ///   row 2 albedo_pad:     terrain albedo rgb, unused
 ///   row 3 dims:           width_texels, height_texels, cell_w, cell_h
-///   row 4 mips:           mip_count, flags (bit0 = terrain enabled),
+///   row 4 mips:           mip_count, flags (bit0 = terrain enabled,
+///                         bit1 = albedo map enabled),
 ///                         env_width, env_height (0 = constant env fallback)
 ///   row 5 extra:          spp (camera samples per frame), Welford window
-///                         (frames per convergence window), unused, unused
+///                         (frames per convergence window), albedo sampling
+///                         (0 nearest, 1 bilinear), unused
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct TerrainPtUniforms {
@@ -35,6 +37,12 @@ pub struct TerrainPtUniforms {
     pub dims: [u32; 4],
     pub mips: [u32; 4],
     pub extra: [u32; 4],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AlbedoSampling {
+    Nearest = 0,
+    Bilinear = 1,
 }
 
 /// Curvature parameters consumed by the shared terrain traversal. The two
@@ -353,6 +361,8 @@ impl TerrainMinMaxPyramid {
         albedo: [f32; 3],
         env_intensity: f32,
         env_dims: (u32, u32),
+        albedo_map_enabled: bool,
+        albedo_sampling: AlbedoSampling,
         spp: u32,
         welford_window: u32,
     ) -> TerrainPtUniforms {
@@ -363,8 +373,13 @@ impl TerrainMinMaxPyramid {
             h_params: [self.h_min, self.h_max, exaggeration, env_intensity],
             albedo_pad: [albedo[0], albedo[1], albedo[2], 0.0],
             dims: [self.width, self.height, self.cell_w, self.cell_h],
-            mips: [self.mip_count, 1, env_dims.0, env_dims.1],
-            extra: [spp.max(1), welford_window.max(2), 0, 0],
+            mips: [
+                self.mip_count,
+                1 | (u32::from(albedo_map_enabled) << 1),
+                env_dims.0,
+                env_dims.1,
+            ],
+            extra: [spp.max(1), welford_window.max(2), albedo_sampling as u32, 0],
         }
     }
 }
@@ -376,6 +391,7 @@ impl TerrainMinMaxPyramid {
 pub struct TerrainPtScene {
     pub pyramid: TerrainMinMaxPyramid,
     pub env_texture: TrackedTexture,
+    pub albedo_texture: TrackedTexture,
     /// (0, 0) selects the constant-white env fallback in the kernel.
     pub env_dims: (u32, u32),
     spacing: (f32, f32),
@@ -383,6 +399,9 @@ pub struct TerrainPtScene {
     albedo: [f32; 3],
     env_intensity: f32,
     env_tracked: (u32, u32),
+    albedo_map_enabled: bool,
+    albedo_sampling: AlbedoSampling,
+    albedo_tracked: (u32, u32),
 }
 
 impl TerrainPtScene {
@@ -396,6 +415,37 @@ impl TerrainPtScene {
         spacing: (f32, f32),
         exaggeration: f32,
         albedo: [f32; 3],
+        env_map: Option<(&[f32], u32, u32)>,
+        env_intensity: f32,
+    ) -> Result<Self, RenderError> {
+        Self::new_with_albedo(
+            device,
+            queue,
+            heights,
+            dem_width,
+            dem_height,
+            spacing,
+            exaggeration,
+            albedo,
+            None,
+            AlbedoSampling::Nearest,
+            env_map,
+            env_intensity,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_albedo(
+        device: &Device,
+        queue: &Queue,
+        heights: &[f32],
+        dem_width: u32,
+        dem_height: u32,
+        spacing: (f32, f32),
+        exaggeration: f32,
+        albedo: [f32; 3],
+        albedo_map: Option<&[f32]>,
+        albedo_sampling: AlbedoSampling,
         env_map: Option<(&[f32], u32, u32)>,
         env_intensity: f32,
     ) -> Result<Self, RenderError> {
@@ -421,6 +471,63 @@ impl TerrainPtScene {
         }
         let pyramid =
             TerrainMinMaxPyramid::from_heightfield(device, queue, heights, dem_width, dem_height)?;
+
+        let (albedo_data, albedo_w, albedo_h, albedo_map_enabled) = match albedo_map {
+            Some(data) => {
+                if data.len() != (dem_width as usize) * (dem_height as usize) * 4 {
+                    return Err(RenderError::Upload(
+                        "albedo map must match the DEM grid with four channels".into(),
+                    ));
+                }
+                if data.chunks_exact(4).any(|rgba| {
+                    rgba.iter().any(|v| !v.is_finite())
+                        || rgba[..3].iter().any(|v| *v < 0.0)
+                        || !(0.0..=1.0).contains(&rgba[3])
+                }) {
+                    return Err(RenderError::Upload(
+                        "albedo map RGB must be finite and >= 0; alpha must be in [0,1]".into(),
+                    ));
+                }
+                (data.to_vec(), dem_width, dem_height, true)
+            }
+            None => (vec![0.0; 4], 1, 1, false),
+        };
+        let albedo_texture = tracked_create_texture(
+            device,
+            &wgpu::TextureDescriptor {
+                label: Some("hybrid-pt-terrain-albedo"),
+                size: wgpu::Extent3d {
+                    width: albedo_w,
+                    height: albedo_h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: TextureFormat::Rgba32Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+        )?;
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &albedo_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&albedo_data),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(albedo_w * 16),
+                rows_per_image: Some(albedo_h),
+            },
+            wgpu::Extent3d {
+                width: albedo_w,
+                height: albedo_h,
+                depth_or_array_layers: 1,
+            },
+        );
 
         let (env_data, env_w, env_h, env_dims): (Vec<f32>, u32, u32, (u32, u32)) = match env_map {
             Some((data, w, h)) => {
@@ -484,19 +591,24 @@ impl TerrainPtScene {
         Ok(Self {
             pyramid,
             env_texture,
+            albedo_texture,
             env_dims,
             spacing,
             exaggeration,
             albedo,
             env_intensity,
             env_tracked: (env_w, env_h),
+            albedo_map_enabled,
+            albedo_sampling,
+            albedo_tracked: (albedo_w, albedo_h),
         })
     }
 
-    /// Total tracked GPU bytes (pyramid mips + DEM texture + env map).
+    /// Total tracked GPU bytes (pyramid mips + DEM + env + albedo textures).
     pub fn byte_size(&self) -> u64 {
         let (ew, eh) = self.env_tracked;
-        self.pyramid.byte_size + (ew as u64) * (eh as u64) * 16
+        let (aw, ah) = self.albedo_tracked;
+        self.pyramid.byte_size + ((ew as u64) * (eh as u64) + (aw as u64) * (ah as u64)) * 16
     }
 
     pub fn uniforms(&self, spp: u32, welford_window: u32) -> TerrainPtUniforms {
@@ -507,6 +619,8 @@ impl TerrainPtScene {
             self.albedo,
             self.env_intensity,
             self.env_dims,
+            self.albedo_map_enabled,
+            self.albedo_sampling,
             spp,
             welford_window,
         )

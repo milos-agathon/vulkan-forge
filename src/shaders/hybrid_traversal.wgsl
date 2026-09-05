@@ -236,10 +236,10 @@ fn intersect_hybrid_optimized(
 
 // Utility function to get surface properties at hit point
 fn get_surface_properties(hit: HybridHitResult) -> vec3f {
-    // Terrain hits use the uniform terrain albedo; everything else keeps the
-    // legacy constant.
+    // Terrain hits share one grid-aligned lookup across beauty, ReSTIR, and
+    // the albedo AOV; everything else keeps the legacy constant.
     if (hit.hit_type == 3u) {
-        return terrain.albedo_pad.rgb;
+        return terrain_albedo_at(hit.point.xz);
     }
     return vec3f(0.7, 0.7, 0.8);
 }

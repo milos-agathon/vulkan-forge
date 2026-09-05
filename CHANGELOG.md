@@ -6,6 +6,18 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-09-05
+### Added
+- OBLIQUA: added public `render_terrain_poster` rendering of exact full-sensor tiles for orthographic, pinhole, and off-axis (oblique) terrain cameras, with full-frame dimensions, sensor rectangles, pixel offsets, independent per-tile convergence, owner-scoped peak-memory diagnostics, ReSTIR reservoir evidence, and render-certificate inputs.
+- Added terrain-grid RGBA albedo maps with explicit `nearest` sampling for categorical data and `bilinear` sampling for continuous data, used consistently by beauty, albedo AOV, and ReSTIR terrain shading.
+- Added deterministic camera, albedo, and poster contract coverage plus representative Southeast Europe population and Swiss land-cover examples.
+
+### Fixed
+- Corrected terrain ReSTIR spatial reweighting for receiver materials and extended resource tracking with owner-scoped allocation captures so poster-tile memory evidence excludes unrelated live allocations.
+
+### Changed
+- Bumped the package and PyPI version to `1.36.0`.
+
 ## [1.35.0] - 2026-08-13
 ### Added
 - HELIOS: added public NREL SPA solar positioning via `forge3d.geo.solar_position` while preserving the existing NOAA-compatible `sun_position` APIs, geodetic-curvature/refraction viewshed and shadow APIs, and shared PROMETHEUS min-max terrain traversal for viewshed and shadow queries.

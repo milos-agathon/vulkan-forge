@@ -14,11 +14,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import wraps
+import hashlib
+from operator import index as _index
 from typing import Any, Dict, Optional, Tuple, Iterable, Mapping, Callable, Sequence
 
 import numpy as np
 import time as _time
 
+from .certificate import _render_capture, emit_render_certificate
 from .denoise import atrous_denoise
 
 try:
@@ -899,6 +902,13 @@ def hybrid_render_terrain_reference(
     spacing: "tuple[float, float]" = (1.0, 1.0),
     exaggeration: float = 1.0,
     albedo: "tuple[float, float, float]" = (0.6, 0.6, 0.6),
+    albedo_map: "np.ndarray | None" = None,
+    albedo_sampling: str = "nearest",
+    camera_model: str | None = None,
+    sensor_rect: "tuple[float, float, float, float] | None" = None,
+    full_width: int | None = None,
+    full_height: int | None = None,
+    pixel_offset: "tuple[int, int] | None" = None,
     sun_azimuth_deg: float | None = None,
     sun_elevation_deg: float | None = None,
     solar_time: "object | None" = None,
@@ -939,6 +949,11 @@ def hybrid_render_terrain_reference(
     samples per accumulation frame; the min-max pyramid keeps per-sample
     texture reads O(log mips), so cost scales ~linearly from 1 to 8 spp.
 
+    ``albedo_map`` is a terrain-grid-aligned ``(H, W, 4)`` RGBA array used by
+    beauty, ReSTIR, and the albedo AOV. Choose categorical ``"nearest"`` or
+    continuous ``"bilinear"`` sampling with ``albedo_sampling``; texels whose
+    alpha is below one fall back to the constant ``albedo``.
+
     Accumulates frames until the per-pixel luminance variance of the running
     mean across the last convergence window drops below
     ``variance_threshold`` (or raises after ``max_frames`` — no silent fake
@@ -976,6 +991,27 @@ def hybrid_render_terrain_reference(
         )
     if not np.isfinite(dem).all():
         raise ValueError("heightmap contains non-finite samples")
+    if albedo_sampling not in {"nearest", "bilinear"}:
+        raise ValueError(
+            "albedo_sampling must be 'nearest' or 'bilinear', "
+            f"got {albedo_sampling!r}"
+        )
+    material = None
+    if albedo_map is not None:
+        material = np.ascontiguousarray(albedo_map, dtype=np.float32)
+        expected = (*dem.shape, 4)
+        if material.shape != expected:
+            raise ValueError(
+                f"albedo_map must have shape {expected}, got {material.shape}"
+            )
+        if not np.isfinite(material).all():
+            raise ValueError("albedo_map contains non-finite samples")
+        if np.any(material[..., :3] < 0.0) or np.any(
+            (material[..., 3] < 0.0) | (material[..., 3] > 1.0)
+        ):
+            raise ValueError(
+                "albedo_map RGB must be non-negative and alpha must be in [0, 1]"
+            )
     if int(min_frames) > int(max_frames):
         raise ValueError(
             f"min_frames ({min_frames}) must be <= max_frames ({max_frames})"
@@ -1042,6 +1078,31 @@ def hybrid_render_terrain_reference(
         pressure_mbar = 1013.25 if pressure_mbar is None else pressure_mbar
         temperature_c = 15.0 if temperature_c is None else temperature_c
     cam = dict(camera or {})
+    model_arg = cam.get("model") if camera_model is None else camera_model
+    model = str("pinhole" if model_arg is None else model_arg)
+    if model not in {"pinhole", "orthographic", "off_axis"}:
+        raise ValueError(
+            "camera model must be 'pinhole', 'orthographic', or "
+            f"'off_axis', got {model!r}"
+        )
+    rect_arg = sensor_rect if sensor_rect is not None else cam.get("sensor_rect")
+    rect = tuple((0.0, 0.0, 1.0, 1.0) if rect_arg is None else rect_arg)
+    if len(rect) != 4:
+        raise ValueError(f"sensor_rect must contain four values, got {rect!r}")
+    offset = (0, 0)
+    if pixel_offset is not None:
+        try:
+            offset = (_index(pixel_offset[0]), _index(pixel_offset[1]))
+        except (TypeError, IndexError) as exc:
+            raise ValueError("pixel_offset must contain two non-negative integers") from exc
+        if offset[0] < 0 or offset[1] < 0:
+            raise ValueError("pixel_offset must contain two non-negative integers")
+    if (full_width is None) != (full_height is None):
+        raise ValueError("full_width and full_height must be provided together")
+    if offset != (0, 0) and full_width is None:
+        raise ValueError("offset renders require full_width and full_height")
+    if rect != (0.0, 0.0, 1.0, 1.0) and full_width is None:
+        raise ValueError("cropped sensor_rect requires full_width and full_height")
     env = None
     if env_map is not None:
         env = np.ascontiguousarray(env_map, dtype=np.float32)
@@ -1065,6 +1126,13 @@ def hybrid_render_terrain_reference(
         spacing=(float(spacing[0]), float(spacing[1])),
         exaggeration=float(exaggeration),
         albedo=(float(albedo[0]), float(albedo[1]), float(albedo[2])),
+        albedo_map=material,
+        albedo_sampling=albedo_sampling,
+        camera_model=None if model_arg is None else model,
+        sensor_rect=None if rect_arg is None else tuple(float(value) for value in rect),
+        full_width=full_width,
+        full_height=full_height,
+        pixel_offset=None if pixel_offset is None else offset,
         sun_azimuth_deg=float(sun_azimuth_deg),
         sun_elevation_deg=float(sun_elevation_deg),
         sun_intensity=float(sun_intensity),
@@ -1093,3 +1161,233 @@ def hybrid_render_terrain_reference(
     result["solar_azimuth_deg"] = float(sun_azimuth_deg)
     result["solar_elevation_deg"] = float(sun_elevation_deg)
     return result
+
+
+def render_terrain_poster(
+    heightmap: "np.ndarray",
+    width: int,
+    height: int,
+    camera: "dict | None" = None,
+    *,
+    albedo_map: "np.ndarray | None" = None,
+    albedo_sampling: str = "nearest",
+    tile: int = 1024,
+    spacing: "tuple[float, float]" = (1.0, 1.0),
+    exaggeration: float = 1.0,
+    albedo: "tuple[float, float, float]" = (0.6, 0.6, 0.6),
+    camera_model: str | None = None,
+    sun_azimuth_deg: float = 315.0,
+    sun_elevation_deg: float = 45.0,
+    sun_intensity: float = 2.5,
+    sun_color: "Sequence[float] | np.ndarray" = (1.0, 0.97, 0.92),
+    env_map: "np.ndarray | None" = None,
+    env_intensity: float = 0.35,
+    mesh_vertices: "np.ndarray | None" = None,
+    mesh_indices: "np.ndarray | None" = None,
+    spp: int = 1,
+    max_frames: int = 512,
+    min_frames: int = 32,
+    variance_threshold: float = 1e-3,
+    seed: int = 7,
+    certificate: bool | str = False,
+    cache: str | None = None,
+    **kwargs: Any,
+) -> dict:
+    """Render a converged terrain plate as exact full-sensor tiles.
+
+    The returned mapping contains the assembled ``rgba`` plate, scalar
+    diagnostics for every tile in ``tiles``, and ``certificate_digest``.
+    ``cache`` is accepted for the ANAMNESIS render contract; the native terrain
+    reference currently ignores it.
+    """
+    forbidden = {"sensor_rect", "full_width", "full_height", "pixel_offset"}
+    managed_kwargs = sorted(forbidden.intersection(kwargs))
+    if managed_kwargs:
+        raise ValueError(
+            "render_terrain_poster manages these arguments: "
+            + ", ".join(managed_kwargs)
+        )
+    if kwargs:
+        unexpected = next(iter(kwargs))
+        raise TypeError(
+            f"render_terrain_poster() got an unexpected keyword argument {unexpected!r}"
+        )
+
+    try:
+        output_width = _index(width)
+        output_height = _index(height)
+        tile_size = _index(tile)
+    except TypeError as exc:
+        raise TypeError("width, height, and tile must be integers") from exc
+    if output_width <= 0 or output_height <= 0 or tile_size <= 0:
+        raise ValueError("width, height, and tile must be positive")
+
+    dem = np.ascontiguousarray(np.asarray(heightmap, dtype=np.float32))
+    if dem.ndim != 2:
+        raise ValueError(f"heightmap must be 2D (H, W), got shape {dem.shape}")
+    if not np.isfinite(dem).all():
+        raise ValueError("heightmap contains non-finite samples")
+
+    material = None
+    if albedo_map is not None:
+        material = np.ascontiguousarray(np.asarray(albedo_map, dtype=np.float32))
+        if material.ndim != 3 or material.shape[2] != 4:
+            raise ValueError(
+                f"albedo_map must be a 3D (H, W, 4) array, got shape {material.shape}"
+            )
+        if material.shape[:2] != dem.shape:
+            raise ValueError(
+                "albedo_map terrain dimensions must match heightmap: "
+                f"expected {dem.shape}, got {material.shape[:2]}"
+            )
+        if not np.isfinite(material).all():
+            raise ValueError("albedo_map contains non-finite samples")
+        if np.any(material[..., :3] < 0.0) or np.any(
+            (material[..., 3] < 0.0) | (material[..., 3] > 1.0)
+        ):
+            raise ValueError(
+                "albedo_map RGB must be non-negative and alpha must be in [0, 1]"
+            )
+    if albedo_sampling not in {"nearest", "bilinear"}:
+        raise ValueError(
+            "albedo_sampling must be 'nearest' or 'bilinear', "
+            f"got {albedo_sampling!r}"
+        )
+
+    cam = dict(camera or {})
+    managed_camera = sorted(forbidden.intersection(cam))
+    if managed_camera:
+        raise ValueError(
+            "render_terrain_poster manages these camera fields: "
+            + ", ".join(managed_camera)
+        )
+    model_arg = cam.get("model") if camera_model is None else camera_model
+    model = "pinhole" if model_arg is None else model_arg
+    if not isinstance(model, str) or not model or model not in {
+        "pinhole",
+        "off_axis",
+        "orthographic",
+    }:
+        raise ValueError(
+            "camera model must be 'pinhole', 'orthographic', or "
+            f"'off_axis', got {model!r}"
+        )
+
+    albedo_map_sha256 = (
+        "none" if material is None else hashlib.sha256(material.tobytes()).hexdigest()
+    )
+    n_x = (output_width + tile_size - 1) // tile_size
+    n_y = (output_height + tile_size - 1) // tile_size
+    plate = np.empty((output_height, output_width, 4), dtype=np.uint8)
+    tiles = []
+
+    with _render_capture(
+        "python.path_tracing.render_terrain_poster", "hybrid_pt.poster", 1
+    ):
+        for iy in range(n_y):
+            for ix in range(n_x):
+                x0 = ix * tile_size
+                y0 = iy * tile_size
+                tw = min(tile_size, output_width - x0)
+                th = min(tile_size, output_height - y0)
+                rect = (
+                    x0 / output_width,
+                    y0 / output_height,
+                    (x0 + tw) / output_width,
+                    (y0 + th) / output_height,
+                )
+                result = hybrid_render_terrain_reference(
+                    dem,
+                    tw,
+                    th,
+                    cam,
+                    spacing=spacing,
+                    exaggeration=exaggeration,
+                    albedo=albedo,
+                    albedo_map=material,
+                    albedo_sampling=albedo_sampling,
+                    camera_model=model,
+                    sensor_rect=rect,
+                    full_width=output_width,
+                    full_height=output_height,
+                    pixel_offset=(x0, y0),
+                    sun_azimuth_deg=sun_azimuth_deg,
+                    sun_elevation_deg=sun_elevation_deg,
+                    sun_intensity=sun_intensity,
+                    sun_color=sun_color,
+                    env_map=env_map,
+                    env_intensity=env_intensity,
+                    mesh_vertices=mesh_vertices,
+                    mesh_indices=mesh_indices,
+                    spp=spp,
+                    max_frames=max_frames,
+                    min_frames=min_frames,
+                    variance_threshold=variance_threshold,
+                    seed=seed,
+                    certificate=False,
+                    cache=cache,
+                )
+                if not bool(result.get("converged")):
+                    raise RuntimeError(
+                        f"terrain poster tile ({ix}, {iy}) did not converge"
+                    )
+                peak = int(result["peak_host_visible_bytes"])
+                if peak > 536870912:
+                    raise RuntimeError(
+                        f"terrain poster tile ({ix}, {iy}) exceeded 512 MiB "
+                        f"host-visible budget: {peak}"
+                    )
+                reservoir_valid_count = int(result["reservoir_valid_count"])
+                if material is not None and float(sun_intensity) > 0.0:
+                    if reservoir_valid_count <= 0:
+                        raise RuntimeError(
+                            "terrain poster tile "
+                            f"({ix}, {iy}) has no valid ReSTIR reservoirs"
+                        )
+
+                tile_rgba = np.asarray(result["rgba"])
+                if tile_rgba.shape != (th, tw, 4) or tile_rgba.dtype != np.uint8:
+                    raise RuntimeError(
+                        "terrain poster tile returned invalid rgba: "
+                        f"shape={tile_rgba.shape}, dtype={tile_rgba.dtype}"
+                    )
+                plate[y0 : y0 + th, x0 : x0 + tw] = tile_rgba
+                stats = {
+                    key: value
+                    for key, value in result.items()
+                    if not isinstance(value, np.ndarray)
+                }
+                stats.update(
+                    {
+                        "x0": x0,
+                        "y0": y0,
+                        "width": tw,
+                        "height": th,
+                        "sensor_rect": rect,
+                    }
+                )
+                tiles.append(stats)
+
+        if _NATIVE is None or not hasattr(
+            _NATIVE, "_record_terrain_poster_certificate_inputs"
+        ):
+            raise RuntimeError(
+                "render_terrain_poster requires a native build with the terrain "
+                "poster certificate helper"
+            )
+        _NATIVE._record_terrain_poster_certificate_inputs(
+            model,
+            albedo_map_sha256,
+            albedo_sampling,
+            output_width,
+            output_height,
+            n_x,
+            n_y,
+        )
+
+    certificate_digest = emit_render_certificate(certificate)
+    return {
+        "rgba": plate,
+        "tiles": tiles,
+        "certificate_digest": certificate_digest,
+    }

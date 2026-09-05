@@ -21,6 +21,21 @@ def _workflow() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
+def _continued_command_arguments(block: str, command: str) -> tuple[str, ...]:
+    lines = block.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != f"{command} \\":
+            continue
+        arguments = []
+        for argument_line in lines[index + 1 :]:
+            argument = argument_line.strip()
+            continued = argument.endswith("\\")
+            arguments.append(argument.removesuffix("\\").strip())
+            if not continued:
+                return tuple(arguments)
+    raise AssertionError(f"continued command not found: {command}")
+
+
 def test_ci_downloads_verified_lfs_media_once_and_shares_one_artifact() -> None:
     workflow = _workflow()
     python_workflow = (
@@ -55,6 +70,7 @@ def test_ci_downloads_verified_lfs_media_once_and_shares_one_artifact() -> None:
     assert "cff39b4e02d7ba13c48f3d8b1a4080d40ada753ade62fa951459fe4e01e98b48" in workflow
     assert "875b243474b151175f76037acd60c2149ac2e46fba9ba2bbce0c9a6998015dd3" in workflow
     assert "d09d229fa265749720a6b4bd40c440799f43286bf2d401d732ea77f89d0bd478" in workflow
+    assert "6b254585be4982ed9e8da63b8536ecc2f5fa4c64c6545db06c73eb1fe39a8f7f" in workflow
     assert "575e4b57d69d5db1bc16d5cd7edc8c83c570e280717e9e7ca225c060fd0aeb3d" in workflow
     assert "is still an LFS pointer" in workflow
     prepare = workflow.split("  prepare-lfs-fixtures:", 1)[1].split(
@@ -76,16 +92,32 @@ def test_ci_lfs_manifest_contains_only_lane_fixtures() -> None:
     assert "assets/tif/Mount_Fuji_30m.tif" in prepare
     assert "assets/tif/dem_rainier.tif" in prepare
     assert "assets/tif/switzerland_dem.tif" in prepare
+    assert "assets/tif/switzerland_land_cover.tif" not in prepare
     assert "assets/tif/moon_south_pole_lola.tif" in prepare
     assert "python/forge3d/forge3d.pdb" not in prepare
     assert "assets/highres.png" not in prepare
     assert "assets/swiss-legend.png" not in prepare
     assert "assets/tif/Bryce_Canyon.tif" not in prepare
     assert "assets/tif/luxembourg_dem.tif" not in prepare
-    assert "assets/tif/switzerland_land_cover.tif" not in prepare
+
+    python_bundle = _continued_command_arguments(
+        prepare, "zip -q lfs-fixture-bundles/python-tiffs.zip"
+    )
+    assert len(python_bundle) == 4
+    assert set(python_bundle) == {
+        "assets/tif/Mount_Fuji_30m.tif",
+        "assets/tif/dem_rainier.tif",
+        "assets/tif/switzerland_dem.tif",
+        "assets/tif/moon_south_pole_lola.tif",
+    }
+
+    m06_bundle = _continued_command_arguments(
+        prepare, "zip -q lfs-fixture-bundles/m06-dem.zip"
+    )
+    assert m06_bundle == ("assets/tif/switzerland_dem.tif",)
 
 
-def test_python_and_m06_restore_only_their_fixture_bundles() -> None:
+def test_python_nvidia_golden_and_m06_use_only_their_fixtures() -> None:
     workflow = _workflow()
     python_workflow = (
         ROOT / ".github" / "workflows" / "test-python-wheel.yml"
@@ -93,7 +125,7 @@ def test_python_and_m06_restore_only_their_fixture_bundles() -> None:
     slow_job = workflow.split("  test-python-slow:", 1)[1].split(
         "\n  # ============================================================================\n  # TERMINUS", 1
     )[0]
-    golden_job = workflow.split("  test-golden-images:", 1)[1].split(
+    golden_job = workflow.split("  test-golden-images-nvidia:", 1)[1].split(
         "  test-m06-full-geospatial-viewer:", 1
     )[0]
     m06_job = workflow.split("  test-m06-full-geospatial-viewer:", 1)[1].split(
@@ -124,7 +156,45 @@ def test_python_and_m06_restore_only_their_fixture_bundles() -> None:
         assert "restore_lfs:" not in workflow.split(f"  {smoke_job}:", 1)[1].split(
             "\n\n", 1
         )[0]
+    assert "needs: [build-wheel-windows, terrain-golden-paths]" in golden_job
+    assert "prepare-lfs-fixtures" not in golden_job
     assert "lfs-fixture-bundles" not in golden_job
+    assert "python-tiffs.zip" not in golden_job
+    assert "m06-dem.zip" not in golden_job
+    media_base = (
+        "https://media.githubusercontent.com/media/milos-agathon/forge3d/"
+        "92a86baa3c8f6ba3c3a7368e4f80d4004905a433"
+    )
+    assert golden_job.count(media_base) == 1
+    fixtures = {
+        "assets/tif/switzerland_dem.tif": (
+            "d09d229fa265749720a6b4bd40c440799f43286bf2d401d732ea77f89d0bd478"
+        ),
+        "assets/tif/switzerland_land_cover.tif": (
+            "6b254585be4982ed9e8da63b8536ecc2f5fa4c64c6545db06c73eb1fe39a8f7f"
+        ),
+    }
+    for fixture, digest in fixtures.items():
+        assert golden_job.count(f"Path = '{fixture}'; Sha256 = '{digest}'") == 1
+    assert "curl.exe --fail --location --retry 3 --output $fixture.Path $url" in golden_job
+    assert "if ($LASTEXITCODE -ne 0)" in golden_job
+    assert (
+        "Get-FileHash -LiteralPath $fixture.Path -Algorithm SHA256" in golden_job
+    )
+    assert "$actual -ne $fixture.Sha256" in golden_job
+    bind = golden_job.index("name: Bind lane to exact clean candidate")
+    download = golden_job.index("name: Download verified OBLIQUA fixtures")
+    visual = golden_job.index("name: Run visual golden tests")
+    strict_obliqua = golden_job.index("name: Run strict OBLIQUA NVIDIA Vulkan gates")
+    assert "git rev-parse HEAD" in golden_job[bind:download]
+    assert "git status --porcelain --untracked-files=no" in golden_job[bind:download]
+    assert bind < download < visual
+    assert download < strict_obliqua
+    assert "python -m pip install pytest numpy pyproj pillow rasterio" in golden_job
+    assert "name: Run strict OBLIQUA NVIDIA Vulkan gates" in golden_job
+    assert "FORGE3D_RUN_OBLIQUA_GPU: '1'" in golden_job
+    assert "name: Upload OBLIQUA artifacts\n        if: always()" in golden_job
+
     assert "needs: [build-wheel-windows, prepare-lfs-fixtures, terrain-golden-paths]" in m06_job
     assert "m06-dem.zip" in m06_job
     assert "python-tiffs.zip" not in m06_job
